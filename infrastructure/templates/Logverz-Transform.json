@@ -1,0 +1,137 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Description": "Logverz Transform stack",
+	"Parameters":{
+		"InitBucket":{
+			"Type": "String"
+		}
+	},
+	"Resources":{
+		"TransformRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [{
+						"Effect": "Allow",
+						"Principal": {
+							"Service": [
+								"lambda.amazonaws.com"
+							]
+						},
+						"Action": "sts:AssumeRole"
+					}]
+				},
+				"RoleName": {
+					"Fn::Sub": "Logverz-TransformRole-${AWS::Region}"
+				}
+			}
+		},
+		"TransformPolicy": {
+			"Type": "AWS::IAM::Policy",
+			"Properties": {
+				"PolicyName":{
+					"Fn::Sub": "Logverz-TransformPolicy-${AWS::Region}"
+				},
+				"PolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Action": ["kms:Decrypt",
+							"kms:ListAliases"
+							],
+							"Effect": "Allow",
+							"Resource": "*"
+						},
+						{
+							"Action": [
+								"logs:CreateLogGroup",
+								"logs:CreateLogStream",
+								"logs:PutLogEvents"
+							],
+							"Effect": "Allow",
+							"Resource": "*"
+						},
+						{
+							"Action": [
+								"s3:PutObject",
+								"s3:Get*",
+								"s3:List*"
+							],
+							"Effect": "Allow",
+							"Resource": [
+								{
+									"Fn::Join": [
+										"",
+										[
+											"arn:aws:s3:::",
+											{
+												"Ref" : "InitBucket"
+											},
+											"/*"
+										]
+									]
+								}, {
+									"Fn::Join": [
+										"",
+										[
+											"arn:aws:s3:::",
+											{
+												"Ref" : "InitBucket"
+											}
+										]
+									]
+								}
+							]
+						},
+						{
+							"Sid": "lookuplatestengineversion",
+							"Action": [
+								"rds:DescribeDBEngineVersions",
+								"rds:DescribeOrderableDBInstanceOptions"
+							],
+							"Effect": "Allow",
+							"Resource": "*"
+						}
+					]
+				},
+				"Roles": [{
+					"Ref": "TransformRole"
+				}]
+			}
+		},
+		"TransformFunction": {
+			"Type": "AWS::Lambda::Function",
+			"DependsOn":"TransformPolicy",
+			"Properties": {
+				"Code": {
+					"S3Bucket": {"Ref":"InitBucket"},
+					"S3Key": "bin/transform.zip"
+				},
+				"Environment": {
+					"Variables": {
+						"CustomConfig" : "/templates/Logverz-CustomConfig.json",
+						"InitBucket":{ "Ref" : "InitBucket" }
+					}
+				},
+				"Description": "The lambdafunction rewrites templates according to environment conditions and custom configuration",
+				"FunctionName": "Logverz-Transform",
+				"Handler": "transform.handler",
+				"Role": {
+					"Fn::GetAtt": ["TransformRole", "Arn"]
+				},
+				"Runtime": "nodejs16.x",
+				"MemorySize":"256",
+				"Timeout": "15"
+			}
+		},
+		"LogverzTransform": {
+			"Type": "AWS::CloudFormation::Macro",
+			"Properties" : {
+				"Description" : "transform macro to customise cfn resources ",
+				"FunctionName" : {"Ref":"TransformFunction"},
+				"Name" : "LogverzTransform"
+			}
+		}
+	}
+}

@@ -1,0 +1,17 @@
+#/etc/systemd/system/turnserverstatus.timer
+[Unit]
+Description=Run webrtcproxycontrol every minute
+Requires=webrtcproxycontrol.service
+
+[Timer]
+Unit=webrtcproxycontrol.service
+
+#every minute
+OnCalendar=*-*-* *:*:00 
+
+#every 3 minute
+#OnCalendar=*:0/3
+
+
+[Install]
+WantedBy=timers.target

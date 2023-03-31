@@ -1,0 +1,2700 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Transform": ["LogverzTransform", "AWS::Serverless-2016-10-31"],
+	"Description": "Logverz-Logic UI and APIs",
+	"Metadata": {
+		"stackname":"Logverz-Logic",
+		"ResourceBluePrint":{
+		}
+	},
+	"Parameters": {
+		"PublicKeyVersion":{
+			"Type": "String",
+			"Default": "/Logverz/Logic/PublicKey:1"
+		},
+		"InitBucket":{
+			"Type": "String"
+		},
+		"LogicBucket":{
+			"Type": "String"
+		},
+		"WebRTCBucket":{
+			"Type": "String"
+		},
+		"PrivateSubnet":{
+			"Type":"String"
+		},
+		"DBSecGroup":{
+			"Type":"String"
+		},
+		"APIGWLogverzLogic":{
+			"Type":"String"
+		},
+		"RootResourceId":{
+			"Type":"String"
+		},
+		"Environment":{
+			"Type":"String",
+			"Default":"dev",
+			"AllowedValues": ["prod", "dev"]
+		},
+		"EnableSocialIdenties":{
+			"Type":"String"
+		},
+		"CognitoUserPoolDomain":{
+			"Type":"String"
+		},
+		"CognitoUserPool":{
+			"Type":"String"
+		},
+		"StageName":{
+			"Type":"String"
+		},
+		"ScaleFunction":{
+			"Type":"String"
+		},
+		"MaximumCacheTime":{
+			"Type":"String"
+		}
+	},
+	"Conditions": {
+		"EnableSocialIdenties" : {"Fn::Equals" : [{"Ref" : "EnableSocialIdenties"}, "true"]},
+		"DevEnvironment":{"Fn::Equals" : [{"Ref" : "Environment"}, "dev"]}
+	},
+	"Resources": {
+		"LogverzUsersPolicy": {
+			"Type": "AWS::IAM::Policy",
+			"Properties": {
+				"PolicyName": {
+					"Fn::Sub": "Logverz-UsersPolicy-${AWS::Region}"
+				},
+				"PolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Sid": "ListAndDescribe",
+							"Effect": "Allow",
+							"Action": [
+								"dynamodb:ListTables",
+								"dynamodb:DescribeTimeToLive",
+								"ssm:DescribeParameters",
+								"ec2:DescribeRegions",
+								"s3:ListAllMyBuckets",
+								"autoscaling:DescribeAutoScalingGroups",
+								"autoscaling:DescribeInstanceRefreshes"
+							],
+							"Resource": "*"
+						},
+						{
+							"Sid": "RDSreview",
+							"Effect": "Allow",
+							"Action": [
+								"rds:DescribeDBInstances",
+								"rds:DescribeDBClusters",
+								"rds:DescribeGlobalClusters",
+								"rds:ListTagsForResource"
+							],
+							"Resource": [{"Fn::Sub": "arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:*"},
+								{"Fn::Sub": "arn:aws:rds:${AWS::Region}:*:cluster:*"},
+								{"Fn::Sub": "arn:aws:rds::${AWS::AccountId}:global-cluster:*"}
+							]
+						},
+						{
+							"Sid": "SpecificTable",
+							"Effect": "Allow",
+							"Action": [
+								"dynamodb:DescribeTable",
+								"dynamodb:Get*",
+								"dynamodb:BatchGet*",
+								"dynamodb:Query",
+								"dynamodb:Scan"
+							],
+							"Resource": {
+								"Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Logverz*"
+							}
+						},
+						{
+							"Sid": "APIGWRootStartJobResource",
+							"Action": [
+								"apigateway:POST"
+							],
+							"Effect": "Allow",
+							"Resource": {
+								"Fn::Sub": ["arn:aws:apigateway:${AWS::Region}::/restapis/${APIGWLogverzLogic}/resources/${APIGWRootStartJobResource}/methods/POST", { "APIGWLogverzLogic":{"Ref": "APIGWLogverzLogic"}, "APIGWRootStartJobResource":{"Ref": "APIGWRootStartJobResource"}}]
+							}
+						},
+						{
+							"Sid": "ViewLogverzCFNStacksproperties",
+							"Effect": "Allow",
+							"Action": [
+								"cloudformation:GetTemplate",
+								"cloudformation:DescribeStackResources",
+								"cloudformation:DescribeStackResource",
+								"cloudformation:DescribeStackEvents",
+								"cloudformation:GetTemplateSummary",
+								"cloudformation:DescribeStacks",
+								"cloudformation:ListStackResources"
+							],
+							"Resource":{"Fn::Sub": "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/Logverz*/*"}
+						},
+						{
+
+							"Effect": "Allow",
+							"Action": "cloudformation:ListStacks",
+							"Resource": "*"
+						},
+						{
+							"Effect": "Allow",
+							"Action":[
+								"cloudformation:UpdateStack",
+								"cloudformation:GetStackPolicy",
+								"cloudformation:CreateChangeSet"
+							],
+							"Resource": {"Fn::Sub": "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/Logverz-Start*/*"}
+						},
+						{
+							"Sid": "LogverzStartCFNstackoptions",
+							"Effect": "Allow",
+							"Action": [
+								"iam:ListRoles",
+								"sns:ListTopics"
+							],
+							"Resource": "*"
+						},
+						{
+							"Sid": "LogverzStartCFNReview",
+							"Effect": "Allow",
+							"Action": [
+								"ssm:GetParameters",
+								"ssm:GetParameterHistory",
+								"ssm:ListTagsForResource"
+							],
+							"Resource": {
+								"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/Logverz/*"
+							}
+						},
+						{
+							"Sid": "LogverzStartCFNChangeset",
+							"Effect": "Allow",
+							"Action": [
+								"lambda:GetFunctionConfiguration",
+								"lambda:InvokeFunction"
+							],
+							"Resource": {
+								"Fn::Sub": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:Logverz-JobProducer"
+							}
+						},
+						{
+							"Sid": "LogverzStartCFNSubmit",
+							"Effect": "Allow",
+							"Action": [
+								"ssm:PutParameter"
+							],
+							"Resource": {
+								"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/Logverz/Engine/ExecutionHistory"
+							}
+						},
+						{
+							"Sid": "4debug",
+							"Action": [
+								"apigateway:GET"
+							],
+							"Effect": "Allow",
+							"Resource": "*"
+						},
+						{
+							"Action": [
+								"sqs:SendMessage"
+							],
+							"Effect": "Allow",
+							"Resource": {"Fn::Sub": "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:LogverzJobsQueue"}
+						},
+						{	"Sid": "CodeBuildView",
+							"Action":"codebuild:ListProjects",
+							"Effect": "Allow",
+							"Resource": "*"
+						},
+						{	"Sid": "CodeBuildViewDetails",
+							"Action":[
+								"codebuild:BatchGetProjects",
+								"codebuild:ListBuildsForProject",
+								"codebuild:BatchGetBuilds"
+							],
+							"Effect": "Allow",
+							"Resource": {"Fn::Sub": "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/Logverz*"}
+						},
+						{
+							"Sid": "GetCurrentUsersGroup",
+							"Effect": "Allow",
+							"Action": "iam:GetGroup",
+							"Resource": "*"
+						}
+					]
+				},
+				"Groups": [
+					{
+						"Fn::Sub": "LogverzUsers-${AWS::Region}"
+					},
+					{
+						"Fn::Sub": "LogverzPowerUsers-${AWS::Region}"
+					}]
+			}
+		},
+		"LogverzPowerUsersManagedPolicy": {
+			"Type": "AWS::IAM::ManagedPolicy",
+			"Properties": {
+				"Description" : "Provides Logverz components managmenet privilages",
+				"ManagedPolicyName": {
+					"Fn::Sub": "Logverz-PowerUsersPolicy2-${AWS::Region}"
+				},
+				"PolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Sid": "4debug",
+							"Action": [
+								"logs:DescribeLogGroups",
+								"logs:DescribeLogStreams",
+								"logs:GetLogEvents"
+							],
+							"Effect": "Allow",
+							"Resource": [{"Fn::Sub": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group::log-stream:*"},
+								{"Fn::Sub": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/Logverz*:log-stream:*"},
+								{"Fn::Sub": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/Logverz*:log-stream:*"},
+								{"Fn::Sub": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/Logverz*:log-stream:*"}
+							]
+						},
+						{
+							"Sid": "LogverzStartCFNReview",
+							"Effect": "Allow",
+							"Action": [
+								"ssm:GetParameter"
+							],
+							"Resource": {
+								"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/Logverz/*"
+							}
+						},
+						{
+							"Sid": "EC2LimitedtoLogverzResources",
+							"Effect": "Allow",
+							"Action": [
+								"ec2:RebootInstances",
+								"ec2:TerminateInstances",
+								"ec2:CreateFlowLogs",
+								"ec2:StopInstances",
+								"ec2:StartInstances"
+							],
+							"Resource": [
+								{"Fn::Sub": "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"},
+								{"Fn::Sub": "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:vpc-flow-log/*"}
+							],
+							"Condition": {
+								"StringEquals": {
+									"ec2:ResourceTag/Logverz": "true"
+								}
+							}
+						},
+						{
+							"Sid": "ViewComputeResources",
+							"Effect": "Allow",
+							"Action": [
+								"ec2:DescribeSpotFleetInstances",
+								"ec2:DescribeInstances",
+								"ec2:DescribeInstanceStatus",
+								"ec2:DescribeSubnets",
+								"ec2:DescribeSecurityGroups",
+								"ec2:DescribeInstanceAttribute",
+								"ec2:DescribeNetworkInterfaces",
+								"ec2:DescribeVpcs",
+								"ec2:DescribeAddresses",
+								"ec2:DescribeImages",
+								"ec2:DescribeVolumes",
+								"ec2:DescribeVolumeAttribute"
+							],
+							"Resource": "*"
+						},
+						{
+							"Sid": "ViewComputeResources2",
+							"Effect": "Allow",
+							"Action": [
+								"cloudwatch:DescribeAlarms"
+							],
+							"Resource":{"Fn::Sub": "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:*"}
+						},
+						{
+							"Sid": "AdjustCompute",
+							"Effect": "Allow",
+							"Action": [
+								"autoscaling:UpdateAutoScalingGroup"
+							],
+							"Resource": {"Fn::Sub": "arn:aws:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/Logverz*"}
+						},
+						{
+							"Sid": "RDSStartStop4allLogverzDatabases",
+							"Effect": "Allow",
+							"Action": [
+								"rds:StopDBInstance",
+								"rds:StartDBInstance",
+								"rds:StartDBCluster",
+								"rds:StopDBCluster"
+							],
+							"Resource": "*",
+							"Condition": {
+								"StringEquals": {
+									"rds:db-tag/Logverz": "true"
+								}
+							}
+						},
+						{
+							"Sid": "InvokeIdentitySync",
+							"Effect": "Allow",
+							"Action": [
+								"apigateway:POST"
+							],
+							"Resource":{
+								"Fn::Sub":[
+									"arn:aws:apigateway:${AWS::Region}::/restapis/${apigateway}/resources/${APIGWRootStartdentitySyncResource}/methods/POST", {"apigateway":{"Ref": "APIGWLogverzLogic"}, "APIGWRootStartdentitySyncResource":{"Ref":"APIGWRootStartdentitySyncResource"}}
+								]
+							}
+						},
+						{
+							"Sid": "LambdasList",
+							"Effect": "Allow",
+							"Action": [
+								"lambda:GetAccountSettings",
+								"lambda:ListFunctions",
+								"lambda:ListProvisionedConcurrencyConfigs"
+							],
+							"Resource":"*"
+						},
+						{
+							"Sid": "Lambda",
+							"Effect": "Allow",
+							"Action": [
+								"lambda:GetFunctionConfiguration",
+								"lambda:GetFunction"
+							],
+							"Resource": {"Fn::Sub":"arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:Logverz*"}
+						},
+						{
+							"Sid": "SpecificTable",
+							"Effect": "Allow",
+							"Action": [
+								"dynamodb:PutItem",
+								"dynamodb:DeleteItem"
+							],
+							"Resource":[{
+								"Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Logverz-Identities*"
+							}, {
+								"Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Logverz-Queries*"
+							} ]
+						},
+						{
+							"Sid": "CognitoSpecific",
+							"Effect": "Allow",
+							"Action": [
+								"cognito-idp:DescribeUserPool",
+								"cognito-idp:ListGroups",
+								"cognito-idp:DescribeIdentityProvider",
+								"cognito-idp:ListIdentityProviders",
+								"cognito-idp:GetGroup",
+								"cognito-idp:ListUserPoolClients",
+								"cognito-idp:DescribeUserPoolClient",
+								"cognito-idp:ListUsers"],
+							"Resource": {
+								"Fn::Sub":["arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${CognitoUserPool}", {"CognitoUserPool":{"Ref": "CognitoUserPool"}
+								}]
+							}
+						},
+						{
+							"Sid": "CognitoGlobal",
+							"Effect": "Allow",
+							"Action": [
+								"cognito-idp:ListUserPools",
+								"cognito-idp:GetUser",
+								"cognito-idp:DescribeUserPoolDomain"
+							],
+							"Resource": "*"
+						},
+						{
+							"Sid": "CodeBuildManage",
+							"Action":[
+								"codebuild:RetryBuild",
+								"codebuild:StopBuild"
+							],
+							"Effect": "Allow",
+							"Resource":{"Fn::Sub": "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/Logverz*"}
+						},
+						{
+							"Sid": "ScaleLogverzASGS",
+							"Action": [
+								"autoscaling:SetDesiredCapacity"
+							],
+							"Effect": "Allow",
+							"Resource": "*",
+							"Condition": {
+								"StringEquals": {
+									"autoscaling:ResourceTag/Logverz": "true"
+								}
+							}
+						},
+						{
+							"Sid": "TroubleshootinstanceStart",
+							"Effect": "Allow",
+							"Action": [
+								"ssm:StartSession"
+							],
+							"Resource": [
+								{"Fn::Sub": "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"}
+
+							],
+							"Condition": {
+								"StringEquals": {
+									"aws:ResourceTag/Logverz": "true"
+								}
+							}
+						},
+						{
+							"Sid": "TroubleshootinstanceManage",
+							"Effect": "Allow",
+							"Action": [
+								"ssm:TerminateSession",
+								"ssm:ResumeSession"
+							],
+							"Resource": [
+								"arn:aws:ssm:*:*:session/${aws:username}-*"
+							]
+						}
+					]
+				},
+				"Groups": [{
+					"Fn::Sub": "LogverzPowerUsers-${AWS::Region}"
+				}]
+			}
+		},
+		"APIGWLogging":{
+			"Type" : "AWS::ApiGateway::Account",
+			"DependsOn":"APIGWRole",
+			"Properties" : {
+				"CloudWatchRoleArn" : {"Fn::GetAtt" : ["APIGWRole", "Arn"] }
+			}
+		},
+		"APIGWLogGroup":{
+			"Type" : "AWS::Logs::LogGroup",
+			"Properties" : {
+				"LogGroupName" : "APIGWLogverzLogic",
+				"RetentionInDays" : 3
+			}
+		},
+		"APIGWRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [{
+						"Sid": "",
+						"Effect": "Allow",
+						"Principal": {
+							"Service": "apigateway.amazonaws.com"
+						},
+						"Action": "sts:AssumeRole"
+					}]
+				},
+				"Description": "Logverz Logic API GW role",
+				"Policies": [{
+					"PolicyName":"S3_access_to_the_bucket",
+					"PolicyDocument": {
+						"Version": "2012-10-17",
+						"Statement": [{
+							"Effect": "Allow",
+							"Action": [
+								"s3:Get*",
+								"s3:List*"
+							],
+							"Resource": [
+								{
+									"Fn::Join": [
+										"",
+										[
+											"arn:aws:s3:::",
+											{
+												"Ref" : "LogicBucket"
+											},
+											"/*"
+										]
+									]
+								}, {
+									"Fn::Join": [
+										"",
+										[
+											"arn:aws:s3:::",
+											{
+												"Ref" : "LogicBucket"
+											},
+											"/"
+										]
+									]
+								}
+							]
+						}]
+					}
+				}, {
+					"PolicyName":"S3_List_Buckets",
+					"PolicyDocument": {
+						"Version": "2012-10-17",
+						"Statement": [{
+							"Effect": "Allow",
+							"Action": [
+								"s3:GetBucketLocation",
+								"s3:ListAllMyBuckets"
+							],
+							"Resource": "*"
+						}]
+					}
+				}
+				],
+				"ManagedPolicyArns":["arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"],
+				"RoleName": {
+					"Fn::Join": ["", ["LogverzLogic-APIGW-", {
+						"Ref": "AWS::Region"
+					}]]
+				}
+			}
+		},
+		"APIGWRootInfoResource":{
+			"Type" : "AWS::ApiGateway::Resource",
+			"Properties" : {
+				"ParentId" : {"Ref": "RootResourceId"},
+				"PathPart" : "Info",
+				"RestApiId" : {
+					"Ref": "APIGWLogverzLogic"
+				}
+			}
+		},
+		"APIGWRootHTTPResource":{
+			"Type" : "AWS::ApiGateway::Resource",
+			"Properties" : {
+				"ParentId" : {"Ref": "RootResourceId"},
+				"PathPart" : "HTTP",
+				"RestApiId" : {
+					"Ref": "APIGWLogverzLogic"
+				}
+			}
+		},
+		"APIGWRootAuthResource":{
+			"Type" : "AWS::ApiGateway::Resource",
+			"Properties" : {
+				"ParentId" : {"Ref": "RootResourceId"},
+				"PathPart" : "Auth",
+				"RestApiId" : {
+					"Ref": "APIGWLogverzLogic"
+				}
+			}
+		},
+		"APIGWRootHTTPRelayResource":{
+			"Type" : "AWS::ApiGateway::Resource",
+			"Properties" : {
+				"ParentId" : {
+					"Ref": "APIGWRootHTTPResource"
+				},
+				"PathPart" : "{proxy+}",
+				"RestApiId" : {
+					"Ref": "APIGWLogverzLogic"
+				}
+			}
+		},
+		"APIGWInfoGetMethod": {
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"ResourceId": {
+					"Ref":"APIGWRootInfoResource"
+				},
+				"HttpMethod": "GET",
+				"AuthorizationType": "NONE",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod":"POST",
+					"Uri": { "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:Logverz-Info/invocations"},
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"IntegrationResponses": [{
+						"StatusCode": "200",
+						"ResponseTemplates": {
+							"application/json": "null"
+						}
+					}]
+				},
+				"MethodResponses": [
+					{"StatusCode" : "200",
+						"ResponseModels":{"application/json":"Empty", "image/png":"Empty"}
+					}
+				]
+			}
+		},
+		"APIGWInfoOptionsMethod":{
+			"Type": "AWS::ApiGateway::Method",
+			"Condition" : "DevEnvironment",
+			"Properties": {
+
+				"RestApiId": {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"ResourceId": {
+					"Ref":"APIGWRootInfoResource"
+				},
+				"HttpMethod": "OPTIONS",
+				"AuthorizationType": "NONE",
+				"Integration": {
+					"IntegrationResponses": [
+						{
+							"StatusCode": 200,
+							"ResponseParameters": {
+								"method.response.header.Access-Control-Allow-Credentials": "'true'",
+								"method.response.header.Access-Control-Allow-Headers": "'Content-Type,Set-Cookie,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+								"method.response.header.Access-Control-Allow-Methods": "'GET,OPTIONS'",
+								"method.response.header.Access-Control-Allow-Origin": "'http://localhost:8080'"
+							},
+							"ResponseTemplates": {
+								"application/json": "$input.json(\"$\")\n#set($domains = [\"https://testapi.logleads.com\",\"http://localhost:8080\",\"http://127.0.0.1:8080\"])\n#set($origin = $input.params(\"origin\"))\n#if($domains.contains($origin))\n#set($context.responseOverride.header.Access-Control-Allow-Origin=\"$origin\")\n#end"
+							}
+						}
+					],
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"RequestTemplates": {
+						"application/json": "{\"statusCode\": 200}"
+					},
+					"Type": "MOCK"
+				},
+				"MethodResponses": [
+					{
+						"StatusCode": 200,
+						"ResponseModels": {
+							"application/json": "Empty"
+						},
+						"ResponseParameters": {
+							"method.response.header.Access-Control-Allow-Headers": false,
+							"method.response.header.Access-Control-Allow-Methods": false,
+							"method.response.header.Access-Control-Allow-Origin": false,
+							"method.response.header.Access-Control-Allow-Credentials": false
+						}
+					}
+				]
+			}
+		},
+		"APIGWHTTPRelayGetMethod": {
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"ResourceId": {
+					"Ref":"APIGWRootHTTPRelayResource"
+				},
+				"HttpMethod": "GET",
+				"AuthorizationType": "NONE",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod":"POST",
+					"Uri":
+					{ "Fn::Sub": [ "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${functionname}/invocations", { "functionname":{"Ref": "LogverzHTTPRelayFunction"}}]},
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"IntegrationResponses": [{
+						"StatusCode": "200",
+						"ResponseTemplates": {
+							"application/json": "null"
+						}
+					}]
+				},
+				"MethodResponses": [
+					{"StatusCode" : "200",
+						"ResponseModels":{"application/json":"Empty", "image/png":"Empty"}
+					}
+				]
+			}
+		},
+		"APIGWHTTPRelayOptionsMethod":{
+			"Type": "AWS::ApiGateway::Method",
+			"Condition" : "DevEnvironment",
+			"Properties": {
+
+				"RestApiId": {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"ResourceId": {
+					"Ref":"APIGWRootHTTPRelayResource"
+				},
+				"HttpMethod": "OPTIONS",
+				"AuthorizationType": "NONE",
+				"Integration": {
+					"IntegrationResponses": [
+						{
+							"StatusCode": 200,
+							"ResponseParameters": {
+								"method.response.header.Access-Control-Allow-Credentials": "'true'",
+								"method.response.header.Access-Control-Allow-Headers": "'Content-Type,Set-Cookie,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+								"method.response.header.Access-Control-Allow-Methods": "'GET,OPTIONS'",
+								"method.response.header.Access-Control-Allow-Origin": "'http://localhost:8080'"
+							},
+							"ResponseTemplates": {
+								"application/json": "$input.json(\"$\")\n#set($domains = [\"https://testapi.logleads.com\",\"http://localhost:8080\",\"http://127.0.0.1:8080\"])\n#set($origin = $input.params(\"origin\"))\n#if($domains.contains($origin))\n#set($context.responseOverride.header.Access-Control-Allow-Origin=\"$origin\")\n#end"
+							}
+						}
+					],
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"RequestTemplates": {
+						"application/json": "{\"statusCode\": 200}"
+					},
+					"Type": "MOCK"
+				},
+				"MethodResponses": [
+					{
+						"StatusCode": 200,
+						"ResponseModels": {
+							"application/json": "Empty"
+						},
+						"ResponseParameters": {
+							"method.response.header.Access-Control-Allow-Headers": false,
+							"method.response.header.Access-Control-Allow-Methods": false,
+							"method.response.header.Access-Control-Allow-Origin": false,
+							"method.response.header.Access-Control-Allow-Credentials": false
+						}
+					}
+				]
+			}
+		},
+		"APIGWAuthPostMethod": {
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"ResourceId": {
+					"Ref":"APIGWRootAuthResource"
+				},
+				"HttpMethod": "POST",
+				"AuthorizationType": "NONE",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod":"POST",
+					"Uri":
+					{ "Fn::Sub": [ "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${functionname}/invocations", { "functionname":{"Ref": "LogverzLoginFunction"}}]},
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"IntegrationResponses": [{
+						"StatusCode": "200",
+						"ResponseTemplates": {
+							"application/json": "null"
+						}
+					}]
+				},
+				"MethodResponses": [
+					{"StatusCode" : "200",
+						"ResponseModels":{"application/json":"Empty", "image/png":"Empty"}
+					}
+				]
+			}
+		},
+		"APIGWAuthGetMethod": {
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"ResourceId": {
+					"Ref":"APIGWRootAuthResource"
+				},
+				"HttpMethod": "GET",
+				"AuthorizationType": "NONE",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod":"POST",
+					"Uri": { "Fn::Sub": [ "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${functionname}/invocations", { "functionname":{"Ref": "LogverzLoginFunction"}}]},
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"IntegrationResponses": [{
+						"StatusCode": "200",
+						"ResponseTemplates": {
+							"application/json": "null"
+						}
+					}]
+				},
+				"MethodResponses": [
+					{"StatusCode" : "200",
+						"ResponseModels":{"application/json":"Empty", "image/png":"Empty"}
+					}
+				]
+			}
+		},
+		"APIGWAuthOptionsMethod":{
+			"Type": "AWS::ApiGateway::Method",
+			"Condition" : "DevEnvironment",
+			"Properties": {
+
+				"RestApiId": {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"ResourceId": {
+					"Ref":"APIGWRootAuthResource"
+				},
+				"HttpMethod": "OPTIONS",
+				"AuthorizationType": "NONE",
+				"Integration": {
+					"IntegrationResponses": [
+						{
+							"StatusCode": 200,
+							"ResponseParameters": {
+								"method.response.header.Access-Control-Allow-Credentials": "'true'",
+								"method.response.header.Access-Control-Allow-Headers": "'Content-Type,Set-Cookie,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+								"method.response.header.Access-Control-Allow-Methods": "'GET,POST,OPTIONS'",
+								"method.response.header.Access-Control-Allow-Origin": "'http://localhost:8080'"
+							},
+							"ResponseTemplates": {
+								"application/json": "$input.json(\"$\")\n#set($domains = [\"https://testapi.logleads.com\",\"http://localhost:8080\",\"http://127.0.0.1:8080\"])\n#set($origin = $input.params(\"origin\"))\n#if($domains.contains($origin))\n#set($context.responseOverride.header.Access-Control-Allow-Origin=\"$origin\")\n#end"
+							}
+						}
+					],
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"RequestTemplates": {
+						"application/json": "{\"statusCode\": 200}"
+					},
+					"Type": "MOCK"
+				},
+				"MethodResponses": [
+					{
+						"StatusCode": 200,
+						"ResponseModels": {
+							"application/json": "Empty"
+						},
+						"ResponseParameters": {
+							"method.response.header.Access-Control-Allow-Headers": false,
+							"method.response.header.Access-Control-Allow-Methods": false,
+							"method.response.header.Access-Control-Allow-Origin": false,
+							"method.response.header.Access-Control-Allow-Credentials": false
+						}
+					}
+				]
+			}
+		},
+		"APIGWRootStartResource":{
+			"Type" : "AWS::ApiGateway::Resource",
+			"Properties" : {
+				"ParentId" : {"Ref": "RootResourceId"},
+				"PathPart" : "Start",
+				"RestApiId" : {
+					"Ref": "APIGWLogverzLogic"
+				}
+			}
+		},
+		"APIGWRootStartJobResource":{
+			"Type" : "AWS::ApiGateway::Resource",
+			"Properties" : {
+				"ParentId" : {
+					"Ref": "APIGWRootStartResource"
+				},
+				"PathPart" : "Job",
+				"RestApiId" : {
+					"Ref": "APIGWLogverzLogic"
+				}
+			}
+		},
+		"APIGWStartJobPostMethod": {
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"ResourceId": {
+					"Ref":"APIGWRootStartJobResource"
+				},
+				"HttpMethod": "POST",
+				"AuthorizationType": "NONE",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod":"POST",
+					"Uri":
+					{ "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:Logverz-JobProducer/invocations"},
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"IntegrationResponses": [{
+						"StatusCode": "200",
+						"ResponseTemplates": {
+							"application/json": "null"
+						}
+					}]
+				},
+				"MethodResponses": [
+					{"StatusCode" : "200",
+						"ResponseModels":{"application/json":"Empty", "image/png":"Empty"}
+					}
+				]
+			}
+		},
+		"APIGWStartJobOptionsMethod":{
+			"Type": "AWS::ApiGateway::Method",
+			"Condition" : "DevEnvironment",
+			"Properties": {
+
+				"RestApiId": {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"ResourceId": {
+					"Ref":"APIGWRootStartJobResource"
+				},
+				"HttpMethod": "OPTIONS",
+				"AuthorizationType": "NONE",
+				"Integration": {
+					"IntegrationResponses": [
+						{
+							"StatusCode": 200,
+							"ResponseParameters": {
+								"method.response.header.Access-Control-Allow-Credentials": "'true'",
+								"method.response.header.Access-Control-Allow-Headers": "'Content-Type,Set-Cookie,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+								"method.response.header.Access-Control-Allow-Methods": "'POST,OPTIONS'",
+								"method.response.header.Access-Control-Allow-Origin": "'http://localhost:8080'"
+							},
+							"ResponseTemplates": {
+								"application/json": "$input.json(\"$\")\n#set($domains = [\"https://testapi.logleads.com\",\"http://localhost:8080\",\"http://127.0.0.1:8080\"])\n#set($origin = $input.params(\"origin\"))\n#if($domains.contains($origin))\n#set($context.responseOverride.header.Access-Control-Allow-Origin=\"$origin\")\n#end"
+							}
+						}
+					],
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"RequestTemplates": {
+						"application/json": "{\"statusCode\": 200}"
+					},
+					"Type": "MOCK"
+				},
+				"MethodResponses": [
+					{
+						"StatusCode": 200,
+						"ResponseModels": {
+							"application/json": "Empty"
+						},
+						"ResponseParameters": {
+							"method.response.header.Access-Control-Allow-Headers": false,
+							"method.response.header.Access-Control-Allow-Methods": false,
+							"method.response.header.Access-Control-Allow-Origin": false,
+							"method.response.header.Access-Control-Allow-Credentials": false
+						}
+					}
+				]
+			}
+		},
+		"APIGWRootStart2ScaleResource":{
+			"Type" : "AWS::ApiGateway::Resource",
+			"Properties" : {
+				"ParentId" : {
+					"Ref": "APIGWRootStartResource"
+				},
+				"PathPart" : "ToScale",
+				"RestApiId" : {
+					"Ref": "APIGWLogverzLogic"
+				}
+			}
+		},
+		"APIGWStart2ScalePostMethod": {
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"ResourceId": {
+					"Ref":"APIGWRootStart2ScaleResource"
+				},
+				"HttpMethod": "POST",
+				"AuthorizationType": "NONE",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod":"POST",
+					"Uri":
+					{ "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:Logverz-Scale/invocations"},
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"IntegrationResponses": [{
+						"StatusCode": "200",
+						"ResponseTemplates": {
+							"application/json": "null"
+						}
+					}]
+				},
+				"MethodResponses": [
+					{"StatusCode" : "200",
+						"ResponseModels":{"application/json":"Empty", "image/png":"Empty"}
+					}
+				]
+			}
+		},
+		"APIGWStart2ScaleOptionsMethod":{
+			"Type": "AWS::ApiGateway::Method",
+			"Condition" : "DevEnvironment",
+			"Properties": {
+
+				"RestApiId": {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"ResourceId": {
+					"Ref":"APIGWRootStart2ScaleResource"
+				},
+				"HttpMethod": "OPTIONS",
+				"AuthorizationType": "NONE",
+				"Integration": {
+					"IntegrationResponses": [
+						{
+							"StatusCode": 200,
+							"ResponseParameters": {
+								"method.response.header.Access-Control-Allow-Credentials": "'true'",
+								"method.response.header.Access-Control-Allow-Headers": "'Content-Type,Set-Cookie,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+								"method.response.header.Access-Control-Allow-Methods": "'POST,OPTIONS'",
+								"method.response.header.Access-Control-Allow-Origin": "'http://localhost:8080'"
+							},
+							"ResponseTemplates": {
+								"application/json": "$input.json(\"$\")\n#set($domains = [\"https://testapi.logleads.com\",\"http://localhost:8080\",\"http://127.0.0.1:8080\"])\n#set($origin = $input.params(\"origin\"))\n#if($domains.contains($origin))\n#set($context.responseOverride.header.Access-Control-Allow-Origin=\"$origin\")\n#end"
+							}
+						}
+					],
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"RequestTemplates": {
+						"application/json": "{\"statusCode\": 200}"
+					},
+					"Type": "MOCK"
+				},
+				"MethodResponses": [
+					{
+						"StatusCode": 200,
+						"ResponseModels": {
+							"application/json": "Empty"
+						},
+						"ResponseParameters": {
+							"method.response.header.Access-Control-Allow-Headers": false,
+							"method.response.header.Access-Control-Allow-Methods": false,
+							"method.response.header.Access-Control-Allow-Origin": false,
+							"method.response.header.Access-Control-Allow-Credentials": false
+						}
+					}
+				]
+			}
+		},
+		"APIGW2ScalePermission":{
+			"Type": "AWS::Lambda::Permission",
+			"Properties": {
+				"Action": "lambda:InvokeFunction",
+				"SourceArn": {
+					"Fn::Join": [
+						"",
+						[
+							"arn:aws:execute-api:",
+							{
+								"Ref": "AWS::Region"
+							},
+							":",
+							{
+								"Ref": "AWS::AccountId"
+							},
+							":",
+							{
+								"Ref": "APIGWLogverzLogic"
+							},
+							"/*"
+						]
+					]
+				},
+				"FunctionName": {
+					"Fn::Join": [
+						"",
+						[
+							"arn:aws:lambda:",
+							{
+								"Ref": "AWS::Region"
+							},
+							":",
+							{
+								"Ref": "AWS::AccountId"
+							},
+							":function:",
+							"Logverz-Scale"
+						]
+					]
+				},
+				"Principal": "apigateway.amazonaws.com"
+			}
+		},
+		"APIGWRootWebRTCResource":{
+			"Type" : "AWS::ApiGateway::Resource",
+			"Properties" : {
+				"ParentId" : {"Ref": "RootResourceId"},
+				"PathPart" : "WebRTC",
+				"RestApiId" : {
+					"Ref": "APIGWLogverzLogic"
+				}
+			}
+		},
+		"APIGWRootWebRTCSignalResource":{
+			"Type" : "AWS::ApiGateway::Resource",
+			"Properties" : {
+				"ParentId" : {
+					"Ref": "APIGWRootWebRTCResource"
+				},
+				"PathPart" : "Signal",
+				"RestApiId" : {
+					"Ref": "APIGWLogverzLogic"
+				}
+			}
+		},
+		"APIGWebRTCSignalPostMethod": {
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"ResourceId": {
+					"Ref":"APIGWRootWebRTCSignalResource"
+				},
+				"HttpMethod": "POST",
+				"AuthorizationType": "NONE",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod":"POST",
+					"Uri": { "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:Logverz-WebRTCSignal/invocations"},
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"IntegrationResponses": [{
+						"StatusCode": "200",
+						"ResponseTemplates": {
+							"application/json": "null"
+						}
+					}]
+				},
+				"MethodResponses": [
+					{"StatusCode" : "200",
+						"ResponseModels":{"application/json":"Empty", "image/png":"Empty"}
+					}
+				]
+			}
+		},
+		"APIGWebRTCSignalOptionsMethod":{
+			"Type": "AWS::ApiGateway::Method",
+			"Condition" : "DevEnvironment",
+			"Properties": {
+
+				"RestApiId": {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"ResourceId": {
+					"Ref":"APIGWRootWebRTCSignalResource"
+				},
+				"HttpMethod": "OPTIONS",
+				"AuthorizationType": "NONE",
+				"Integration": {
+					"IntegrationResponses": [
+						{
+							"StatusCode": 200,
+							"ResponseParameters": {
+								"method.response.header.Access-Control-Allow-Credentials": "'true'",
+								"method.response.header.Access-Control-Allow-Headers": "'Content-Type,Set-Cookie,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+								"method.response.header.Access-Control-Allow-Methods": "'POST,OPTIONS'",
+								"method.response.header.Access-Control-Allow-Origin": "'http://localhost:8080'"
+							},
+							"ResponseTemplates": {
+								"application/json": "$input.json(\"$\")\n#set($domains = [\"https://testapi.logleads.com\",\"http://localhost:8080\",\"http://127.0.0.1:8080\"])\n#set($origin = $input.params(\"origin\"))\n#if($domains.contains($origin))\n#set($context.responseOverride.header.Access-Control-Allow-Origin=\"$origin\")\n#end"
+							}
+						}
+					],
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"RequestTemplates": {
+						"application/json": "{\"statusCode\": 200}"
+					},
+					"Type": "MOCK"
+				},
+				"MethodResponses": [
+					{
+						"StatusCode": 200,
+						"ResponseModels": {
+							"application/json": "Empty"
+						},
+						"ResponseParameters": {
+							"method.response.header.Access-Control-Allow-Headers": false,
+							"method.response.header.Access-Control-Allow-Methods": false,
+							"method.response.header.Access-Control-Allow-Origin": false,
+							"method.response.header.Access-Control-Allow-Credentials": false
+						}
+					}
+				]
+			}
+		},
+		"APIGWRootStartdentitySyncResource": {
+			"Type" : "AWS::ApiGateway::Resource",
+			"Properties" : {
+				"ParentId" : {
+					"Ref": "APIGWRootStartResource"
+				},
+				"PathPart" : "IdentitySync",
+				"RestApiId" : {
+					"Ref": "APIGWLogverzLogic"
+				}
+			}
+		},
+		"APIGWStartIdentitySyncPostMethod": {
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"ResourceId": {
+					"Ref":"APIGWRootStartdentitySyncResource"
+				},
+				"HttpMethod": "POST",
+				"AuthorizationType": "NONE",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod":"POST",
+					"Uri":
+					{ "Fn::Sub": [ "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${functionname}/invocations", { "functionname":{"Ref": "LogverzIdentySyncFunction"}}]},
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"IntegrationResponses": [{
+						"StatusCode": "200",
+						"ResponseTemplates": {
+							"application/json": "null"
+						}
+					}]
+				},
+				"MethodResponses": [
+					{"StatusCode" : "200",
+						"ResponseModels":{"application/json":"Empty", "image/png":"Empty"}
+					}
+				]
+			}
+		},
+		"APIGWStartIdentitySyncOptionsMethod":{
+			"Type": "AWS::ApiGateway::Method",
+			"Condition" : "DevEnvironment",
+			"Properties": {
+
+				"RestApiId": {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"ResourceId": {
+					"Ref":"APIGWRootStartdentitySyncResource"
+				},
+				"HttpMethod": "OPTIONS",
+				"AuthorizationType": "NONE",
+				"Integration": {
+					"IntegrationResponses": [
+						{
+							"StatusCode": 200,
+							"ResponseParameters": {
+								"method.response.header.Access-Control-Allow-Credentials": "'true'",
+								"method.response.header.Access-Control-Allow-Headers": "'Content-Type,Set-Cookie,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+								"method.response.header.Access-Control-Allow-Methods": "'POST,OPTIONS'",
+								"method.response.header.Access-Control-Allow-Origin": "'http://localhost:8080'"
+							},
+							"ResponseTemplates": {
+								"application/json": "$input.json(\"$\")\n#set($domains = [\"https://testapi.logleads.com\",\"http://localhost:8080\",\"http://127.0.0.1:8080\"])\n#set($origin = $input.params(\"origin\"))\n#if($domains.contains($origin))\n#set($context.responseOverride.header.Access-Control-Allow-Origin=\"$origin\")\n#end"
+							}
+						}
+					],
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"RequestTemplates": {
+						"application/json": "{\"statusCode\": 200}"
+					},
+					"Type": "MOCK"
+				},
+				"MethodResponses": [
+					{
+						"StatusCode": 200,
+						"ResponseModels": {
+							"application/json": "Empty"
+						},
+						"ResponseParameters": {
+							"method.response.header.Access-Control-Allow-Headers": false,
+							"method.response.header.Access-Control-Allow-Methods": false,
+							"method.response.header.Access-Control-Allow-Origin": false,
+							"method.response.header.Access-Control-Allow-Credentials": false
+						}
+					}
+				]
+			}
+		},
+		"APIGWRootNOSQLResource":{
+			"Type" : "AWS::ApiGateway::Resource",
+			"Properties" : {
+				"ParentId" : {"Ref": "RootResourceId"},
+				"PathPart" : "NoSql",
+				"RestApiId" : {
+					"Ref": "APIGWLogverzLogic"
+				}
+			}
+		},
+		"APIGWRootV3Resource":{
+			"Type" : "AWS::ApiGateway::Resource",
+			"Properties" : {
+				"ParentId" : {"Ref": "RootResourceId"},
+				"PathPart" : {"Ref":"StageName"},
+				"RestApiId" : {
+					"Ref": "APIGWLogverzLogic"
+				}
+			}
+		},
+		"APIGWRootV3HTTPResource":{
+			"Type" : "AWS::ApiGateway::Resource",
+			"Properties" : {
+				"ParentId" : {"Ref": "APIGWRootV3Resource"},
+				"PathPart" : "HTTP",
+				"RestApiId" : {
+					"Ref": "APIGWLogverzLogic"
+				}
+			}
+		},
+		"APIGWRootV3HTTPRelayResource":{
+			"Type" : "AWS::ApiGateway::Resource",
+			"Properties" : {
+				"ParentId" : {
+					"Ref": "APIGWRootV3HTTPResource"
+				},
+				"PathPart" : "{proxy+}",
+				"RestApiId" : {
+					"Ref": "APIGWLogverzLogic"
+				}
+			}
+		},
+		"APIGWV3HTTPRelayGetMethod": {
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"ResourceId": {
+					"Ref":"APIGWRootV3HTTPRelayResource"
+				},
+				"HttpMethod": "GET",
+				"AuthorizationType": "NONE",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod":"POST",
+					"Uri":
+					{ "Fn::Sub": [ "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${functionname}/invocations", { "functionname":{"Ref": "LogverzHTTPRelayFunction"}}]},
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"IntegrationResponses": [{
+						"StatusCode": "200",
+						"ResponseTemplates": {
+							"application/json": "null"
+						}
+					}]
+				},
+				"MethodResponses": [
+					{"StatusCode" : "200",
+						"ResponseModels":{"application/json":"Empty", "image/png":"Empty"}
+					}
+				]
+			}
+		},
+		"APIGWV3HTTPRelayOptionsMethod":{
+			"Type": "AWS::ApiGateway::Method",
+			"Condition" : "DevEnvironment",
+			"Properties": {
+
+				"RestApiId": {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"ResourceId": {
+					"Ref":"APIGWRootV3HTTPRelayResource"
+				},
+				"HttpMethod": "OPTIONS",
+				"AuthorizationType": "NONE",
+				"Integration": {
+					"IntegrationResponses": [
+						{
+							"StatusCode": 200,
+							"ResponseParameters": {
+								"method.response.header.Access-Control-Allow-Credentials": "'true'",
+								"method.response.header.Access-Control-Allow-Headers": "'Content-Type,Set-Cookie,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+								"method.response.header.Access-Control-Allow-Methods": "'GET,OPTIONS'",
+								"method.response.header.Access-Control-Allow-Origin": "'http://localhost:8080'"
+							},
+							"ResponseTemplates": {
+								"application/json": "$input.json(\"$\")\n#set($domains = [\"https://testapi.logleads.com\",\"http://localhost:8080\",\"http://127.0.0.1:8080\"])\n#set($origin = $input.params(\"origin\"))\n#if($domains.contains($origin))\n#set($context.responseOverride.header.Access-Control-Allow-Origin=\"$origin\")\n#end"
+							}
+						}
+					],
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"RequestTemplates": {
+						"application/json": "{\"statusCode\": 200}"
+					},
+					"Type": "MOCK"
+				},
+				"MethodResponses": [
+					{
+						"StatusCode": 200,
+						"ResponseModels": {
+							"application/json": "Empty"
+						},
+						"ResponseParameters": {
+							"method.response.header.Access-Control-Allow-Headers": false,
+							"method.response.header.Access-Control-Allow-Methods": false,
+							"method.response.header.Access-Control-Allow-Origin": false,
+							"method.response.header.Access-Control-Allow-Credentials": false
+						}
+					}
+				]
+			}
+		},
+		"APIGWRootNOSQLPostMethod": {
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"ResourceId": {
+					"Ref":"APIGWRootNOSQLResource"
+				},
+				"HttpMethod": "POST",
+				"AuthorizationType": "NONE",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod":"POST",
+					"Uri":
+					{ "Fn::Sub": [ "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${functionname}/invocations", { "functionname":{"Ref": "LogverzNoSQLFunction"}}]},
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"IntegrationResponses": [{
+						"StatusCode": "200",
+						"ResponseTemplates": {
+							"application/json": "null"
+						}
+					}]
+				},
+				"MethodResponses": [
+					{"StatusCode" : "200",
+						"ResponseModels":{"application/json":"Empty", "image/png":"Empty"}
+					}
+				]
+			}
+		},
+		"APIGWRootNOSQLOptionsMethod":{
+			"Type": "AWS::ApiGateway::Method",
+			"Condition" : "DevEnvironment",
+			"Properties": {
+
+				"RestApiId": {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"ResourceId": {
+					"Ref":"APIGWRootNOSQLResource"
+				},
+				"HttpMethod": "OPTIONS",
+				"AuthorizationType": "NONE",
+				"Integration": {
+					"IntegrationResponses": [
+						{
+							"StatusCode": 200,
+							"ResponseParameters": {
+								"method.response.header.Access-Control-Allow-Credentials": "'true'",
+								"method.response.header.Access-Control-Allow-Headers": "'Content-Type,Set-Cookie,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+								"method.response.header.Access-Control-Allow-Methods": "'POST,OPTIONS'",
+								"method.response.header.Access-Control-Allow-Origin": "'http://localhost:8080'"
+							},
+							"ResponseTemplates": {
+								"application/json": "$input.json(\"$\")\n#set($domains = [\"https://testapi.logleads.com\",\"http://localhost:8080\",\"http://127.0.0.1:8080\"])\n#set($origin = $input.params(\"origin\"))\n#if($domains.contains($origin))\n#set($context.responseOverride.header.Access-Control-Allow-Origin=\"$origin\")\n#end"
+							}
+						}
+					],
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"RequestTemplates": {
+						"application/json": "{\"statusCode\": 200}"
+					},
+					"Type": "MOCK"
+				},
+				"MethodResponses": [
+					{
+						"StatusCode": 200,
+						"ResponseModels": {
+							"application/json": "Empty"
+						},
+						"ResponseParameters": {
+							"method.response.header.Access-Control-Allow-Headers": false,
+							"method.response.header.Access-Control-Allow-Methods": false,
+							"method.response.header.Access-Control-Allow-Origin": false,
+							"method.response.header.Access-Control-Allow-Credentials": false
+						}
+					}
+				]
+			}
+		},
+		"APIGWInfoPermission":{
+			"Type": "AWS::Lambda::Permission",
+			"Properties": {
+				"Action": "lambda:InvokeFunction",
+				"SourceArn": {
+					"Fn::Join": [
+						"",
+						[
+							"arn:aws:execute-api:",
+							{
+								"Ref": "AWS::Region"
+							},
+							":",
+							{
+								"Ref": "AWS::AccountId"
+							},
+							":",
+							{
+								"Ref": "APIGWLogverzLogic"
+							},
+							"/*"
+						]
+					]
+				},
+				"FunctionName": {
+					"Fn::Join": [
+						"",
+						[
+							"arn:aws:lambda:",
+							{
+								"Ref": "AWS::Region"
+							},
+							":",
+							{
+								"Ref": "AWS::AccountId"
+							},
+							":function:",
+							{
+								"Ref": "LogverzInfoFunction"
+							}
+						]
+					]
+				},
+				"Principal": "apigateway.amazonaws.com"
+			}
+		},
+		"APIGWHTTPRelayPermission":{
+			"Type": "AWS::Lambda::Permission",
+			"Properties": {
+				"Action": "lambda:InvokeFunction",
+				"SourceArn": {
+					"Fn::Join": [
+						"",
+						[
+							"arn:aws:execute-api:",
+							{
+								"Ref": "AWS::Region"
+							},
+							":",
+							{
+								"Ref": "AWS::AccountId"
+							},
+							":",
+							{
+								"Ref": "APIGWLogverzLogic"
+							},
+							"/*"
+						]
+					]
+				},
+				"FunctionName": {
+					"Fn::Join": [
+						"",
+						[
+							"arn:aws:lambda:",
+							{
+								"Ref": "AWS::Region"
+							},
+							":",
+							{
+								"Ref": "AWS::AccountId"
+							},
+							":function:",
+							{
+								"Ref": "LogverzHTTPRelayFunction"
+							}
+						]
+					]
+				},
+				"Principal": "apigateway.amazonaws.com"
+			}
+		},
+		"APIGWAuthPermission":{
+			"Type": "AWS::Lambda::Permission",
+			"Properties": {
+				"Action": "lambda:InvokeFunction",
+				"SourceArn": {
+					"Fn::Join": [
+						"",
+						[
+							"arn:aws:execute-api:",
+							{
+								"Ref": "AWS::Region"
+							},
+							":",
+							{
+								"Ref": "AWS::AccountId"
+							},
+							":",
+							{
+								"Ref": "APIGWLogverzLogic"
+							},
+							"/*"
+						]
+					]
+				},
+				"FunctionName": {
+					"Fn::Join": [
+						"",
+						[
+							"arn:aws:lambda:",
+							{
+								"Ref": "AWS::Region"
+							},
+							":",
+							{
+								"Ref": "AWS::AccountId"
+							},
+							":function:",
+							{
+								"Ref": "LogverzLoginFunction"
+							}
+						]
+					]
+				},
+				"Principal": "apigateway.amazonaws.com"
+			}
+		},
+		"APIGWIdentitySyncPermission":{
+			"Type": "AWS::Lambda::Permission",
+			"Properties": {
+				"Action": "lambda:InvokeFunction",
+				"SourceArn": {
+					"Fn::Join": [
+						"",
+						[
+							"arn:aws:execute-api:",
+							{
+								"Ref": "AWS::Region"
+							},
+							":",
+							{
+								"Ref": "AWS::AccountId"
+							},
+							":",
+							{
+								"Ref": "APIGWLogverzLogic"
+							},
+							"/*"
+						]
+					]
+				},
+				"FunctionName": {
+					"Fn::Join": [
+						"",
+						[
+							"arn:aws:lambda:",
+							{
+								"Ref": "AWS::Region"
+							},
+							":",
+							{
+								"Ref": "AWS::AccountId"
+							},
+							":function:",
+							{"Ref": "LogverzIdentySyncFunction"}
+						]
+					]
+				},
+				"Principal": "apigateway.amazonaws.com"
+			}
+		},
+		"IdentitySyncPostdeploymentResourcePermission":{
+			"Type": "AWS::Lambda::Permission",
+			"Properties": {
+				"Action": "lambda:InvokeFunctionUrl",
+				"SourceArn": {
+					"Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/Logverz-IdentitySyncRole-${AWS::Region}"
+				},
+				"FunctionName": {
+					"Fn::Join": [
+						"",
+						[
+							"arn:aws:lambda:",
+							{
+								"Ref": "AWS::Region"
+							},
+							":",
+							{
+								"Ref": "AWS::AccountId"
+							},
+							":function:",
+							{"Ref": "LogverzIdentySyncFunction"}
+						]
+					]
+				},
+				"Principal": "lambda.amazonaws.com"
+			}
+		},
+		"APIGWNoSQLPermission":{
+			"Type": "AWS::Lambda::Permission",
+			"Properties": {
+				"Action": "lambda:InvokeFunction",
+				"SourceArn": {
+					"Fn::Join": [
+						"",
+						[
+							"arn:aws:execute-api:",
+							{
+								"Ref": "AWS::Region"
+							},
+							":",
+							{
+								"Ref": "AWS::AccountId"
+							},
+							":",
+							{
+								"Ref": "APIGWLogverzLogic"
+							},
+							"/*"
+						]
+					]
+				},
+				"FunctionName": {
+					"Fn::Join": [
+						"",
+						[
+							"arn:aws:lambda:",
+							{
+								"Ref": "AWS::Region"
+							},
+							":",
+							{
+								"Ref": "AWS::AccountId"
+							},
+							":function:",
+							{
+								"Ref": "LogverzNoSQLFunction"
+							}
+						]
+					]
+				},
+				"Principal": "apigateway.amazonaws.com"
+			}
+		},
+		"APIGWLogverzLogicDeployment":{
+			"Type" : "AWS::ApiGateway::Deployment",
+			"DependsOn" : [
+				"APIGWAuthOptionsMethod",
+				"APIGWHTTPRelayGetMethod",
+				"APIGWHTTPRelayOptionsMethod",
+				"APIGWInfoOptionsMethod",
+				"APIGWRootNOSQLOptionsMethod",
+				"APIGWRootNOSQLPostMethod",
+				"APIGWStart2ScaleOptionsMethod",
+				"APIGWStart2ScalePostMethod",
+				"APIGWStartIdentitySyncOptionsMethod",
+				"APIGWStartIdentitySyncPostMethod",
+				"APIGWStartJobOptionsMethod",
+				"APIGWStartJobPostMethod",
+				"APIGWV3HTTPRelayGetMethod",
+				"APIGWV3HTTPRelayOptionsMethod",
+				"APIGWebRTCSignalOptionsMethod",
+				"APIGWebRTCSignalPostMethod"],
+			"Properties" : {
+				"RestApiId" : {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"Description": "My deployment"
+			}
+		},
+		"APIGWLogverzLogicStage":{
+			"Type" : "AWS::ApiGateway::Stage",
+			"DependsOn":"APIGWLogging",
+			"Properties" : {
+				"DeploymentId" : {"Ref":"APIGWLogverzLogicDeployment"},
+				"Description" : "prodendpoint",
+				"AccessLogSetting" :{
+					"DestinationArn" : {
+						"Fn::GetAtt": ["APIGWLogGroup", "Arn"]
+					}
+				},
+				"RestApiId" : {
+					"Ref": "APIGWLogverzLogic"
+				},
+				"StageName" : {"Ref":"StageName"}
+			}
+		},
+		"LogverzInfoPolicy": {
+			"Description": "IAM policy for service role for Logverz AWS Infrastrucure Info Role",
+			"Properties": {
+				"PolicyDocument": {
+					"Statement": [{
+						"Action": [
+							"logs:CreateLogGroup",
+							"logs:CreateLogStream",
+							"logs:PutLogEvents"
+						],
+						"Effect": "Allow",
+						"Resource": "*"
+					},
+					{	"Sid":"AllowInfoFunctionGetAndListEc2Properties",
+						"Action": [
+							"ec2:Describe*",
+							"ec2:Get*",
+							"ec2:Search*"
+						],
+						"Effect": "Allow",
+						"Resource": "*"
+					},
+					{
+						"Sid": "GetContactInformation",
+						"Effect": "Allow",
+						"Action": "account:GetContactInformation",
+						"Resource": "*"
+					},
+					{	"Sid":"AllowInfoFunctionGetAndListCFNProperties",
+						"Action": [
+							"cloudformation:Describe*",
+							"cloudformation:List*",
+							"cloudformation:Get*"
+						],
+						"Effect": "Allow",
+						"Resource": "*"
+					},
+					{	"Sid":"AllowInfoFunctionGetAndListCodebuildProperties",
+						"Action": [
+							"codebuild:List*",
+							"codebuild:BatchGet*",
+							"codebuild:Get*",
+							"codebuild:Describe*"
+						],
+						"Effect": "Allow",
+						"Resource": "*"
+					},
+					{
+						"Effect": "Allow",
+						"Action": [
+							"ssm:DescribeParameters"
+						],
+						"Resource": "*"
+					},
+					{
+						"Action": [
+							"ssm:GetParameter"
+						],
+						"Effect": "Allow",
+						"Resource": [
+							{
+								"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/Logverz*"
+							},
+							{
+								"Fn::Sub":
+								"arn:aws:ssm:${AWS::Region}::parameter/*"
+							}]
+					},
+					{
+						"Sid": "DenySSMSecureStringAccessUsingKMS",
+						"Effect": "Deny",
+						"Action": [
+							"kms:Decrypt",
+							"kms:GenerateDataKey"
+						],
+						"Resource": "managedbyTransformFunction"
+					},
+					{
+						"Sid":"AllowAccess2AwsServiceGlobalinfrastructure",
+						"Action": [
+							"ssm:GetParameter"
+						],
+						"Effect": "Allow",
+						"NotResource": [
+							{
+								"Fn::Sub": "arn:aws:ssm::${AWS::AccountId}:parameter/*"
+							}
+						]
+					},
+					{
+						"Sid": "LogverzRead",
+						"Effect": "Allow",
+						"Action": [
+							"dynamodb:DescribeTable",
+							"dynamodb:Get*",
+							"dynamodb:BatchGet*",
+							"dynamodb:Query",
+							"dynamodb:Scan"
+						],
+						"Resource": {
+							"Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Logverz*"
+						}
+					},
+					{
+						"Sid": "RecordErrors",
+						"Effect": "Allow",
+						"Action": [
+							"dynamodb:PutItem"
+						],
+						"Resource":[{
+							"Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Logverz-Invocations"
+						}]
+					},
+					{
+						"Sid": "AllowInfoFunctionListAllbuckets",
+						"Action": [
+							"s3:List*",
+							"s3:GetBucketLocation"
+						],
+						"Resource": "*",
+						"Effect": "Allow"
+					},
+					{
+						"Sid": "CognitoSpecific",
+						"Effect": "Allow",
+						"Action": [
+							"cognito-idp:DescribeUserPool",
+							"cognito-idp:ListGroups",
+							"cognito-idp:DescribeIdentityProvider",
+							"cognito-idp:ListIdentityProviders",
+							"cognito-idp:GetGroup",
+							"cognito-idp:ListUserPoolClients",
+							"cognito-idp:DescribeUserPoolClient",
+							"cognito-idp:ListUsers"],
+						"Resource": {
+							"Fn::Sub":["arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${CognitoUserPool}", {"CognitoUserPool":{"Ref": "CognitoUserPool"}
+							}]
+						}
+					},
+					{
+						"Sid": "AllowInfoFunctionDescribeRDSandASG",
+						"Action": [
+							"rds:DescribeDBInstances",
+							"autoscaling:DescribeAutoScalingGroups"
+						],
+						"Resource": "*",
+						"Effect": "Allow"
+					}
+					]
+				},
+				"PolicyName": {
+					"Fn::Sub": "Logverz-InfoPolicy-${AWS::Region}"
+				},
+				"Roles": [{
+					"Ref": "LogverzInfoRole"
+				}]
+			},
+			"Type": "AWS::IAM::Policy"
+		},
+		"LogverzInfoRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [{
+						"Effect": "Allow",
+						"Principal": {
+							"Service": [
+								"lambda.amazonaws.com"
+							]
+						},
+						"Action": "sts:AssumeRole"
+					}]
+				},
+				"RoleName": {
+					"Fn::Sub":"Logverz-InfoRole-${AWS::Region}"
+				}
+			}
+		},
+		"LogverzInfoFunction": {
+			"Type": "AWS::Lambda::Function",
+			"DependsOn":"LogverzInfoPolicy",
+			"Properties": {
+				"Code": {
+					"S3Bucket": {
+						"Ref": "InitBucket"
+					},
+					"S3Key": "bin/info.zip"
+				},
+				"Environment": {
+					"Variables": {
+						"StackName" : {"Ref": "AWS::StackName"},
+						"LogicBucket" : {"Ref": "LogicBucket"},
+						"PublicKey":{
+							"Fn::Sub":[ "{{resolve:ssm:${key}}}", {
+								"key":{
+									"Ref": "PublicKeyVersion"
+								}
+							}]
+						},
+						"AllowedOrigins":"http://localhost:8080,http://127.0.0.1:8080,https://testapi.logleads.com",
+						"UserPoolId":{"Fn::If": ["EnableSocialIdenties", {"Ref": "CognitoUserPool"}, "[]"]},
+						"UserPoolClient":{"Fn::If": ["EnableSocialIdenties", {"Ref": "CognitoAppclient"}, "[]"]},
+						"MaximumCacheTime": {"Ref": "MaximumCacheTime"}
+					}
+				},
+				"Description": "To Retrive configuration data List*,Get*,Describe* API calls",
+				"FunctionName": "Logverz-Info",
+				"Handler": "info.handler",
+				"Role": {
+					"Fn::GetAtt": ["LogverzInfoRole", "Arn"]
+				},
+				"Runtime": "nodejs16.x",
+				"Timeout": "30",
+				"MemorySize":"384"
+			}
+		},
+		"LogverzHTTPRelayFunction": {
+			"Type": "AWS::Lambda::Function",
+			"DependsOn":"LogverzHTTPRelayPolicy",
+			"Properties": {
+				"Code": {
+					"S3Bucket": {
+						"Ref": "InitBucket"
+					},
+					"S3Key": "bin/httprelay.zip"
+				},
+				"Environment": {
+					"Variables": {
+						"LB" : {"Ref": "LogicBucket"},
+						"PublicKey":{
+							"Fn::Sub":[ "{{resolve:ssm:${key}}}", {
+								"key":{
+									"Ref": "PublicKeyVersion"
+								}
+							}]
+						},
+						"AllowedOrigins":"http://localhost:8080,http://127.0.0.1:8080,https://testapi.logleads.com",
+						"TestPath":"disabled",
+						"WRTCB": {
+							"Ref": "WebRTCBucket"
+						},
+						"RestApiId" : {
+							"Ref": "APIGWLogverzLogic"
+						},
+						"StageName" : {"Ref":"StageName"},
+						"MaximumCacheTime": {"Ref": "MaximumCacheTime"}
+					}
+				},
+				"Description": "To retrive small files from Logverz S3 buckets",
+				"FunctionName": "Logverz-HTTPRelay",
+				"Handler": "httprelay.handler",
+				"Role": {
+					"Fn::GetAtt": ["LogverzHTTPRelayRole", "Arn"]
+				},
+				"Runtime": "nodejs16.x",
+				"Timeout": "10",
+				"MemorySize":"512",
+				"VpcConfig": {
+					"SecurityGroupIds" : [ { "Ref" : "DBSecGroup" } ],
+					"SubnetIds" :{ "Fn::Split": [",", { "Ref" : "PrivateSubnet" }]}
+				}
+			}
+		},
+		"LogverzHTTPRelayPolicy": {
+			"Description": "Setting IAM policy for service role for Logverz S3 Proxy Role",
+			"Properties": {
+				"PolicyDocument": {
+					"Statement": [{
+						"Action": [
+							"logs:CreateLogGroup",
+							"logs:CreateLogStream",
+							"logs:PutLogEvents"
+						],
+						"Effect": "Allow",
+						"Resource": "*"
+					},
+					{
+						"Action": [
+							"s3:Get*",
+							"s3:List*"
+						],
+						"Effect": "Allow",
+						"Resource": "*"
+					},
+					{
+						"Effect": "Allow",
+						"Action": [
+							"ssm:DescribeParameters"
+						],
+						"Resource": "*"
+					},
+					{
+						"Action": [
+							"ssm:GetParameter"
+						],
+						"Effect": "Allow",
+						"Resource": {
+							"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/Logverz*"
+						}
+					},
+					{
+						"Effect": "Allow",
+						"Action": [
+							"ec2:DescribeInstances",
+							"ec2:DescribeNetworkInterfaces",
+							"ec2:DescribeSecurityGroups",
+							"ec2:DescribeSubnets",
+							"ec2:DescribeVpcs",
+							"ec2:DescribeDhcpOptions"
+						],
+						"Resource": "*"
+					},
+					{
+						"Action": [
+							"ec2:CreateNetworkInterface",
+							"ec2:DeleteNetworkInterface",
+							"ec2:CreateNetworkInterfacePermission"
+						],
+						"Effect": "Allow",
+						"Resource": {
+							"Fn::Sub": "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:*"
+						}
+					},
+					{
+						"Sid": "SpecificTable",
+						"Effect": "Allow",
+						"Action": [
+							"dynamodb:BatchGet*",
+							"dynamodb:Get*",
+							"dynamodb:Query",
+							"dynamodb:Scan"
+						],
+						"Resource":{
+							"Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Logverz-Identities*"
+						}
+					}
+					]
+				},
+				"PolicyName": {
+					"Fn::Sub": "Logverz-HTTPRelayPolicy-${AWS::Region}"
+				},
+				"Roles": [{
+					"Ref": "LogverzHTTPRelayRole"
+				}]
+			},
+			"Type": "AWS::IAM::Policy"
+		},
+		"LogverzHTTPRelayRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [{
+						"Effect": "Allow",
+						"Principal": {
+							"Service": [
+								"lambda.amazonaws.com"
+							]
+						},
+						"Action": "sts:AssumeRole"
+					}]
+				},
+				"RoleName": {
+					"Fn::Sub":"Logverz-HTTPRelayRole-${AWS::Region}"
+				}
+			}
+		},
+		"LogverzLoginFunction": {
+			"Type": "AWS::Lambda::Function",
+			"Properties": {
+				"Code": {
+					"S3Bucket": {
+						"Ref": "InitBucket"
+					},
+					"S3Key": "bin/login.zip"
+				},
+				"Description": "To Autheticate user via various identity providers, than issue JWT identity token.",
+				"Environment" :{
+					"Variables": {
+						"WebRTCSignal" : "Logverz-WebRTCSignal",
+						"PublicKey":{
+							"Fn::Sub":[ "{{resolve:ssm:${key}}}", {
+								"key":{
+									"Ref": "PublicKeyVersion"
+								}
+							}]
+						},
+						"UserPoolId":{"Fn::If": ["EnableSocialIdenties", {"Ref": "CognitoUserPool"}, {"Ref": "AWS::NoValue"}]},
+						"UserPoolPubKey":{"Fn::If": ["EnableSocialIdenties", {"Ref": "CognitoUserPool"}, {"Ref": "AWS::NoValue"}]},
+						"LogicBucket":{"Ref":"LogicBucket"},
+						"UserPoolClient":{"Fn::If": ["EnableSocialIdenties", {"Ref": "CognitoAppclient"}, {"Ref": "AWS::NoValue"}]},
+						"UserPoolDomain":{"Fn::If": ["EnableSocialIdenties", {"Ref": "CognitoUserPoolDomain"}, {"Ref": "AWS::NoValue"}]},
+						"AllowedOrigins":"http://localhost:8080,http://127.0.0.1:8080,https://testapi.logleads.com",
+						"APIGWurl":{ "Fn::Sub": [ "https://${APIGWLogverzLogic}.execute-api.${AWS::Region}.amazonaws.com/${StageName}", {
+							"StageName": {"Ref" : "StageName" }} ]},
+						"AllowedAccounts":{
+							"Fn::Sub": "[\"${AWS::AccountId}\"]"
+						},
+						"ScaleFunction":{"Ref":"ScaleFunction"},
+						"MaximumCacheTime": {"Ref": "MaximumCacheTime"}
+					}
+				},
+				"FunctionName": "Logverz-Login",
+				"Handler": "login.handler",
+				"Role": {
+					"Fn::GetAtt": ["LogverzLoginRole", "Arn"]
+				},
+				"Runtime": "nodejs16.x",
+				"Timeout": "10",
+				"MemorySize":"256"
+			}
+		},
+		"LogverzLoginPolicy": {
+			"Description": "Setting IAM policy for Logverz Login Role",
+			"Properties": {
+				"PolicyDocument": {
+					"Statement": [{
+						"Action": [
+							"logs:CreateLogGroup",
+							"logs:CreateLogStream",
+							"logs:PutLogEvents"
+						],
+						"Effect": "Allow",
+						"Resource": "*"
+					},
+					{
+						"Action": [
+							"iam:Get*",
+							"iam:Generate*",
+							"iam:List*"
+						],
+						"Effect": "Allow",
+						"Resource": "*"
+					},
+					{
+						"Effect": "Allow",
+						"Action": [
+							"ssm:DescribeParameters"
+						],
+						"Resource": "*"
+					},
+					{
+						"Action": [
+							"ssm:PutParameter",
+							"ssm:GetParameter"
+						],
+						"Effect": "Allow",
+						"Resource": {
+							"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/Logverz*"
+						}
+					},
+					{
+						"Action": "kms:Decrypt",
+						"Effect": "Allow",
+						"Resource": "*"
+					},
+					{
+						"Action": [
+							"cognito-idp:DescribeUserPoolClient"
+						],
+						"Effect": "Allow",
+						"Resource": {
+							"Fn::Sub": ["arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${CognitoUserPool}", {
+								"CognitoUserPool":{
+									"Ref": "CognitoUserPool"
+								}
+							}]
+						}
+					},
+					{
+						"Action": [
+							"lambda:updateFunctionConfiguration",
+							"lambda:getFunctionConfiguration"
+						],
+						"Effect": "Allow",
+						"Resource": {
+							"Fn::Sub":["arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${Self}", {
+								"Self":{
+									"Ref": "LogverzLoginFunction"
+								}
+							}]}
+					},
+					{
+						"Sid": "ListAndDescribeDynamoDBResources",
+						"Effect": "Allow",
+						"Action": [
+							"dynamodb:List*",
+							"dynamodb:DescribeReservedCapacity*",
+							"dynamodb:DescribeLimits",
+							"dynamodb:DescribeTimeToLive"
+						],
+						"Resource": "*"
+					}, {
+						"Sid": "SpecificTable",
+						"Effect": "Allow",
+						"Action": [
+							"dynamodb:BatchGet*",
+							"dynamodb:DescribeStream",
+							"dynamodb:DescribeTable",
+							"dynamodb:Get*",
+							"dynamodb:Query",
+							"dynamodb:Scan",
+							"dynamodb:BatchWrite*",
+							"dynamodb:Update*",
+							"dynamodb:PutItem"
+						],
+						"Resource": {
+							"Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Logverz-*"
+						}
+					},
+					{
+						"Action": [
+							"lambda:InvokeFunction"
+						],
+						"Effect": "Allow",
+						"Resource": {
+							"Ref": "ScaleFunction"
+						}
+
+					}
+					]
+				},
+				"PolicyName": {
+					"Fn::Sub": "Logverz-LoginPolicy-${AWS::Region}"
+				},
+				"Roles": [{
+					"Ref": "LogverzLoginRole"
+				}]
+			},
+			"Type": "AWS::IAM::Policy"
+		},
+		"LogverzNoSQLPolicy": {
+			"Description": "IAM policy for service role for Logverz Info Role",
+			"Properties": {
+				"PolicyDocument": {
+					"Statement": [{
+						"Action": [
+							"logs:CreateLogGroup",
+							"logs:CreateLogStream",
+							"logs:PutLogEvents"
+						],
+						"Effect": "Allow",
+						"Resource": "*"
+					},
+					{
+						"Action": [
+							"dynamodb:*"
+						],
+						"Effect": "Allow",
+						"Resource": {
+							"Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Logverz-*"
+						}
+					}
+
+					]
+				},
+				"PolicyName": {
+					"Fn::Sub": "Logverz-NOSQLPolicy-${AWS::Region}"
+				},
+				"Roles": [{
+					"Ref": "LogverzNOSQLRole"
+				}]
+			},
+			"Type": "AWS::IAM::Policy"
+		},
+		"LogverzIdentitySyncPolicy": {
+			"Description": "Setting IAM policy for Logverz IdentitySync Role",
+			"Properties": {
+				"PolicyDocument": {
+					"Statement": [{
+						"Action": [
+							"logs:CreateLogGroup",
+							"logs:CreateLogStream",
+							"logs:PutLogEvents"
+						],
+						"Effect": "Allow",
+						"Resource": "*"
+					},
+					{
+						"Action": [
+							"iam:GetAccountAuthorizationDetails"
+						],
+						"Effect": "Allow",
+						"Resource": "*"
+					},
+					{
+						"Sid": "ListAndDescribe",
+						"Effect": "Allow",
+						"Action": [
+							"dynamodb:List*",
+							"dynamodb:DescribeReservedCapacity*",
+							"dynamodb:DescribeLimits",
+							"dynamodb:DescribeTimeToLive"
+						],
+						"Resource": "*"
+					}, {
+						"Sid": "SpecificTable",
+						"Effect": "Allow",
+						"Action": [
+							"dynamodb:BatchGet*",
+							"dynamodb:DescribeStream",
+							"dynamodb:DescribeTable",
+							"dynamodb:Get*",
+							"dynamodb:Query",
+							"dynamodb:Scan",
+							"dynamodb:BatchWrite*",
+							"dynamodb:Update*",
+							"dynamodb:PutItem",
+							"dynamodb:DeleteItem"
+						],
+						"Resource":{
+							"Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Logverz-Identities*"
+						}
+					},
+					{
+						"Sid": "RecordErrors",
+						"Effect": "Allow",
+						"Action": [
+							"dynamodb:PutItem"
+						],
+						"Resource":[{
+							"Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Logverz-Invocations"
+						}]
+					},
+					{
+						"Effect": "Allow",
+						"Action": [
+							"s3:Get*",
+							"s3:List*",
+							"s3:PutObject"
+						],
+						"Resource": [
+							{
+								"Fn::Join": [
+									"",
+									[
+										"arn:aws:s3:::",
+										{
+											"Ref" : "InitBucket"
+										},
+										"/*"
+									]
+								]
+							}, {
+								"Fn::Join": [
+									"",
+									[
+										"arn:aws:s3:::",
+										{
+											"Ref" : "InitBucket"
+										}
+									]
+								]
+							}
+						]
+					}
+					]
+				},
+				"PolicyName": {
+					"Fn::Sub": "Logverz-IdentitySyncPolicy-${AWS::Region}"
+				},
+				"Roles": [{
+					"Ref": "LogverzIdentitySyncRole"
+				}]
+			},
+			"Type": "AWS::IAM::Policy"
+		},
+		"LogverzLoginRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [{
+						"Effect": "Allow",
+						"Principal": {
+							"Service": [
+								"lambda.amazonaws.com"
+							]
+						},
+						"Action": "sts:AssumeRole"
+					}]
+				},
+				"RoleName": {
+					"Fn::Sub":"Logverz-LoginRole-${AWS::Region}"
+				}
+			}
+		},
+		"LogverzIdentitySyncRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [{
+						"Effect": "Allow",
+						"Principal": {
+							"Service": [
+								"lambda.amazonaws.com"
+							]
+						},
+						"Action": "sts:AssumeRole"
+					}]
+				},
+				"RoleName": {
+					"Fn::Sub":"Logverz-IdentitySyncRole-${AWS::Region}"
+				}
+			}
+		},
+		"LogverzNOSQLRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [{
+						"Effect": "Allow",
+						"Principal": {
+							"Service": [
+								"lambda.amazonaws.com"
+							]
+						},
+						"Action": "sts:AssumeRole"
+					}]
+				},
+				"RoleName": {
+					"Fn::Sub":"Logverz-NoSQL-${AWS::Region}"
+				}
+			}
+		},
+		"LogverzIdentySyncFunction": {
+			"Type": "AWS::Lambda::Function",
+			"DependsOn":"LogverzIdentitySyncPolicy",
+			"Properties": {
+				"Code": {
+					"S3Bucket": {
+						"Ref": "InitBucket"
+					},
+					"S3Key": "bin/identitysync.zip"
+				},
+				"Description": "To Syncronize users, groups, policies from IAM to DynamoDB",
+				"Environment" :{
+					"Variables": {
+						"PublicKey":{
+							"Fn::Sub":[ "{{resolve:ssm:${key}}}", {
+								"key":{
+									"Ref": "PublicKeyVersion"
+								}
+							}]
+						},
+						"InitBucket":{
+							"Ref": "InitBucket"
+						},
+						"RestApiId":{"Ref":"APIGWLogverzLogic"},
+						"StartIdentitySync": {"Ref":"APIGWRootStartdentitySyncResource"},
+						"AllowedOrigins":"http://localhost:8080,http://127.0.0.1:8080,https://testapi.logleads.com",
+						"MaximumCacheTime": {"Ref": "MaximumCacheTime"}
+					}
+				},
+				"FunctionName": "Logverz-IdentitySync",
+				"Handler": "identitysync.handler",
+				"Role": {
+					"Fn::GetAtt": ["LogverzIdentitySyncRole", "Arn"]
+				},
+				"ReservedConcurrentExecutions":"1",
+				"Runtime": "nodejs16.x",
+				"Timeout": "60",
+				"MemorySize":"512"
+			}
+		},
+		"LogverzIdentySyncFunctionTrigger": {
+			"Type": "AWS::Events::Rule",
+			"Properties": {
+				"Description": "To run identity sync function periodically. By default every 8 hours.",
+				"ScheduleExpression":"rate(480 minutes)",
+				"Name":"Logverz_IdentitiySync_IAM_Resouces",
+				"State": "ENABLED",
+				"Targets": [{
+					"Arn": {"Fn::GetAtt" : ["LogverzIdentySyncFunction", "Arn"]},
+					"Id": "IdentitySyncFunction"
+				}]
+			}
+		},
+		"PermissionForEventsToInvokeLambda": {
+			"Type": "AWS::Lambda::Permission",
+			"Properties": {
+				"FunctionName": { "Ref": "LogverzIdentySyncFunction" },
+				"Action": "lambda:InvokeFunction",
+				"Principal": "events.amazonaws.com",
+				"SourceArn": { "Fn::GetAtt": ["LogverzIdentySyncFunctionTrigger", "Arn"] }
+			}
+		},
+		"LogverzNoSQLFunction": {
+			"Type": "AWS::Lambda::Function",
+			"DependsOn":"LogverzNoSQLPolicy",
+			"Properties": {
+				"Code": {
+					"S3Bucket": {
+						"Ref": "InitBucket"
+					},
+					"S3Key": "bin/nosql.zip"
+				},
+				"Description": "To read and add/remove entries from DynamoDB",
+				"Environment" :{
+					"Variables": {
+						"PublicKey":{
+							"Fn::Sub":[ "{{resolve:ssm:${key}}}", {
+								"key":{
+									"Ref": "PublicKeyVersion"
+								}
+							}]
+						},
+						"AllowedOrigins":"http://localhost:8080,http://127.0.0.1:8080,https://testapi.logleads.com",
+						"MaximumCacheTime": {"Ref": "MaximumCacheTime"}
+					}
+				},
+				"FunctionName": "Logverz-NoSQL",
+				"Handler": "nosql.handler",
+				"Role": {
+					"Fn::GetAtt": ["LogverzNOSQLRole", "Arn"]
+				},
+				"Runtime": "nodejs16.x",
+				"Timeout": "5",
+				"MemorySize":"192"
+			}
+		},
+		"CognitoLambdaPermission":{
+			"Type": "AWS::Lambda::Permission",
+			"Condition" : "EnableSocialIdenties",
+			"Properties": {
+				"FunctionName": {
+					"Fn::GetAtt": [
+						"LogverzLoginFunction",
+						"Arn"
+					]
+				},
+				"Action": "lambda:InvokeFunction",
+				"Principal": "cognito-idp.amazonaws.com",
+				"SourceArn": {
+					"Fn::Sub": ["arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${CognitoUserPool}", {
+						"CognitoUserPool":{
+							"Ref": "CognitoUserPool"
+						}
+					}]
+				}
+			}
+		},
+		"CognitoAppclient":{
+			"Type" : "AWS::Cognito::UserPoolClient",
+			"Condition" : "EnableSocialIdenties",
+			"Properties" : {
+				"AllowedOAuthFlows" : [ "code"],
+				"AllowedOAuthFlowsUserPoolClient" : true,
+				"AllowedOAuthScopes" : [ "email", "openid", "profile" ],
+				"CallbackURLs" : [ {"Fn::Sub": "https://${APIGWLogverzLogic}.execute-api.${AWS::Region}.amazonaws.com/${APIGWLogverzLogicStage}/Auth"}],
+				"ExplicitAuthFlows" : ["ALLOW_REFRESH_TOKEN_AUTH", "ALLOW_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH"],
+				"GenerateSecret" : true,
+				"PreventUserExistenceErrors" : "ENABLED",
+				"RefreshTokenValidity" : 1,
+				"SupportedIdentityProviders" : [],
+				"UserPoolId" : {
+					"Ref": "CognitoUserPool"
+				}
+			}
+		}
+	},
+	"Outputs": {
+
+		"RestApiId" : {
+			"Description" : "Logverz Logic Restapi's ID",
+			"Value" : { "Ref" :"APIGWLogverzLogic"}
+		},
+		"RestApiStageName":{
+			"Description" : "Logverz Logic Restapi's stagename",
+			"Value" : { "Ref":"APIGWLogverzLogicStage"}
+		},
+		"ApiGWurl":{
+			"Description": "The api GW url",
+			"Value":{"Fn::Sub": "https://${APIGWLogverzLogic}.execute-api.${AWS::Region}.amazonaws.com/${APIGWLogverzLogicStage}/"}
+		},
+		"StartJob":{
+			"Description": "The api resourceid for startjob",
+			"Value":{
+				"Ref":"APIGWRootStartJobResource"
+			}
+		}
+	}
+}

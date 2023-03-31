@@ -1,0 +1,105 @@
+[{
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Invocations",
+        "Parameters": [{
+                "AttributeName": "Action",
+                "AttributeValue": "IdentitySync",
+                "Expression": "="
+            },
+            {
+                "FilterExpression": {
+                    "Expression": "desc",
+                    "AttributeName": "UnixTime",
+                    "Limit": 1,
+                    "Type": "PostQuery"
+                }
+            }
+        ],
+        "Operation": "dynamodb:Query"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Invocations",
+        "Parameters": [{
+                "AttributeName": "Action",
+                "AttributeValue": "S3Access",
+                "Expression": "="
+            }, {
+                "AttributeName": "UnixTime",
+                "AttributeValue": 1614460505870,
+                "Expression": ">"
+            },
+            {
+                "KeyConditionExpression": "and"
+            },
+            {
+                "FilterExpression": {
+                    "Expression": "desc",
+                    "AttributeName": "UnixTime",
+                    "Limit": 1,
+                    "Type": "PostQuery"
+                }
+            }
+        ],
+        "Operation": "dynamodb:Query"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Invocations",
+        "Parameters": [{
+                "AttributeName": "Category",
+                "AttributeValue": "Infra",
+                "Expression": "="
+            }, {
+                "AttributeName": "UnixTime",
+                "AttributeValue": 1614460505870,
+                "Expression": ">"
+            },
+            {
+                "KeyConditionExpression": "and"
+            }
+        ],
+        "Operation": "dynamodb:Query"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Invocations",
+        "Parameters": [{
+                "AttributeName": "Category",
+                "AttributeValue": "User",
+                "Expression": "="
+            }
+        ],
+        "Operation": "dynamodb:Query"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Invocations",
+        "Parameters": [{
+                "AttributeName": "Severity",
+                "AttributeValue": "Error",
+                "Expression": "="
+            }, {
+                "AttributeName": "UnixTime",
+                "AttributeValue": 1609278193652,
+                "Expression": "<"
+            },
+            {
+                "KeyConditionExpression": "and"
+            }
+        ],
+        "Operation": "dynamodb:Query"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Invocations",
+        "Parameters": [{
+                "AttributeName": "Type",
+                "AttributeValue": "API",
+                "Expression": "="
+            }, {
+                "AttributeName": "UnixTime",
+                "AttributeValue": 1614460505870,
+                "Expression": ">"
+            },
+            {
+                "KeyConditionExpression": "and"
+            }
+        ],
+        "Operation": "dynamodb:Query"
+    }
+]

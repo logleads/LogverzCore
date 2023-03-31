@@ -1,0 +1,64 @@
+# Node.js
+# Build a general Node.js project with npm.
+# Add steps that analyze code, save build artifacts, deploy, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/languages/javascript
+
+variables:
+- group: "Logverz Releases"
+- name: GHTOKENARMGMNT
+  value: $[variables.GHAutomatedReleaseToken]
+- name: COREPROJECTPATH
+  value: $(Pipeline.Workspace)/s
+#https://developercommunity.visualstudio.com/t/powershell-task-does-not-provide-access-to-environ/288599
+
+trigger:
+- prod
+
+pool: #'Default'
+  vmImage: ubuntu-latest
+
+steps:
+- checkout: self
+  persistCredentials: true #Important - Persist creds to run further git command
+  clean: true
+- script: |
+    echo "##[section]Downloading git-chglog release"
+    wget https://github.com/git-chglog/git-chglog/releases/download/v0.15.1/git-chglog_0.15.1_linux_amd64.tar.gz
+    echo "##[section]Installing git-chglog release"
+    tar -xvf git-chglog_0.15.1_linux_amd64.tar.gz
+    ghchlogpath=$(pwd)
+    sudo ln -s $(echo $ghchlogpath/git-chglog) /bin/git-chglog
+  displayName: 'Install git-chglog'
+- task: PowerShell@2
+  inputs:
+    targetType: 'inline'
+    script: |
+      Set-PSRepository -Name "PSGallery" -InstallationPolicy Trusted #Get-PSRepository
+      Install-Module -Name PowerShellForGitHub # Get-InstalledModule | ? {$_.Name -like "*Git*"}
+      Import-Module -Name PowerShellForGitHub
+      [string]$userName = 'AnyUserName'
+      [string]$userPassword = "$(GHTOKENARMGMNT)"
+      [securestring]$secStringPassword = ConvertTo-SecureString $userPassword -AsPlainText -Force
+      [pscredential]$credObject = New-Object System.Management.Automation.PSCredential ($userName,$secStringPassword)
+      Set-GitHubAuthentication -Credential $credObject
+      Get-GitHubRepository -RepositoryName LogverzCore -OwnerName logleads
+    failOnStderr: true
+    showWarnings: true
+    pwsh: true
+  displayName: 'Installing dependencies'
+- script: |
+    echo "##[section]root folder contents"
+    pwd &&  tree -L 5
+    echo "##[section]GHTOKENARMGMNT value"
+    echo $(GHTOKENARMGMNT)
+    echo "##[section]RELEASEPROJECTPATH value"
+    echo $(RELEASEPROJECTPATH) 
+    echo "##[section]Environment variables list"
+    printenv
+  displayName: 'Debug'
+- task: PowerShell@2
+  inputs:
+    targetType: 'filePath'
+    filePath: 'infrastructure/tools/CreateLogverzCoreRelease.ps1'
+  displayName: 'Execute Release'
+  #https://github.com/git-chglog/git-chglog/releases/download/v0.15.1/git-chglog_0.15.1_linux_amd64.tar.gz

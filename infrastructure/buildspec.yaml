@@ -1,0 +1,9 @@
+version: 0.2
+phases:
+  build:
+    commands:
+       - mkdir build
+       - npm --version
+       #- npm install
+       - ls -la
+       - node controller.js

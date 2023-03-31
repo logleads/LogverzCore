@@ -1,0 +1,21 @@
+{
+    "env": {
+        "browser": true,
+        "commonjs": true,
+        "es2021": true
+    },
+    "extends": [
+        "standard",
+        "plugin:jsonc/recommended-with-json"
+    ],
+    "parserOptions": {
+        "ecmaVersion": "latest"
+    },
+    "rules": {
+        "no-tabs": "off",
+        "jsonc/indent": ["error",
+            "tab",
+            {}
+        ]
+    }
+}

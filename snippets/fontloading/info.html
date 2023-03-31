@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+  <head>
+    <title>This is the title of the webpage!</title>
+
+ <script src="/LoadFont.js"></script>
+ <script defer>
+loadFont('Branda', 'https://iimw521s71.execute-api.ap-southeast-2.amazonaws.com/V3/HTTP/S3/LB/public/fonts/Branda-yolq', 400, 'normal');
+</script>
+<style>
+          
+    @font-face {
+    font-family: 'Branda';
+     src: 
+      local('Branda-yolq.ttf') format('truetype');
+     } 
+
+    b {
+    font-family:'Branda';
+    }
+
+    h1, strong {
+    font-family: 'Branda';
+    font-size: xx-large;
+    }
+
+    .demo{
+      font-family :"Brush Script MT";
+      font-size: x-large;
+    }
+</style>
+
+  </head>
+  <body>
+    <p>This is an example paragraph. Anything in the <strong>body</strong> tag will appear on the page, just like this <strong>p tag</strong>  and its contents.</p>
+
+
+<!--document.getElementById("demo").style.fontFamily ="Brush Script MT"
+document.getElementsByClassName("demo")[0].style.fontFamily= "OpenSans"
+-->
+  </body>
+</html>

@@ -1,0 +1,210 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Description": "",
+	"Metadata": {
+
+	},
+	"Parameters": {
+		"Concurrency": {
+			"Type": "Number",
+			"Default": 3,
+			"Description": "The number of running functions in parralel"
+        },
+        "LambdaTimeout": {
+			"Type": "Number",
+			"Default": 300,
+			"Description": "The number of running functions in parralel"
+        },
+        "VPCID": {
+			"Description": "Select the VPC where you want to deploy the solution to. Absence of special requirements the Default VPC is suggested",
+			"Type": "AWS::EC2::VPC::Id",
+			"AllowedPattern": "vpc-.*"
+		},
+        "DBInstanceClass": {
+			"Type": "String",
+			"Default": "db.t2.medium",
+			"AllowedValues": ["db.t2.micro","db.t2.medium", "db.t2.large", "db.m5.4xlarge"]
+        },
+        "DBUserName": {
+			"Description": "Please Specify a database username,other than Admin",
+			"Type": "String",
+			"MinLength": "5",
+			"MaxLength": "30",
+			"AllowedPattern": "[a-zA-Z][a-zA-Z0-9]*"
+		},
+		"DBUserPasswd": {
+			"Type": "String",
+			"MinLength": "8",
+			"MaxLength": "100"
+		},
+		"DBName": {
+			"Type": "String",
+			"MinLength": "5",
+			"Default": "ConcurrencyTest",
+			"MaxLength": "100"
+		},
+		"PrivateSubnet": {
+			"Description": "Select the Private Subnet where you want to deploy the solution to. It has to be a Private subnet with internet access, which is usually provided by a NATGW. Also 20+ free ips in the subnet is advised.",
+			"Type": "List<AWS::EC2::Subnet::Id>"
+		},
+		"ArtifactBucket":{
+			"Description": "The bucketname where the lambda source is located. Example:",
+			"Type": "String"
+		}
+			
+	},
+	"Mappings": {
+
+	},
+	"Conditions": {
+
+	},
+	"Resources": {
+		"DBClient": {
+			"Type": "AWS::Lambda::Function",
+			"Properties": {
+				"Code": {
+					"S3Bucket": {"Ref": "ArtifactBucket"},
+					"S3Key": "concurrencytestclient.zip"
+				},
+				"Environment": {
+					"Variables": {
+                        "PGHOST":{"Fn::GetAtt": ["DBServer", "Endpoint.Address"]},
+                        "PGPORT":{"Fn::GetAtt": ["DBServer", "Endpoint.Port"]},
+                        "PGUSER":{"Ref": "DBUserName"},
+						"PGPASSWORD":{"Ref": "DBUserPasswd"},
+						"PGDATABASE":{"Ref":"DBName"}
+					}
+				},
+				"Description": "To create a DB connection",
+				"FunctionName": "Test-DBClient",
+				"Handler": "concurrencytestclient.handler",
+				"Role": {
+					"Fn::GetAtt": ["DBClientRole", "Arn"]
+				},
+				"Runtime": "nodejs16.x",
+				"Timeout": {"Ref":"LambdaTimeout"},
+				"MemorySize":"192",
+				"VpcConfig": {
+					"SecurityGroupIds" : [ {"Ref": "DBSecurityGroup"} ],
+					"SubnetIds" :{"Ref": "PrivateSubnet"}
+				}
+			}
+		},
+		"DBClientRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"Description": "TODO: Add proper scoping to the DBClientPolicy simmilar to {\"Fn::GetAtt\": [\"TestQueueMessages\", \"Arn\"]}",
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [{
+						"Effect": "Allow",
+						"Principal": {
+							"Service": [
+								"lambda.amazonaws.com"
+							]
+						},
+						"Action": "sts:AssumeRole"
+					}]
+				},
+                "RoleName": "Test-DBClientRole",
+                "ManagedPolicyArns": [
+                    "arn:aws:iam::aws:policy/AWSLambdaFullAccess",
+                    "arn:aws:iam::aws:policy/AmazonRDSFullAccess",
+                    "arn:aws:iam::aws:policy/AmazonEC2FullAccess"
+                ]
+			}
+        },
+        "DBServer": {
+			"Type": "AWS::RDS::DBInstance",
+			"Properties": {
+				"DBName": {"Ref":"DBName"},
+				"MonitoringInterval": 15,
+				"MonitoringRoleArn": {
+					"Fn::GetAtt": ["DBServerMonitoringRole", "Arn"]
+				},
+				"AllocatedStorage": 10,
+				"StorageType": "gp2",
+				"DBInstanceClass": {
+					"Ref": "DBInstanceClass"
+				},
+				"Engine": "postgres",
+				"MasterUsername": {
+					"Ref": "DBUserName"
+				},
+				"MasterUserPassword": {
+					"Ref": "DBUserPasswd"
+				},
+				"VPCSecurityGroups": [{
+					"Ref": "DBSecurityGroup"
+				}]
+			},
+			"DeletionPolicy": "Delete"
+		},
+		"DBServerMonitoringRole":{
+			  "Type": "AWS::IAM::Role",
+			  "Properties": {
+				"AssumeRolePolicyDocument": {
+				  "Version": "2012-10-17",
+				  "Statement": [
+					{
+					  "Sid": "",
+					  "Effect": "Allow",
+					  "Principal": {
+						"Service": "monitoring.rds.amazonaws.com"
+					  },
+					  "Action": "sts:AssumeRole"
+					}
+				  ]
+				},
+				"ManagedPolicyArns": [
+				  "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
+				],
+				"Path": "/"
+			  }
+		},
+		"DBSecurityGroup": {
+			"Type": "AWS::EC2::SecurityGroup",
+			"Properties": {
+				"GroupDescription": "Allows on Database and SSH ports to the associated components (RDS access) ",
+				"VpcId": { "Ref" : "VPCID" }
+			}
+		},
+		"DBSecurityGroup4PGSQL": {
+			"Type": "AWS::EC2::SecurityGroupIngress",
+			"Properties": {
+				"GroupId": {
+					"Ref": "DBSecurityGroup"
+				},
+				"IpProtocol": "tcp",
+				"FromPort": "5432",
+				"ToPort": "5432",
+				"SourceSecurityGroupId": {
+					"Ref": "DBSecurityGroup"
+				}
+			}
+		}
+	},
+	"Outputs": {
+		"PGHOST": {
+			"Description": "The DB instance's DNS name",
+			"Value": {"Fn::GetAtt": ["DBServer", "Endpoint.Address"]}
+		},
+		"PGPORT": {
+			"Description": "The DB instance's properties",
+			"Value": {"Fn::GetAtt": ["DBServer", "Endpoint.Port"]}
+		},
+		"PGUSER": {
+			"Description": "The DB admin name",
+			"Value": {"Ref": "DBUserName"}
+		},
+		"PGPASSWORD": {
+			"Description": "The DB admin password",
+			"Value": {"Ref": "DBUserPasswd"}
+		},
+		"PGDATABASE": {
+			"Description": "The DB Name",
+			"Value": {"Ref":"DBName"}
+		}
+	}
+}

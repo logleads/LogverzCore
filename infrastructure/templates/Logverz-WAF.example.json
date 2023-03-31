@@ -1,0 +1,453 @@
+{
+	"AWSTemplateFormatVersion":"2010-09-09",
+	"Description": "Demo infrastructure for Inline web application firewall that inspects incomming http requests and sends it to API Gateway.The demo uses nginx reverse proxy NO filtering is taking place, you need to select and configure firewall such as nginx app protect or modsec",
+	"Parameters":{
+		"myKeyPair" : {
+			"Description" : "Amazon EC2 Key Pair, for testing purposes, delete later.",
+			"Type" : "AWS::EC2::KeyPair::KeyName",
+			"Default": ""
+		},
+		"VpcId":{
+			"Type":"AWS::EC2::VPC::Id",
+			"Description":"Select a VPC that allows instances to access the Internet.",
+			"Default":""
+		},
+		"PublicSubnetId":{
+			"Type":"List<AWS::EC2::Subnet::Id>",
+			"Description":"Select at least two public subnets in your VPC.",
+			"Default":""
+		},
+		"PrivateSubnetId":{
+			"Type":"List<AWS::EC2::Subnet::Id>",
+			"Description":"Select at least one private subnet(s) in your VPC.",
+			"Default":""
+		},
+		"DesiredCapacity":{
+			"Type":"Number",
+			"Default":"1",
+			"Description":"Number of instances to launch in your WAF autoscaling group."
+		},
+		"MaxSize":{
+			"Type":"Number",
+			"Default":"1",
+			"Description":"Maximum number of instances that can be launched in your WAF autoscaling group."
+		},
+		"InstanceType":{
+			"Description":"EC2 instance type",
+			"Type":"String",
+			"Default":"t2.micro",
+			"AllowedValues":[
+				"t2.micro"
+			],
+			"ConstraintDescription":"Please choose a valid instance type."
+		},
+		"WAFAmiId": {
+			"Description": "The container instance image which runs the DB proxy container.",
+			"Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
+			"Default": "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2"
+		},
+		"WAFInstanceSize":{
+			"Description":"The size of the webrtcproxy container.",
+			"Default": "micro",
+			"Type": "String",
+			"AllowedValues" : ["nano", "micro", "small", "medium", "large", "xlarge"]
+		},
+		"CertificateAvailable":{
+			"Type":"String",
+			"Description":"Only select yes if you have the certificate ready to be associated with the Listener",
+			"Default":"no",
+			"AllowedValues" : ["yes", "no"]
+		},
+		"CertificateArn":{
+			"Type":"String",
+			"Description":"provide the certificate arn",
+			"Default":"arn:aws:acm:yourregion:youraccount:certificate/certificateid"
+		},
+		"ApiGWDomainName":{
+			"Description":"domain name such as apgwid.execute-api.yourregion.amazonaws.com",
+			"Type":"String"
+		}
+	},
+	"Conditions": {
+		"HasKeyName": {"Fn::Not": [{"Fn::Equals": ["", {"Ref": "myKeyPair"}]}]},
+		"CertificateAvailable" : {"Fn::Equals" : [{"Ref" : "CertificateAvailable"}, "yes"]}
+	},
+	"Resources":{
+		"WafSecurityGroup":{
+			"Type":"AWS::EC2::SecurityGroup",
+			"Properties":{
+				"GroupDescription":"WAF Security Group",
+				"VpcId":{
+					"Ref":"VpcId"
+				}
+			}
+		},
+		"SGRuleHTTPinbound":{
+			"Type":"AWS::EC2::SecurityGroupIngress",
+			"Properties":{
+				"GroupId":{
+					"Ref":"WafSecurityGroup"
+				},
+				"IpProtocol":"tcp",
+				"FromPort":"80",
+				"ToPort":"80",
+				"CidrIp":"0.0.0.0/0"
+			}
+		},
+		"SGRuleHTTPSinbound":{
+			"Type":"AWS::EC2::SecurityGroupIngress",
+			"Properties":{
+				"GroupId":{
+					"Ref":"WafSecurityGroup"
+				},
+				"IpProtocol":"tcp",
+				"FromPort":"443",
+				"ToPort":"443",
+				"CidrIp":"0.0.0.0/0"
+			}
+		},
+		"SGRuleSSHinbound":{
+			"Type":"AWS::EC2::SecurityGroupIngress",
+			"Properties":{
+				"GroupId":{
+					"Ref":"WafSecurityGroup"
+				},
+				"IpProtocol":"tcp",
+				"FromPort":"22",
+				"ToPort":"22",
+				"CidrIp":"0.0.0.0/0"
+			}
+		},
+		"SGRuleEphemeral":{
+			"Type":"AWS::EC2::SecurityGroupIngress",
+			"Properties":{
+				"GroupId":{
+					"Ref":"WafSecurityGroup"
+				},
+				"IpProtocol":"tcp",
+				"FromPort":"31000",
+				"ToPort":"61000",
+				"SourceSecurityGroupId":{
+					"Ref":"WafSecurityGroup"
+				}
+			}
+		},
+		"CloudwatchLogsGroup":{
+			"Type":"AWS::Logs::LogGroup",
+			"Properties":{
+				"LogGroupName":{
+					"Ref":"AWS::StackName"
+				},
+				"RetentionInDays":14
+			}
+		},
+		"WAFAutoScalingGroup":{
+			"Type":"AWS::AutoScaling::AutoScalingGroup",
+			"Properties":{
+				"Cooldown" : "180",
+				"DesiredCapacity":{
+					"Ref":"DesiredCapacity"
+				},
+				"HealthCheckType" : "EC2",
+				"HealthCheckGracePeriod":"120",
+				"VPCZoneIdentifier":{
+					"Ref":"PublicSubnetId"
+				},
+				"MixedInstancesPolicy" : {
+					"InstancesDistribution" : {
+						"SpotAllocationStrategy" : "capacity-optimized",
+						"OnDemandPercentageAboveBaseCapacity":"0"
+					},
+					"LaunchTemplate" : {
+						"LaunchTemplateSpecification" : {
+							"LaunchTemplateId":{
+								"Ref":"LogverzWAFLaunchTemplate"
+							},
+							"Version" : {"Fn::GetAtt": ["LogverzWAFLaunchTemplate", "LatestVersionNumber"]}
+						}
+					}
+				},
+				"MinSize":"0",
+				"MaxSize":{
+					"Ref":"MaxSize"
+				},
+
+				"Tags": [{
+					"Key": "Logverz",
+					"PropagateAtLaunch" : "true",
+					"Value": "true"
+				}
+				],
+				"TargetGroupARNs":[{
+					"Ref":
+              "ALBTargetGroup"
+				}]
+			}
+		},
+		"LogverzWAFLaunchTemplate":{
+			"Type" : "AWS::EC2::LaunchTemplate",
+			"Properties" : {
+				"LaunchTemplateData" : {
+					"CreditSpecification":{
+						"CpuCredits":"unlimited"
+					},
+					"InstanceType" : { "Fn::Sub": [ "t3.${instancesize}", { "instancesize": {"Ref" : "WAFInstanceSize" }} ]},
+					"KeyName" : {"Fn::If": ["HasKeyName", {"Ref": "myKeyPair"}, {"Ref": "AWS::NoValue"}]},
+					"ImageId" : {"Ref":"WAFAmiId"},
+					"IamInstanceProfile" : {
+						"Arn" : {"Fn::GetAtt": ["EC2InstanceProfile", "Arn"]}
+					},
+					"InstanceInitiatedShutdownBehavior":"terminate",
+					"Monitoring":{
+						"Enabled" : "true"
+					},
+					"SecurityGroupIds":[
+						{
+							"Ref":"WafSecurityGroup"
+						}
+					],
+					"UserData":{
+						"Fn::Base64" : {
+							"Fn::Sub": [ "#!/bin/bash\nsudo yum update -y\nsudo amazon-linux-extras install nginx1\nsudo yum install jq htop -y\naws ssm get-parameters  --names /Logverz/Settings/WAFConfig --region ${AWS::Region} |jq --raw-output .Parameters[].Value > /etc/nginx/nginx.conf\nsudo systemctl start nginx\n echo ${CloudwatchLogsGroup} > /home/ec2-user/.txt",
+								{"CloudwatchLogsGroup": {"Ref" : "CloudwatchLogsGroup" }
+								}]
+						}
+					},
+					"TagSpecifications":[{
+						"ResourceType": "instance",
+						"Tags":[
+							{
+								"Key" : "Name",
+								"Value" : "LogverzWAFDemo"
+							},
+							{
+								"Key" : "Logverz",
+								"Value" : "true"
+							}]
+					}]
+				},
+				"LaunchTemplateName" : "WAFLT"
+			}
+		},
+		"EC2Role":{
+			"Type":"AWS::IAM::Role",
+			"Properties":{
+				"AssumeRolePolicyDocument":{
+					"Statement":[
+						{
+							"Effect":"Allow",
+							"Principal":{
+								"Service":[
+									"ec2.amazonaws.com"
+								]
+							},
+							"Action":[
+								"sts:AssumeRole"
+							]
+						}
+					]
+				},
+				"ManagedPolicyArns":["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"],
+				"Path":"/",
+				"Policies":[
+					{
+						"PolicyName":"logging",
+						"PolicyDocument":{
+							"Statement":[
+								{
+									"Effect":"Allow",
+									"Action":[
+										"logs:CreateLogStream",
+										"logs:PutLogEvents",
+										"ssm:DescribeParameters"
+									],
+									"Resource":"*"
+								},
+								{
+									"Action": [
+										"ssm:GetParameter"
+									],
+									"Effect": "Allow",
+									"Resource": {
+										"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/Logverz/Settings/WAF*"
+									}
+								}
+							]
+						}
+					}
+				]
+			}
+		},
+		"EC2InstanceProfile":{
+			"Type":"AWS::IAM::InstanceProfile",
+			"Properties":{
+				"Path":"/",
+				"Roles":[
+					{
+						"Ref":"EC2Role"
+					}
+				]
+			}
+		},
+		"Setupinstructions": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": "/Logverz/Settings/WAFCert",
+				"Type": "String",
+				"Value": "You need to have a public dns zone. Go to certmanager and request a certificate. For details follow document...  ",
+				"Description": "Instructions how to setup WAF"
+			}
+		},
+		"ProxyConfig": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": "/Logverz/Settings/WAFConfig",
+				"Type": "String",
+				"Value": { "Fn::Sub": [ "user nginx;\nworker_processes auto;\nerror_log /var/log/nginx/error.log;\npid /run/nginx.pid;\n\n# Load dynamic modules. See /usr/share/doc/nginx/README.dynamic.\ninclude /usr/share/nginx/modules/*.conf;\n\nevents {\n  worker_connections 1024;\n}\nhttp {\n  log_format  main  '$remote_addr - $remote_user [$time_local] \"$request\" '\n  '$status $body_bytes_sent \"$http_referer\" '\n  '\"$http_user_agent\" \"$http_x_forwarded_for\"';\n\n  access_log  /var/log/nginx/access.log  main;\n\n  sendfile            on;\n  tcp_nopush          on;\n  tcp_nodelay         on;\n  keepalive_timeout   65;\n  types_hash_max_size 4096;\n\n  include             /etc/nginx/mime.types;\n  default_type        application/octet-stream;\n\n  # Load modular configuration files from the /etc/nginx/conf.d directory.\n  # See http://nginx.org/en/docs/ngx_core_module.html#include\n  # for more information.\n  include /etc/nginx/conf.d/*.conf;\n\n  server {\n    listen 80;\n    listen [::]:80;\n\n    access_log /var/log/nginx/reverse-access.log;\n    error_log /var/log/nginx/reverse-error.log;\n\n    location / {\n      proxy_pass https://${url};\n     #https://apigwid.execute-api.ap-southeast-2.amazonaws.com;\n    }\n  }\n}", { "url":{ "Ref":"ApiGWDomainName"}}]},
+				"Description": "Instructions how to setup WAF"
+			}
+		},
+		"WAFALB":{
+			"Type":"AWS::ElasticLoadBalancingV2::LoadBalancer",
+			"Properties":{
+				"Name":"WAFALB",
+				"Scheme":"internet-facing",
+				"LoadBalancerAttributes":[
+					{
+						"Key":"idle_timeout.timeout_seconds",
+						"Value":"30"
+					}
+				],
+				"Subnets":{
+					"Ref":"PublicSubnetId"
+				},
+				"SecurityGroups":[
+					{
+						"Ref":"WafSecurityGroup"
+					}
+				]
+			}
+		},
+		"ALBTargetGroup":{
+			"Type":"AWS::ElasticLoadBalancingV2::TargetGroup",
+			"DependsOn":"WAFALB",
+			"Properties":{
+				"HealthCheckIntervalSeconds":10,
+				"HealthCheckPath":"/V3/HTTP/S3/LB/public/index.html",
+				"HealthCheckProtocol":"HTTP",
+				"HealthCheckTimeoutSeconds":5,
+				"HealthyThresholdCount":2,
+				"Name":"ALBTargetGroup",
+				"Port":80,
+				"Protocol":"HTTP",
+				"UnhealthyThresholdCount":2,
+				"VpcId":{
+					"Ref":"VpcId"
+				}
+			}
+		},
+		"ALBListenerHTTPS":{
+			"Type":"AWS::ElasticLoadBalancingV2::Listener",
+			"Condition" : "CertificateAvailable",
+			"Properties":{
+				"Certificates" : [ {
+					"CertificateArn" : {"Ref":"CertificateArn"}
+				} ],
+				"DefaultActions":[
+					{
+						"Type":"forward",
+						"TargetGroupArn":{
+							"Ref":"ALBTargetGroup"
+						}
+					}
+				],
+				"LoadBalancerArn":{
+					"Ref":"WAFALB"
+				},
+				"Port":"443",
+				"Protocol":"HTTPS"
+			}
+		},
+		"ALBListenerRule":{
+			"Type":"AWS::ElasticLoadBalancingV2::ListenerRule",
+			"Condition" : "CertificateAvailable",
+			"Properties":{
+				"Actions":[
+					{
+						"Type":"forward",
+						"TargetGroupArn":{
+							"Ref":"ALBTargetGroup"
+						}
+					}
+				],
+				"Conditions":[
+					{
+						"Field":"path-pattern",
+						"Values":[
+							"/"
+						]
+					}
+				],
+				"ListenerArn":{
+					"Ref":"ALBListenerHTTPS"
+				},
+				"Priority":1
+			}
+		},
+		"APIGWPrivateEndpoint":{
+			"Type" : "AWS::EC2::VPCEndpoint",
+			"Properties" : {
+				"SecurityGroupIds" : [{"Ref":"WafSecurityGroup"}],
+				"ServiceName" :{
+					"Fn::Sub": "com.amazonaws.${AWS::Region}.execute-api"
+				},
+				"SubnetIds" : {
+					"Ref":"PrivateSubnetId"
+				},
+				"VpcEndpointType" : "Interface",
+				"VpcId" : {
+					"Ref":"VpcId"
+				}
+			}
+		}
+	},
+	"Outputs":{
+		"WAFALB":{
+			"Description":"Your ALB DNS URL",
+			"Value":{
+				"Fn::Join":[
+					"",
+					[
+						{
+							"Fn::GetAtt":[
+								"WAFALB",
+								"DNSName"
+							]
+						}
+					]
+				]
+			}
+		},
+		"AllVPCEndpointDNS":{
+			"Description":"Internal dns name of the apigateway vpcendpoints",
+			"Value":{
+				"Fn::Join": [",", {"Fn::GetAtt":[
+					"APIGWPrivateEndpoint",
+					"DnsEntries"
+				]}
+				]
+			}
+		},
+		"MainVPCEndpoint":{
+			"Description":"Internal dns name of first apigateway vpcendpoint",
+			"Value":{
+				"Fn::Select" : [ "0", {"Fn::GetAtt":["APIGWPrivateEndpoint", "DnsEntries"] }]
+			}
+		},
+		"MainVPCEndpointDNS":{
+			"Description":"Internal dns name of first apigateway vpcendpoint",
+			"Value":{"Fn::Select" : ["1", { "Fn::Split" : [":", {"Fn::Select" : [ "0", {"Fn::GetAtt":["APIGWPrivateEndpoint", "DnsEntries"] }]}]}]}
+		}
+
+	}
+}

@@ -1,0 +1,40 @@
+[{
+    "Resource": "arn:aws:execute-api:ap-southeast-2:accountnumber:iimw521s71/V3/POST/Start/Job",
+    "Parameters": [{
+        "JOBQueueURL":"https://sqs.ap-southeast-2.amazonaws.com/accountnumber/LogverzJobsQueue",
+        "S3Folders":"s3://lltestdata/ctrail/06/",
+        "S3EnumerationDepth":"2",
+        "QueryType":"CloudTrail",
+        "QueryString":"select * from S3Object[*].Records[*] s Where s.errorMessage!='null'",
+        "LogVolume":"BUILD_GENERAL1_SMALL",
+        "AllocationStrategy":"cost-sensitive",
+        "PreferedWorkerNumber":"auto",
+        "DatabaseParameters":"DefaultDB",
+        "TableName":"First_Table",
+        "TableDescription":"The settings used to create the data in table 1",
+        "TableOwners": "LogverzUsers:GroupAWS,admin:UserAWS",
+        "TableAccess":"demouser:UserAWS"
+        }],
+    "Operation": "apigateway:POST"
+},
+{
+    "Resource": "arn:aws:execute-api:ap-southeast-2:accountnumber:iimw521s71/V3/POST/Start/Job",
+    "Parameters": [{
+        "JOBQueueURL":"https://sqs.ap-southeast-2.amazonaws.com/accountnumber/LogverzJobsQueue",
+        "S3Folders":"s3://lltestdata/ctrail/06/",
+        "S3EnumerationDepth":"2",
+        "QueryType":"Custom",
+        "CustomQuerySchema":"",
+        "CustomQueryString":"",
+        "CustomS3Select":"",
+        "LogVolume":"BUILD_GENERAL1_SMALL",
+        "AllocationStrategy":"cost-sensitive",
+        "PreferedWorkerNumber":"auto",
+        "DatabaseParameters":"DefaultDB",
+        "TableName":"Second_Table",
+        "TableDescription":"The settings used to create the data in table 2",
+        "TableOwners": "admin:UserAWS",
+        "TableAccess":""
+        }],
+    "Operation": "apigateway:POST"
+}]

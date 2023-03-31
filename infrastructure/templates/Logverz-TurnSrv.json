@@ -1,0 +1,729 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Transform": ["LogverzTransform", "AWS::Serverless-2016-10-31"],
+	"Description": "Logverz TurnSrv stack",
+	"Metadata": {
+		"stackname":"Logverz-TurnSrv"
+	},
+	"Parameters": {
+		"TurnServerAmiId":{
+			"Type":"String"
+		},
+		"TurnSrvInstanceSize":{
+			"Type":"String"
+		},
+		"TurnSrvASGConfig":{
+			"Type":"String"
+		},
+		"myKeyPair" : {
+			"Type" : "String",
+			"Default":""
+		},
+		"VPCID":{
+			"Type": "AWS::EC2::VPC::Id"
+		},
+		"PublicSubnet":{
+			"Type":"String"
+		},
+		"InitBucket":{
+			"Type": "String"
+		},
+		"WebRTCBucket":{
+			"Type": "String"
+		},
+		"PublicKeyVersion":{
+			"Type": "String",
+			"Default": "/Logverz/Logic/PublicKey:1"
+		},
+		"MaximumCacheTime":{
+			"Type":"String"
+		}
+	},
+	"Mappings" : {
+		"RegionMap" : {
+			"af-south-1":{"Instances" : "t3"},
+			"ap-northeast-1" : {"Instances" : "t3,t3a"},
+			"ap-southeast-1" : {"Instances" : "t3,t3a"},
+			"eu-central-1": {"Instances" : "t3,t3a"},
+			"eu-west-1": {"Instances" : "t3,t3a"},
+			"eu-west-2": {"Instances" : "t3,t3a"},
+			"us-east-1": {"Instances" : "t3,t3a"},
+			"us-east-2": {"Instances" : "t3,t3a"},
+			"ap-east-1": {"Instances" :"t3"},
+			"ap-northeast-2":{"Instances" : "t3,t3a"},
+			"ap-southeast-2" : {"Instances" : "t3,t3a"},
+			"ca-central-1": {"Instances" : "t3,t3a"},
+			"eu-north-1": {"Instances" :"t3"},
+			"eu-south-1": {"Instances" :"t3"},
+			"me-south-1": {"Instances" :"t3"},
+			"us-west-1":{"Instances" : "t3,t3a"},
+			"ap-northeast-3":{"Instances" : "t3,t3a"},
+			"ap-south-1":{"Instances" : "t3,t3a"},
+			"eu-west-3":{"Instances" : "t3,t3a"},
+			"sa-east-1":{"Instances" : "t3,t3a"},
+			"us-west-2":{"Instances" : "t3,t3a"}
+		}
+	},
+	"Conditions": {
+		"multipleinstancetypes" : {"Fn::Equals" : [{ "Fn::FindInMap" : [ "RegionMap", { "Ref" : "AWS::Region" }, "Instances"]}, "t3,t3a"]},
+		"singleinstancetypes" : {"Fn::Equals" : [{ "Fn::FindInMap" : [ "RegionMap", { "Ref" : "AWS::Region" }, "Instances"]}, "t3"]},
+		"HasKeyName": {"Fn::Not": [{"Fn::Equals": ["", {"Ref": "myKeyPair"}]}]}
+	},
+	"Resources": {
+		"LogverzTurnServerLogs":{
+			"Type" : "AWS::Logs::LogGroup",
+			"Properties" : {
+				"LogGroupName" : "/Logverz/TurnService",
+				"RetentionInDays" : 14
+			}
+		},
+		"LogverzTurnServerProfile":{
+			"Type":"AWS::IAM::InstanceProfile",
+			"Properties":{
+				"Path":"/",
+				"Roles":[
+					{
+						"Ref":"LogverzTurnServerInstanceRole"
+					}
+				]
+			}
+		},
+		"LogverzTurnServerInstanceRole":{
+			"Type":"AWS::IAM::Role",
+			"Properties":{
+				"AssumeRolePolicyDocument":{
+					"Statement":[
+						{
+							"Effect":"Allow",
+							"Principal":{
+								"Service":[
+									"ec2.amazonaws.com"
+								]
+							},
+							"Action":[
+								"sts:AssumeRole"
+							]
+						}
+					]
+				},
+				"ManagedPolicyArns":["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"],
+				"Path":"/",
+				"Policies":[
+					{
+						"PolicyName":{
+							"Fn::Sub": "Logverz-TurnSrvHost-${AWS::Region}"
+						},
+						"PolicyDocument":{
+							"Statement":[
+								{
+									"Effect": "Allow",
+									"Action": [
+										"ssm:DescribeParameters",
+										"autoscaling:DescribeAutoScalingGroups",
+										"autoscaling:DescribeAutoScalingInstances",
+										"ec2:DescribeInstances"
+									],
+									"Resource": "*"
+								},
+								{
+									"Sid": "AccessToLocalParameterStore",
+									"Action": [
+										"ssm:GetParameter"
+									],
+									"Effect": "Allow",
+									"Resource": {
+										"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/Logverz*"
+									}
+								},
+								{
+									"Sid": "RetrieveDependencies",
+									"Action": [
+										"s3:GetObject",
+										"s3:GetObjectVersion",
+										"s3:ListBucket"
+									],
+									"Effect": "Allow",
+									"Resource": [
+										{
+											"Fn::Join": [
+												"",
+												[
+													"arn:aws:s3:::",
+													{
+														"Ref" : "InitBucket"
+													},
+													"/*"
+												]
+											]
+										}, {
+											"Fn::Join": [
+												"",
+												[
+													"arn:aws:s3:::",
+													{
+														"Ref" : "InitBucket"
+													}
+												]
+											]
+										}
+									]
+								},
+								{
+									"Sid": "CheckContainerKeepalive",
+									"Action": [
+										"s3:GetObject",
+										"s3:PutObject",
+										"s3:GetObjectVersion",
+										"s3:ListBucket"
+									],
+									"Effect": "Allow",
+									"Resource": [
+										{
+											"Fn::Join": [
+												"",
+												[
+													"arn:aws:s3:::",
+													{
+														"Ref" : "WebRTCBucket"
+													},
+													"/*"
+												]
+											]
+										}, {
+											"Fn::Join": [
+												"",
+												[
+													"arn:aws:s3:::",
+													{
+														"Ref" : "WebRTCBucket"
+													}
+												]
+											]
+										}
+									]
+								},
+								{
+									"Sid": "CloudWatchLogAgentPutForTurnServerLogGroup",
+									"Effect": "Allow",
+									"Action": [
+										"logs:CreateLogStream",
+										"logs:DescribeLogStreams",
+										"logs:PutLogEvents"
+									],
+									"Resource": [
+										{
+											"Fn::Sub": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/Logverz/TurnService"
+										},
+										{
+											"Fn::Sub": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/Logverz/TurnService:*:*"
+										}
+									]
+								},
+								{
+									"Sid": "PutnGetTurnTrafficCounters",
+									"Effect": "Allow",
+									"Action": ["cloudwatch:PutMetricData", "cloudwatch:GetMetricData"],
+									"Resource": "*"
+								},
+								{
+									"Sid": "ScaleLogverzASGS",
+									"Action": [
+										"autoscaling:SetDesiredCapacity"
+									],
+									"Effect": "Allow",
+									"Resource": "*",
+									"Condition": {
+										"StringEquals": {
+											"autoscaling:ResourceTag/Logverz": "true"
+										}
+									}
+								}
+							]
+						}
+					}
+				],
+				"RoleName" : {"Fn::Join":["", ["LogverzTurnServerInstanceRole-", { "Ref":"AWS::Region"}]]}
+			}
+		},
+		"LogverzTurnServerLaunchTemplate":{
+			"Type" : "AWS::EC2::LaunchTemplate",
+			"Properties" : {
+				"LaunchTemplateData" : {
+					"CreditSpecification":{
+						"CpuCredits":"unlimited"
+					},
+					"InstanceType" : { "Fn::Sub": [ "t3.${instancesize}", { "instancesize": {"Ref" : "TurnSrvInstanceSize" }} ]},
+					"KeyName" : {"Fn::If": ["HasKeyName", {"Ref": "myKeyPair"}, {"Ref": "AWS::NoValue"}]},
+					"ImageId" : {"Ref":"TurnServerAmiId"},
+					"IamInstanceProfile" : {
+						"Arn" : {"Fn::GetAtt": ["LogverzTurnServerProfile", "Arn"]}
+					},
+					"InstanceInitiatedShutdownBehavior":"terminate",
+					"Monitoring":{
+						"Enabled" : "true"
+					},
+					"SecurityGroupIds":[
+						{
+							"Ref": "LogverzSGTurnSrv"
+						}
+					],
+					"UserData":{"Fn::Base64" :
+
+						{ "Fn::Sub": [ "#!/bin/bash\nmkdir /home/ubuntu/environment\nmkdir /home/ubuntu/coturnconfig\nwget -O /home/ubuntu/environment/identitydocument http://169.254.169.254:80/latest/dynamic/instance-identity/document\necho ${webrtcbucket} > /home/ubuntu/environment/webrtcbucket\n\necho $(date +%s) >/home/ubuntu/environment/serverstarttime\nsnap start amazon-ssm-agent\n\nsudo apt-get update\nsudo apt-get upgrade -y\nsudo add-apt-repository universe\nsudo apt-get install coturn awscli -y\nsudo systemctl stop coturn\n\n#Grabbing PS installer from local storage because of MS outage @18.06.21\npsversion=$(aws s3 ls ${bucketname}/bin/ |grep powershell|grep deb| head -n 1 | awk '{print $4}')\naws s3 cp s3://${bucketname}/bin/$psversion /home/ubuntu/bin/$psversion\nsudo dpkg -i /home/ubuntu/bin/$psversion\n\naws s3 cp s3://${bucketname}/bin/coturncontrol.zip /home/ubuntu/bin/coturncontrol.zip \nsudo pwsh -Command \"Expand-Archive -Path /home/ubuntu/bin/coturncontrol.zip -DestinationPath /home/ubuntu/coturnconfig &&Copy-Item /home/ubuntu/coturnconfig/coturncontrol.service,/home/ubuntu/coturnconfig/coturncontrol.timer -Destination /etc/systemd/system/\"\ntouch /var/log/turnserver.log\nchown turnserver:turnserver /var/log/turnserver.log\n\necho \"TURNSERVER_ENABLED=1\" >> /etc/default/coturn\nsystemctl restart coturn\nsystemctl start coturncontrol", { "bucketname": {"Ref" : "InitBucket" }, "webrtcbucket":{"Ref":"WebRTCBucket"}} ]}
+					},
+					"TagSpecifications":[{
+						"ResourceType": "instance",
+						"Tags":[{
+							"Key" : "Name",
+							"Value" : "LogverzTurnSrv"
+						}]
+					}]
+				},
+				"LaunchTemplateName" : "LogverzTurnSrvLT"
+			}
+		},
+		"LogverzTurnSrvMultiITASG":{
+			"Condition":"multipleinstancetypes",
+			"Type" : "AWS::AutoScaling::AutoScalingGroup",
+			"Properties" : {
+				"Cooldown" : "180",
+				"HealthCheckType" : "EC2",
+				"HealthCheckGracePeriod":"120",
+				"MaxSize" : { "Fn::Select" : [ "2", { "Fn::Split" : [ ",", {"Ref":"TurnSrvASGConfig"} ] } ] },
+				"MinSize" : { "Fn::Select" : [ "0", { "Fn::Split" : [ ",", {"Ref":"TurnSrvASGConfig"} ] } ] },
+				"DesiredCapacity":{ "Fn::Select" : [ "1", { "Fn::Split" : [ ",", {"Ref":"TurnSrvASGConfig"} ] } ] },
+				"MixedInstancesPolicy" : {
+					"InstancesDistribution" : {
+						"SpotAllocationStrategy" : "capacity-optimized",
+						"OnDemandPercentageAboveBaseCapacity":"0"
+					},
+					"LaunchTemplate" : {
+						"LaunchTemplateSpecification" : {
+							"LaunchTemplateId":{
+								"Ref":"LogverzTurnServerLaunchTemplate"
+							},
+							"Version" : {"Fn::GetAtt": ["LogverzTurnServerLaunchTemplate", "LatestVersionNumber"]}
+						},
+						"Overrides":[{
+							"InstanceType" :{ "Fn::Sub": [ "t3.${instancesize}", { "instancesize": {"Ref" : "TurnSrvInstanceSize" }}]}
+						}, {
+							"InstanceType" : { "Fn::Sub": [ "t3a.${instancesize}", { "instancesize": {"Ref" : "TurnSrvInstanceSize" }}]}
+						}]
+					}
+				},
+				"NewInstancesProtectedFromScaleIn":"true",
+				"VPCZoneIdentifier" :{ "Fn::Split": [",", { "Ref" : "PublicSubnet" }]},
+				"Tags": [{
+					"Key": "Logverz",
+					"PropagateAtLaunch" : "true",
+					"Value": "true"
+				}
+				]
+			}
+		},
+		"LogverzTurnSrvMultiITScaleUpPolicy" : {
+			"Condition":"multipleinstancetypes",
+			"Type" : "AWS::AutoScaling::ScalingPolicy",
+			"Properties" : {
+				"AdjustmentType" : "ChangeInCapacity",
+				"AutoScalingGroupName" : { "Ref" : "LogverzTurnSrvMultiITASG" },
+				"Cooldown" : "240",
+				"ScalingAdjustment" : "1"
+			}
+		},
+		"LogverzTurnSrvMultiITCPUAlarmHigh": {
+			"Condition":"multipleinstancetypes",
+			"Type": "AWS::CloudWatch::Alarm",
+			"Properties": {
+				"AlarmDescription": "Scale-up if CPU > 70% for 10 minutes",
+				"MetricName": "CPUUtilization",
+				"Namespace": "AWS/EC2",
+				"Statistic": "Average",
+				"Period": "300",
+				"EvaluationPeriods": "2",
+				"Threshold": "70",
+				"AlarmActions": [ { "Ref": "LogverzTurnSrvMultiITScaleUpPolicy" } ],
+				"Dimensions": [
+					{
+						"Name": "AutoScalingGroupName",
+						"Value": { "Ref": "LogverzTurnSrvMultiITASG" }
+					}
+				],
+				"ComparisonOperator": "GreaterThanThreshold"
+			}
+		},
+		"LogverzTurnSrvSingleITASG":{
+			"Condition":"singleinstancetypes",
+			"Type" : "AWS::AutoScaling::AutoScalingGroup",
+			"Properties" : {
+				"Cooldown" : "180",
+				"HealthCheckType" : "EC2",
+				"HealthCheckGracePeriod":"120",
+				"MaxSize" : { "Fn::Select" : [ "2", { "Fn::Split" : [ ",", {"Ref":"TurnSrvASGConfig"} ] } ] },
+				"MinSize" : { "Fn::Select" : [ "0", { "Fn::Split" : [ ",", {"Ref":"TurnSrvASGConfig"} ] } ] },
+				"DesiredCapacity":{ "Fn::Select" : [ "1", { "Fn::Split" : [ ",", {"Ref":"TurnSrvASGConfig"} ] } ] },
+				"MixedInstancesPolicy" : {
+					"InstancesDistribution" : {
+						"SpotAllocationStrategy" : "capacity-optimized",
+						"OnDemandPercentageAboveBaseCapacity":"0"
+					},
+					"LaunchTemplate" : {
+						"LaunchTemplateSpecification" : {
+							"LaunchTemplateId":{
+								"Ref":"LogverzTurnServerLaunchTemplate"
+							},
+							"Version" : {"Fn::GetAtt": ["LogverzTurnServerLaunchTemplate", "LatestVersionNumber"]}
+						}
+					}
+				},
+				"NewInstancesProtectedFromScaleIn":"true",
+				"VPCZoneIdentifier" :{ "Fn::Split": [",", { "Ref" : "PublicSubnet" }]},
+				"Tags": [{
+					"Key": "Logverz",
+					"PropagateAtLaunch" : "true",
+					"Value": "true"
+				}
+				]
+			}
+		},
+		"LogverzTurnSrvSingleITScaleUpPolicy" : {
+			"Condition":"singleinstancetypes",
+			"Type" : "AWS::AutoScaling::ScalingPolicy",
+			"Properties" : {
+				"AdjustmentType" : "ChangeInCapacity",
+				"AutoScalingGroupName" : { "Ref" : "LogverzTurnSrvSingleITASG" },
+				"Cooldown" : "240",
+				"ScalingAdjustment" : "1"
+			}
+		},
+		"LogverzTurnSrvSingleITCPUAlarmHigh": {
+			"Condition":"singleinstancetypes",
+			"Type": "AWS::CloudWatch::Alarm",
+			"Properties": {
+				"AlarmDescription": "Scale-up if CPU > 70% for 10 minutes",
+				"MetricName": "CPUUtilization",
+				"Namespace": "AWS/EC2",
+				"Statistic": "Average",
+				"Period": "300",
+				"EvaluationPeriods": "2",
+				"Threshold": "70",
+				"AlarmActions": [ { "Ref": "LogverzTurnSrvSingleITScaleUpPolicy" } ],
+				"Dimensions": [
+					{
+						"Name": "AutoScalingGroupName",
+						"Value": { "Ref": "LogverzTurnSrvSingleITASG" }
+					}
+				],
+				"ComparisonOperator": "GreaterThanThreshold"
+			}
+		},
+		"LogverzSGTurnSrv": {
+			"Type": "AWS::EC2::SecurityGroup",
+			"Properties": {
+				"GroupDescription": "Allows Client TurnServer connectivity and internal SSH.",
+				"SecurityGroupIngress":[
+					{
+						"CidrIp" : "0.0.0.0/0",
+						"Description" : "External webrtc access on UDP",
+						"IpProtocol": "udp",
+						"FromPort": "3478",
+						"ToPort": "3479"
+					},
+					{
+						"CidrIp" : "0.0.0.0/0",
+						"Description" : "External webrtc access on TCP",
+						"IpProtocol": "tcp",
+						"FromPort": "3478",
+						"ToPort": "3479"
+					},
+					{
+						"CidrIp" : "0.0.0.0/0",
+						"Description" : "External access, on ephemeral ports UDP.",
+						"IpProtocol": "udp",
+						"FromPort": "49152",
+						"ToPort": "65535"
+					},
+					{
+						"CidrIp" : "10.0.0.0/8",
+						"Description" : "Internal ssh access to the Turn Server.",
+						"IpProtocol": "tcp",
+						"FromPort": "22",
+						"ToPort": "22"
+					},
+					{
+						"CidrIp" : "172.16.0.0/12",
+						"Description" : "Internal ssh access to the Turn Server.",
+						"IpProtocol": "tcp",
+						"FromPort": "22",
+						"ToPort": "22"
+					},
+					{
+						"CidrIp" : "192.168.0.0/16",
+						"Description" : "Internal ssh access to the Turn Server.",
+						"IpProtocol": "tcp",
+						"FromPort": "22",
+						"ToPort": "22"
+					}
+				],
+				"Tags": [{
+					"Key": "Function",
+					"Value": "Logverz"
+				}],
+				"VpcId": { "Ref" : "VPCID" }
+			}
+		},
+		"SetConnectionParamsDNS": {
+			"Type": "AWS::Lambda::Function",
+			"DependsOn":"SetConnectionParamsDNSPolicy",
+			"Properties": {
+				"Code": {
+					"S3Bucket": {"Ref":"InitBucket"},
+					"S3Key": "bin/setconnectionparamsdns.zip"
+				},
+				"Environment": {
+					"Variables": {
+						"StackName" : {"Ref": "AWS::StackName"}
+					}
+				},
+				"Description": "Registers instance ip in DNS.",
+				"FunctionName": "Logverz-SetConnectionParamsDNS",
+				"Handler": "setconnectionparamsdns.handler",
+				"Role": {
+					"Fn::GetAtt": ["SetConnectionParamsDNSRole", "Arn"]
+				},
+				"Runtime": "nodejs16.x",
+				"MemorySize":"192",
+				"Timeout": "10"
+			}
+		},
+		"SetConnectionParamsDNSRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [{
+						"Effect": "Allow",
+						"Principal": {
+							"Service": [
+								"lambda.amazonaws.com"
+							]
+						},
+						"Action": "sts:AssumeRole"
+					}]
+				},
+				"RoleName":{
+					"Fn::Sub":"Logverz-SetConnectionParamsDNSRole-${AWS::Region}"
+				}
+			}
+		},
+		"SetConnectionParamsDNSPolicy": {
+			"Type": "AWS::IAM::Policy",
+			"Properties": {
+				"PolicyName":{
+					"Fn::Sub": "Logverz-SetConnectionParamsDNSPolicy-${AWS::Region}"
+				},
+				"PolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Effect": "Allow",
+							"Action": [
+								"ssm:DescribeParameters",
+								"autoscaling:DescribeAutoScalingGroups",
+								"autoscaling:DescribeAutoScalingInstances",
+								"autoscaling:DescribeLifecycleHooks",
+								"ec2:DescribeInstances"
+							],
+							"Resource": "*"
+						},
+						{
+							"Action": [
+								"ssm:GetParameter"
+							],
+							"Effect": "Allow",
+							"Resource": {
+								"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/*Logverz*"
+							}
+						},
+						{
+							"Action": "logs:*",
+							"Effect": "Allow",
+							"Resource": "arn:aws:logs:*:*:*"
+						},
+						{
+							"Sid": "RecordErrors",
+							"Effect": "Allow",
+							"Action": [
+								"dynamodb:PutItem"
+							],
+							"Resource":[
+								{
+									"Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Logverz-Invocations"
+								}
+							]
+						}
+					]
+				},
+				"Roles": [{
+					"Ref": "SetConnectionParamsDNSRole"
+				}]
+			}
+		},
+		"LogverzMultiITurnDNSEventBridgeResource": {
+			"Condition":"multipleinstancetypes",
+			"Type": "AWS::Events::Rule",
+			"Properties": {
+				"State": "ENABLED",
+				"Description": "Run Lambda to register instance ip to DNS",
+				"EventPattern": {
+					"source": [
+						"aws.autoscaling"
+					],
+					"detail-type": [
+						"EC2 Instance-launch Lifecycle Action",
+						"EC2 Instance Terminate Successful"
+					],
+					"detail": {
+						"AutoScalingGroupName": [
+							{
+								"Ref": "LogverzTurnSrvMultiITASG"
+							}
+						]
+					}
+				},
+				"Targets": [{
+					"Arn": {"Fn::GetAtt" : ["SetConnectionParamsDNS", "Arn"]},
+					"Id": "RegisterDnsFunction"
+				}]
+			}
+		},
+		"LogverzSingleiITurnDNSEventBridgeResource": {
+			"Condition":"singleinstancetypes",
+			"Type": "AWS::Events::Rule",
+			"Properties": {
+				"State": "ENABLED",
+				"Description": "Run Lambda to register instance ip to DNS",
+				"EventPattern": {
+					"source": [
+						"aws.autoscaling"
+					],
+					"detail-type": [
+						"EC2 Instance-launch Lifecycle Action",
+						"EC2 Instance Terminate Successful"
+					],
+					"detail": {
+						"AutoScalingGroupName": [
+							{
+								"Ref": "LogverzTurnSrvSingleITASG"
+							}
+						]
+					}
+				},
+				"Targets": [{
+					"Arn": {"Fn::GetAtt" : ["SetConnectionParamsDNS", "Arn"]},
+					"Id": "RegisterDnsFunction"
+				}]
+			}
+		},
+		"PermissionForMultiEventsToInvokeLambda": {
+			"Condition":"multipleinstancetypes",
+			"Type": "AWS::Lambda::Permission",
+			"Properties": {
+				"FunctionName": { "Ref": "SetConnectionParamsDNS" },
+				"Action": "lambda:InvokeFunction",
+				"Principal": "events.amazonaws.com",
+				"SourceArn": { "Fn::GetAtt": ["LogverzMultiITurnDNSEventBridgeResource", "Arn"] }
+			}
+		},
+		"PermissionForSingleEventsToInvokeLambda": {
+			"Condition":"singleinstancetypes",
+			"Type": "AWS::Lambda::Permission",
+			"Properties": {
+				"FunctionName": { "Ref": "SetConnectionParamsDNS" },
+				"Action": "lambda:InvokeFunction",
+				"Principal": "events.amazonaws.com",
+				"SourceArn": { "Fn::GetAtt": ["LogverzSingleiITurnDNSEventBridgeResource", "Arn"] }
+			}
+		},
+		"Permission4Lambda2MultiInstanceDNSRegistration": {
+			"Condition":"multipleinstancetypes",
+			"Type": "AWS::IAM::Policy",
+			"Properties": {
+				"PolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Sid": "CompleteLifecyclehook",
+							"Effect": "Allow",
+							"Action": [
+								"autoscaling:CompleteLifecycleAction"
+							],
+							"Resource":[
+								{
+									"Fn::Sub": "arn:aws:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${LogverzTurnSrvMultiITASG}"
+								}
+							]
+						}
+					]
+				},
+				"PolicyName": {
+					"Fn::Sub": "Logverz-MultiInstanceDNSRegistration-${AWS::Region}"
+				},
+				"Roles": [{
+					"Ref": "SetConnectionParamsDNSRole"
+				}]
+			}
+		},
+		"Permission4Lambda2SingleInstanceDNSRegistration": {
+			"Condition":"singleinstancetypes",
+			"Type": "AWS::IAM::Policy",
+			"Properties": {
+				"PolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Sid": "CompleteLifecyclehook",
+							"Effect": "Allow",
+							"Action": [
+								"autoscaling:CompleteLifecycleAction"
+							],
+							"Resource":[
+								{
+									"Fn::Sub": "arn:aws:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${LogverzTurnSrvSingleITASG}"
+								}
+							]
+						}
+					]
+				},
+				"PolicyName": {
+					"Fn::Sub": "Logverz-SingleInstanceDNSRegistration-${AWS::Region}"
+				},
+				"Roles": [{
+					"Ref": "SetConnectionParamsDNSRole"
+				}]
+			}
+		},
+		"SSMLogverzTurnSrv": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": "/Logverz/Settings/TurnSrvUserName",
+				"Type": "String",
+				"Value": "logverz",
+				"Description": "Turnserver identity"
+			}
+		}
+
+	},
+	"Outputs": {
+		"TurnASGM":{
+			"Condition":"multipleinstancetypes",
+			"Description": "AutoscalinggroupName",
+			"Value":{"Ref":"LogverzTurnSrvMultiITASG"}
+		},
+		"TurnASGS":{
+			"Condition":"singleinstancetypes",
+			"Description": "AutoscalinggroupName",
+			"Value":{"Ref":"LogverzTurnSrvSingleITASG"}
+		}
+	}
+}

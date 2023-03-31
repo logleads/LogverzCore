@@ -1,0 +1,29 @@
+{
+  "name": "Logverz",
+  "version": "0.7.00",
+  "description": "Log Interpreter Serverless Application: retrieves data from s3 filters it as specified, than save it for further analysis",
+  "main": "controller.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://logleads@dev.azure.com/logleads/Logverz/_git/Logverz"
+  },
+  "author": "platformlead",
+  "license": "LogLeads License 1.0",
+  "dependencies": {
+    "aws-sdk": "^2.1159.0",
+    "bottleneck": "^2.19.5",
+    "lodash": "^4.17.21",
+    "lokijs": "^1.5.12",
+    "mysql2": "^2.3.3",
+    "pg": "^8.7.3",
+    "pg-hstore": "^2.3.4",
+    "sequelize": "^6.21.0",
+    "tedious": "^14.6.0"
+  },
+  "devDependencies": {
+    "sequelize-cli": "^6.4.1"
+  }
+}

@@ -1,0 +1,19 @@
+CodeSnippets info:
+
+S3Enumeration.js -> To test S3 enumeration speed and depth.
+
+S3Filteringtest.js - > download the s3 file and unzip search for matching items and return. 
+
+S3Filteriningtest2 -> Testing s3 select object using JS. 
+
+S3Putdependecies -> upload zipped local files to S3
+
+S3Multipartupload ->  Do Large file upload to S3.
+
+S3copyfolder -> copies objects between s3 folders. 
+
+modelsimport.js -> Dynamically generating sequlize model and importing it 
+
+queuetest.js -> To check Bottleneck queue limitting behaviour. 
+
+rdstest.js -> Sequlize transactional behaviour testing. 

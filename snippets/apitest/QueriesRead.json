@@ -1,0 +1,134 @@
+[
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Queries",
+        "Parameters": [{
+            "AttributeName": "UsersQuery",
+            "AttributeValue": "demouser:UserAWS",
+            "Expression": "="
+        }],
+        "Operation": "dynamodb:Query"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Queries",
+        "Parameters": [
+            {
+                "AttributeName": "UsersQuery",
+                "AttributeValue": "demouser:UserAWS",
+                "Expression": "="
+            },
+            {
+                "AttributeName": "UnixTime",
+                "AttributeValue": 1613868976907,
+                "Expression": ">"
+            },
+            {
+                "KeyConditionExpression": "and"
+            },
+            {
+                "FilterExpression": {
+                    "Expression": "=",
+                    "AttributeName": "QueryType",
+                    "AttributeValue": "C"
+                }
+            }
+        ],
+        "Operation": "dynamodb:Query"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Queries",
+        "Parameters": [
+            {
+                "AttributeName": "DataType",
+                "AttributeValue": "CloudTrail",
+                "Expression": "="
+            },
+            {
+                "AttributeName": "QueryName",
+                "AttributeValue": "First",
+                "Expression": "begins_with"
+            },
+            {
+                "KeyConditionExpression": "and"
+            }
+        ],
+        "Operation": "dynamodb:Query"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Queries",
+        "Parameters": [{
+            "AttributeName": "DatabaseName",
+            "AttributeValue": "DefaultDB",
+            "Expression": "="
+            },
+        {
+            "AttributeName": "TableName",
+            "AttributeValue": "Table",
+            "Expression": "begins_with"
+        },
+        {
+            "KeyConditionExpression": "and"
+        }
+        ],
+        "Operation": "dynamodb:Query"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Queries",
+        "Parameters": [
+            {
+                "AttributeName": "QueryType",
+                "AttributeValue": "C",
+                "Expression": "="
+            },
+            {
+                "FilterExpression": {
+                    "Expression": "<>",
+                    "AttributeName": "UsersQuery",
+                    "AttributeValue": "demouser:UserAWS"
+                }
+            },
+            {
+                "FilterExpression": {
+                    "Expression": "contains",
+                    "AttributeName": "sharedquery",
+                    "AttributeValue": "self",
+                    "Type": "PostQuery"
+                }
+            }
+        ],
+        "Operation": "dynamodb:Query"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Queries",
+        "Parameters": [
+            {
+                "AttributeName": "QueryType",
+                "AttributeValue": "C",
+                "Expression": "="
+            },
+            {
+                "AttributeName": "UnixTime",
+                "AttributeValue": 1613868976907,
+                "Expression": ">"
+            },
+            {
+                "KeyConditionExpression": "and"
+            },
+            {
+                "FilterExpression": {
+                    "Expression": "<>",
+                    "AttributeName": "UsersQuery",
+                    "AttributeValue": "demouser:UserAWS"
+                }
+            },
+            {
+                "FilterExpression": {
+                    "Expression": "contains",
+                    "AttributeName": "sharedquery",
+                    "AttributeValue": "self",
+                    "Type": "PostQuery"
+                }
+            }
+        ],
+        "Operation": "dynamodb:Query"
+    }
+]

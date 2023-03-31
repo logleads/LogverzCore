@@ -1,0 +1,13 @@
+#kudos: https://medium.com/horrible-hacks/using-systemd-as-a-better-cron-a4023eea996d
+#https://opensource.com/article/20/7/systemd-timers
+# /etc/systemd/system/turnservercontrol.service
+[Unit]
+Description=Runs logic to update connection string and monitor heartbeat shutdown instance
+Wants=webrtcproxycontrol.timer
+
+[Service]
+ExecStart=/usr/bin/pwsh -F /home/ec2-user/webrtcproxycontrol.ps1
+WorkingDirectory=/home/ec2-user/
+
+[Install]
+WantedBy=multi-user.target

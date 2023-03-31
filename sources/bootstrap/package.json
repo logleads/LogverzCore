@@ -1,0 +1,12 @@
+{
+  "name": "Logverz",
+  "description": "",
+  "version": "0.7.00",
+  "main": "bootstrap.js",
+  "keywords": [],
+  "author": "platformlead",
+  "license": "LogLeads License 1.0",
+  "dependencies": {
+    "aws-sdk": "^2.762.0"
+  }
+}

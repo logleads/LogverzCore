@@ -1,0 +1,38 @@
+{
+  "name": "Logverz",
+  "version": "0.7.00",
+  "description": "bridge between client and sqlserver using webrtc",
+  "main": "proxyserver.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://logleads@dev.azure.com/logleads/Logverz/_git/Logverz"
+  },
+  "author": "platformlead",
+  "license": "LogLeads License 1.0",
+  "dependencies": {
+    "@mapbox/node-pre-gyp": "^1.0.10",
+    "aws-sdk": "^2.1284.0",
+    "axios": "^0.27.2",
+    "body-parser": "^1.20.1",
+    "cookie-parser": "^1.4.5",
+    "crypto-js": "^4.0.0",
+    "express": "^4.18.2",
+    "fast-xml-parser": "^4.0.12",
+    "flatted": "^3.2.7",
+    "jsonwebtoken": "^9.0.0",
+    "lodash": "^4.17.21",
+    "lokijs": "^1.5.11",
+    "mysql2": "^2.2.5",
+    "pg": "^8.8.0",
+    "pg-hstore": "^2.3.3",
+    "qs": "^6.9.6",
+    "sequelize": "^6.28.0",
+    "simple-peer": "^9.9.3",
+    "tedious": "^15.1.2",
+    "uuid": "^9.0.0",
+    "wrtc": "^0.4.7"
+  }
+}

@@ -1,0 +1,34 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Metadata": {
+		"BluePrint": {
+		},
+		"Merge": {
+			"LogverzEngine":{
+				"DemoRule": {
+					"Properties": {
+						"FromPort": "3304",
+						"ToPort": "3304"
+					}
+				}
+			},
+			"LogverzLogic":{
+			},
+			"LogverzTurn":{
+			}
+		},
+		"Remove": {
+			"LogverzEngine":{
+			},
+			"LogverzLogic":{
+			},
+			"LogverzTurn":{
+			}
+		}
+	},
+	"Resources": {
+		"Sample": {
+			"Type": "AWS::S3::Bucket"
+		}
+	}
+}

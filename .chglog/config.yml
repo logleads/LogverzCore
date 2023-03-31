@@ -1,0 +1,41 @@
+style: github
+template: CHANGELOG.tpl.md
+info:
+  title: CHANGELOG
+  repository_url: https://github.com/facebook/docusaurus
+options:
+  commits:
+    # filters:
+    #   Type:
+    #     - feat
+    #     - fix
+    #     - perf
+    #     - refactor
+  commit_groups:
+    sort_by: Custom
+    title_order:
+      - feat
+      - fix
+      - update
+      - perf
+      - refactor
+      - build
+      - chore
+    title_maps:
+      feat: ✨ Features
+      fix: 🐛 Bug Fixes
+      perf: ⚡ Performance Improvements
+      refactor: ♻️ Code Refactoring
+      update: 🔄 Updates
+      build: 👷 Building scripts changes
+      chore: 🧹 Other changes
+      # other images https://gitmoji.dev/
+  header:
+    pattern: "^(\\w*)(?:\\(([\\w\\$\\.\\-\\*\\s]*)\\))?\\:\\s(.*)$"
+    pattern_maps:
+      - Type
+      - Scope
+      - Subject
+  notes:
+    keywords:
+      - BREAKING CHANGE

@@ -1,0 +1,110 @@
+For the console:
+
+CloudTrail:
+select s.eventTime, s.eventSource, s.eventName from S3Object[*].Records[*]  s 
+select * from S3Object[*].Records[*]  s Where s.errorMessage!='null'
+                                      s WHERE s.errorMessage IS MISSING
+
+
+
+SELECT s.eventTime, s.eventSource, s.eventName FROM S3Object[*].Records[*]  s WHERE s.eventSource ='sts.amazonaws.com' OR s.eventSource ='ec2.amazonaws.com'
+SELECT s.eventTime, s.eventSource, s.eventName FROM S3Object[*].Records[*]  s WHERE s.eventSource IN('sts.amazonaws.com','ec2.amazonaws.com') AND s.eventName like '%Describe%'
+
+SELECT s.eventTime, s.eventSource, s.eventName FROM S3Object[*].Records[*]  s WHERE s.eventSource IN('servicediscovery.amazonaws.com','ec2.amazonaws.com') AND (s.eventName like '%Describe%' OR s.eventName like '%List%')
+
+SELECT s.eventTime, s.eventSource, s.eventName FROM S3Object[*].Records[*]  s WHERE s.eventSource IN('servicediscovery.amazonaws.com','ec2.amazonaws.com') AND (s.eventName like '%Describe%' OR s.eventName like '%List%') AND ((s.eventTime > '2019-09-06T02:59:01Z') AND (s.eventTime < '2019-09-06T03:01:02Z'))
+
+VPCFlow:
+select * FROM s3object  s WHERE s.dstaddr ='172.31.23.171'
+select s."version", s."srcaddr" from s3object s limit 5 Fileformat: CSV, Delimiter custom " " (space), file has a header row. 
+
+SELECT s."srcaddr",s."dstaddr",s."srcport",s."dstport",s."protocol",s."packets",s."action" FROM s3object s LIMIT 5
+                                       X        X            X             X 
+
+
+For the command prompt JSON cloudtrail: 
+aws s3api select-object-content --bucket lltestdata --key ctrail/06/accountnumber_CloudTrail_ap-southeast-2_20190906T0305Z_hpdoyLeVUP3BMd3z.json.gz --expression "select * from S3Object[*].Records[*]  s Where s.errorMessage!='null'" --expression-type SQL --input-serialization CompressionType=GZIP,JSON={Type=LINES} --output-serialization JSON={RecordDelimiter=','} ./testdata.txt --debug
+
+
+
+aws s3api select-object-content --bucket lltestdata --key vpcflowlogs/ap-southeast-2/2020/09/27/accountnumber_vpcflowlogs_ap-southeast-2_fl-04c552f50e8e18a29_20200927T0405Z_ddea806d.log.gz --expression "SELECT * FROM s3object s LIMIT 5" --expression-type SQL --input-serialization CompressionType=GZIP,CSV={FileHeaderInfo=USE,FieldDelimiter='" "'} --output-serialization CSV={RecordDelimiter=','} ./testdata.txt
+
+
+
+Postgres SQL Queries: 
+
+SELECT * FROM public."First_Table"
+ORDER BY id ASC 
+
+
+JSON query turorials:
+https://www.postgresqltutorial.com/postgresql-json/
+https://popsql.com/learn-sql/postgresql/how-to-query-a-json-column-in-postgresql/
+
+
+SELECT *,  "requestParameters"  -> 'something' AS something
+FROM public."First_Table"
+	WHERE "requestID" = '69CDD1443030A5F3' AND "requestParameters"->>'something'='bbb'
+
+
+SELECT * FROM "Second_Table" st 
+where st.dstport = '49951'
+UNION ALL
+SELECT * FROM "Table3" t 
+where t.dstport = '49951'
+
+
+
+Athena   table creation: 
+
+CREATE EXTERNAL TABLE athenatest (
+    eventVersion STRING,
+    userIdentity STRUCT<
+        type: STRING,
+        principalId: STRING,
+        arn: STRING,
+        accountId: STRING,
+        invokedBy: STRING,
+        accessKeyId: STRING,
+        userName: STRING,
+        sessionContext: STRUCT<
+            attributes: STRUCT<
+                mfaAuthenticated: STRING,
+                creationDate: STRING>,
+            sessionIssuer: STRUCT<
+                type: STRING,
+                principalId: STRING,
+                arn: STRING,
+                accountId: STRING,
+                userName: STRING>>>,
+    eventTime STRING,
+    eventSource STRING,
+    eventName STRING,
+    awsRegion STRING,
+    sourceIpAddress STRING,
+    userAgent STRING,
+    errorCode STRING,
+    errorMessage STRING,
+    requestParameters STRING,
+    responseElements STRING,
+    additionalEventData STRING,
+    requestId STRING,
+    eventId STRING,
+    resources ARRAY<STRUCT<
+        arn: STRING,
+        accountId: STRING,
+        type: STRING>>,
+    eventType STRING,
+    apiVersion STRING,
+    readOnly STRING,
+    recipientAccountId STRING,
+    serviceEventDetails STRING,
+    sharedEventID STRING,
+    vpcEndpointId STRING
+)
+COMMENT 'CloudTrail table for lltestdata bucket'
+ROW FORMAT SERDE 'com.amazon.emr.hive.serde.CloudTrailSerde'
+STORED AS INPUTFORMAT 'com.amazon.emr.cloudtrail.CloudTrailInputFormat'
+OUTPUTFORMAT 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat'
+LOCATION 's3://lltestdata/'
+TBLPROPERTIES ('classification'='cloudtrail');

@@ -1,0 +1,18 @@
+{
+  "name": "Logverz",
+  "version": "0.7.00",
+  "description": "Log Interpreter Serverless Application: init module",
+  "main": "init.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://logleads@dev.azure.com/logleads/Logverz/_git/Logverz"
+  },
+  "author": "platformlead",
+  "license": "LogLeads License 1.0",
+  "dependencies": {
+    "aws-sdk": "^2.1333.0"
+  }
+}

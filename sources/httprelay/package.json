@@ -1,0 +1,15 @@
+{
+  "name": "Logverz",
+  "description": "",
+  "version": "0.7.00",
+  "main": "httprelay.js",
+  "keywords": [],
+  "author": "platformlead",
+  "license": "LogLeads License 1.0",
+  "dependencies": {
+    "aws-sdk": "^2.995.0",
+    "axios": "^0.27.2",
+    "jsonwebtoken": "^9.0.0",
+    "lodash": "^4.17.21"
+  }
+}

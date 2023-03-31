@@ -1,0 +1,22 @@
+{
+  "name": "Logverz",
+  "description": "",
+  "version": "0.7.00",
+  "main": "login.js",
+  "keywords": [],
+  "repository": {
+    "type": "git",
+    "url": "https://logleads@dev.azure.com/logleads/Logverz/_git/Logverz"
+  },
+  "author": "platformlead",
+  "license": "LogLeads License 1.0",
+  "dependencies": {
+    "aws-sdk": "^2.1159.0",
+    "axios": "^0.27.2",
+    "flatted": "^3.2.5",
+    "jsonwebtoken": "^9.0.0",
+    "jwk-to-pem": "^2.0.5",
+    "lodash": "^4.17.21",
+    "lokijs": "^1.5.11"
+  }
+}

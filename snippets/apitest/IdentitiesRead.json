@@ -1,0 +1,113 @@
+[{
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Identities",
+        "Parameters": [{
+            "AttributeName": "Type",
+            "AttributeValue": "PolicyAWS",
+            "Expression": "="
+        }],
+        "Operation": "dynamodb:Query"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Identities",
+        "Parameters": [{
+            "AttributeName": "Name",
+            "AttributeValue": "bob",
+            "Expression": "="
+        }],
+        "Operation": "dynamodb:Query"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Identities",
+        "Parameters": [{
+                "AttributeName": "Name",
+                "AttributeValue": "bob",
+                "Expression": "="
+            }, {
+                "AttributeName": "Type",
+                "AttributeValue": "UserAWS",
+                "Expression": "="
+            },
+            {
+                "KeyConditionExpression": "and"
+            }
+        ],
+        "Operation": "dynamodb:Query"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Identities",
+        "Parameters": [{
+            "AttributeName": "IAM",
+            "AttributeValue": "true",
+            "Expression": "="
+        }],
+        "Operation": "dynamodb:Query"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Identities",
+        "Parameters": [{
+                "AttributeName": "IAM",
+                "AttributeValue": "true",
+                "Expression": "="
+            },
+            {
+                "FilterExpression": {
+                    "Expression": "contains",
+                    "AttributeName": "IAMPolicies",
+                    "AttributeValue": "ViewOnlyAccess"
+                }
+            }
+        ],
+        "Operation": "dynamodb:Query"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Identities",
+        "Parameters": [{
+                "AttributeName": "IAM",
+                "AttributeValue": "true",
+                "Expression": "="
+            },
+            {
+                "FilterExpression": {
+                    "Expression": "contains",
+                    "AttributeName": "IAMGroups",
+                    "AttributeValue": "LogverzUsers"
+                }
+            }
+        ],
+        "Operation": "dynamodb:Query"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Identities",
+        "Parameters": [{
+                "AttributeName": "IAM",
+                "AttributeValue": "true",
+                "Expression": "="
+            },
+            {
+                "FilterExpression": {
+                    "Expression": "contains",
+                    "AttributeName": "IAMPolicies",
+                    "AttributeValue": "ViewOnlyAccess"
+                }
+            }
+        ],
+        "Operation": "dynamodb:Query"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Invocations",
+        "Parameters": [{
+                "AttributeName": "Severity",
+                "AttributeValue": "Error",
+                "Expression": "="
+            }, {
+                "AttributeName": "Category",
+                "AttributeValue": "Infra",
+                "Expression": "="
+            },
+            {
+                "KeyConditionExpression": "and"
+            }
+        ],
+        "Operation": "dynamodb:Query"
+    }
+]

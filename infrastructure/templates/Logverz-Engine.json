@@ -1,0 +1,1191 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Transform": ["LogverzTransform", "AWS::Serverless-2016-10-31"],
+	"Description": "Logverz Log Analysis Engine",
+	"Metadata": {
+		"stackname":"Logverz-Engine",
+		"ResourceBluePrint":{
+			"LogverzMessageQueue": {
+				"Type": "AWS::SQS::Queue",
+				"Properties": {
+					"ContentBasedDeduplication": "true",
+					"FifoQueue": "true",
+					"MessageRetentionPeriod": "7200",
+					"QueueName": "",
+					"RedrivePolicy": {
+						"deadLetterTargetArn": {
+							"Fn::GetAtt": ["LogverzMQDeadLetter", "Arn"]
+						},
+						"maxReceiveCount": 6
+					},
+					"Tags": [{
+						"Key": "Function",
+						"Value": "Logverz"
+					}],
+					"VisibilityTimeout": "90"
+				}
+			},
+			"LogverzController": {
+				"Type": "AWS::CodeBuild::Project",
+				"DependsOn": "LogverzControllerPolicy",
+				"Properties": {
+					"Name": {
+						"Fn::Sub": "${AWS::StackName}-Controller"
+					},
+					"ServiceRole": {
+						"Ref": "LogverzControllerRole"
+					},
+					"Description": "Logverz Controller Coordinates worker lambdas",
+					"Artifacts": {
+						"Type": "NO_ARTIFACTS"
+					},
+					"VpcConfig": {
+						"SecurityGroupIds" : [ { "Ref" : "DBSecGroup" } ],
+						"Subnets" :{ "Fn::Split": [",", { "Ref" : "PrivateSubnet" }]},
+						"VpcId": { "Ref" : "VPCID" }
+					},
+					"Environment": {
+						"Type": "LINUX_CONTAINER",
+						"ComputeType": "BUILD_GENERAL1_SMALL",
+						"Image": "aws/codebuild/standard:6.0",
+						"EnvironmentVariables": [
+							{
+							  "Name": "MaximumCacheTime",
+							  "Type": "PLAINTEXT",
+							  "Value": { "Ref" : "MaximumCacheTime" }
+							}
+						  ]
+					},
+					"Source": {
+						"Type": "S3",
+						"Location": {
+							"Fn::Join": [
+								"", [{ "Ref" : "InitBucket" },
+									"/bin/controller.zip"
+								]
+							]
+						}
+					}
+				}
+			}
+		}
+	},
+	"Parameters": {
+		"PublicKeyVersion":{
+			"Type": "String",
+			"Default": "/Logverz/Logic/PublicKey:1"
+		},
+		"WorkerConcurrency": {
+			"Description": "This specifies the maximum number of workers running parralel. By default the function is set to the 60% of the unused account level concurrency.",
+			"Type": "String",
+			"Default": "auto"
+		},
+		"Tags": {
+			"Default": "Logverz",
+			"Type": "String"
+		},
+		"PrivateSubnet":{
+			"Type":"String"
+		},
+		"VPCID":{
+			"Type": "AWS::EC2::VPC::Id"
+		},
+		"InitBucket":{
+			"Type": "String"
+		},
+		"EngineBucket":{
+			"Type": "String"
+		},
+		"DBSecGroup":{
+			"Type":"String"
+		},
+		"NumberOfControllers":{
+			"Type": "String"
+		},
+		"MaximumCacheTime":{
+			"Type":"String"
+		}
+	},
+	"Mappings" : {
+	},
+	"Resources": {
+		"DemoSG":{
+			"Type":"AWS::EC2::SecurityGroup",
+			"Properties":{
+				"GroupDescription":"DemoSG",
+				"VpcId":{
+					"Ref":"VPCID"
+				}
+			}
+		},
+		"DemoRule":{
+			"Type":"AWS::EC2::SecurityGroupIngress",
+			"Properties":{
+				"GroupId":{
+					"Ref":"DemoSG"
+				},
+				"IpProtocol":"tcp",
+				"FromPort":"80",
+				"ToPort":"80",
+				"CidrIp":"0.0.0.0/0"
+			}
+		},
+		"LogverzInvocations":{
+			"Type" : "AWS::DynamoDB::Table",
+			"Properties" : {
+				"AttributeDefinitions" : [ { "AttributeName":"Action", "AttributeType":"S"}, { "AttributeName":"UnixTime", "AttributeType":"N"}, { "AttributeName":"Severity", "AttributeType":"S"}, { "AttributeName":"Category", "AttributeType":"S"}, { "AttributeName":"Type", "AttributeType":"S"} ],
+				"BillingMode" : "PAY_PER_REQUEST",
+				"KeySchema" : [ { "AttributeName":"Action", "KeyType":"HASH"}, { "AttributeName":"UnixTime", "KeyType":"RANGE"}],
+				"PointInTimeRecoverySpecification":{
+					"PointInTimeRecoveryEnabled" : true
+				},
+				"TableName" : "Logverz-Invocations",
+				"TimeToLiveSpecification" : {
+					"AttributeName" : "ValidityTime",
+					"Enabled" : "false"
+				},
+				"GlobalSecondaryIndexes":[{
+					"IndexName" : "Severity",
+					"KeySchema" : [ { "AttributeName":"Severity", "KeyType":"HASH"}, { "AttributeName":"UnixTime", "KeyType":"RANGE"} ],
+					"Projection" : {
+						"ProjectionType" : "ALL"
+					}
+				},
+				{
+					"IndexName" : "Category",
+					"KeySchema" : [ { "AttributeName":"Category", "KeyType":"HASH"}, { "AttributeName":"UnixTime", "KeyType":"RANGE"} ],
+					"Projection" : {
+						"ProjectionType" : "ALL"
+					}
+				},
+				{
+					"IndexName" : "Type",
+					"KeySchema" : [ { "AttributeName":"Type", "KeyType":"HASH"}, { "AttributeName":"UnixTime", "KeyType":"RANGE"} ],
+					"Projection" : {
+						"ProjectionType" : "ALL"
+					}
+				}
+				]
+			}
+		},
+		"LogverzIdentities":{
+			"Type" : "AWS::DynamoDB::Table",
+			"Properties" : {
+				"AttributeDefinitions" : [ { "AttributeName":"Name", "AttributeType":"S"}, { "AttributeName":"Type", "AttributeType":"S"}, { "AttributeName":"IAM", "AttributeType":"S"}],
+				"BillingMode" : "PAY_PER_REQUEST",
+				"KeySchema" : [ { "AttributeName":"Name", "KeyType":"HASH"}, { "AttributeName":"Type", "KeyType":"RANGE"} ],
+				"PointInTimeRecoverySpecification":{
+					"PointInTimeRecoveryEnabled" : true
+				},
+				"TableName" : "Logverz-Identities",
+				"TimeToLiveSpecification" : {
+					"AttributeName" : "ValidityTime",
+					"Enabled" : "false"
+				},
+				"GlobalSecondaryIndexes":[{
+					"IndexName" : "TypeIndex",
+					"KeySchema" : [ { "AttributeName":"Type", "KeyType":"HASH"}, { "AttributeName":"Name", "KeyType":"RANGE"} ],
+					"Projection" : {
+						"ProjectionType" : "ALL"
+					}
+				}, {
+					"IndexName" : "IAMIndex",
+					"KeySchema" : [ { "AttributeName":"IAM", "KeyType":"HASH"}, { "AttributeName":"Name", "KeyType":"RANGE"}],
+					"Projection" : {
+						"ProjectionType" : "ALL"
+					}
+				}
+				]
+			}
+		},
+		"LogverzQueries":{
+			"Type" : "AWS::DynamoDB::Table",
+			"Properties" : {
+				"AttributeDefinitions" : [ { "AttributeName":"UsersQuery", "AttributeType":"S"}, { "AttributeName":"UnixTime", "AttributeType":"N"}, {"AttributeName":"QueryName", "AttributeType":"S"}, {"AttributeName":"TableName", "AttributeType":"S"}, {"AttributeName":"DatabaseName", "AttributeType":"S"}, {"AttributeName":"DataType", "AttributeType":"S"}, {"AttributeName":"QueryType", "AttributeType":"S"}],
+				"BillingMode" : "PAY_PER_REQUEST",
+				"KeySchema" : [ { "AttributeName":"UsersQuery", "KeyType":"HASH"}, { "AttributeName":"UnixTime", "KeyType":"RANGE"}],
+				"PointInTimeRecoverySpecification":{
+					"PointInTimeRecoveryEnabled" : true
+				},
+				"TableName" : "Logverz-Queries",
+				"TimeToLiveSpecification" : {
+					"AttributeName" : "ValidityTime",
+					"Enabled" : "false"
+				},
+				"GlobalSecondaryIndexes":[
+					{
+						"IndexName" : "TableName",
+						"KeySchema" : [ { "AttributeName":"DatabaseName", "KeyType":"HASH"}, { "AttributeName":"TableName", "KeyType":"RANGE"}],
+						"Projection" : {
+							"ProjectionType" : "ALL"
+						}
+					},
+					{
+						"IndexName" : "QueryName",
+						"KeySchema" : [ { "AttributeName":"DataType", "KeyType":"HASH"}, { "AttributeName":"QueryName", "KeyType":"RANGE"}],
+						"Projection" : {
+							"ProjectionType" : "ALL"
+						}
+					},
+					{
+						"IndexName" : "QueryType",
+						"KeySchema" : [ { "AttributeName":"QueryType", "KeyType":"HASH"}, { "AttributeName":"UnixTime", "KeyType":"RANGE"}],
+						"Projection" : {
+							"ProjectionType" : "ALL"
+						}
+					}]
+			}
+		},
+		"LogverzPreferences":{
+			"Type" : "AWS::DynamoDB::Table",
+			"Properties" : {
+				"AttributeDefinitions" : [ { "AttributeName":"Name", "AttributeType":"S"}],
+				"BillingMode" : "PAY_PER_REQUEST",
+				"KeySchema" : [ { "AttributeName":"Name", "KeyType":"HASH"}],
+				"PointInTimeRecoverySpecification":{
+					"PointInTimeRecoveryEnabled" : true
+				},
+				"TableName" : "Logverz-Preferences",
+				"TimeToLiveSpecification" : {
+					"AttributeName" : "ValidityTime",
+					"Enabled" : "false"
+				}
+			}
+		},
+		"LogverzControllerPolicy": {
+			"Description": "Setting IAM policy for service role for CodeBuild",
+			"Properties": {
+				"PolicyDocument": {
+					"Statement": [{
+						"Action": [
+							"logs:CreateLogGroup",
+							"logs:CreateLogStream",
+							"logs:PutLogEvents",
+							"s3:GetObject",
+							"s3:GetObjectVersion",
+							"s3:ListBucket",
+							"cloudwatch:GetMetricData",
+							"servicequotas:GetServiceQuota"
+						],
+						"Effect": "Allow",
+						"Resource": "*"
+					},
+					{
+						"Action": [
+							"ec2:CreateNetworkInterface",
+							"ec2:DescribeNetworkInterfaces",
+							"ec2:DeleteNetworkInterface",
+							"ec2:DescribeSecurityGroups",
+							"ec2:DescribeSubnets",
+							"ec2:DescribeVpcs",
+							"ec2:DescribeDhcpOptions",
+							"ec2:CreateNetworkInterfacePermission"
+						],
+						"Effect": "Allow",
+						"Resource": "*"
+					},
+					{
+						"Action": [
+							"s3:PutObject",
+							"s3:GetObject",
+							"s3:GetObjectVersion",
+							"s3:List*",
+							"s3:CreateBucket",
+							"s3:GetBucketLocation"
+						],
+						"Effect": "Allow",
+						"Resource": [
+							{
+								"Fn::Join": [
+									"",
+									[
+										"arn:aws:s3:::",
+										{
+											"Ref" : "EngineBucket"
+										},
+										"/*"
+									]
+								]
+							}, {
+								"Fn::Join": [
+									"",
+									[
+										"arn:aws:s3:::",
+										{
+											"Ref" : "EngineBucket"
+										},
+										"/"
+									]
+								]
+							}
+						]
+					},
+					{
+						"Effect": "Allow",
+						"Action": [
+							"ssm:DescribeParameters"
+						],
+						"Resource": "*"
+					},
+					{
+						"Action": [
+							"ssm:PutParameter",
+							"ssm:GetParameter"
+						],
+						"Effect": "Allow",
+						"Resource": {
+							"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/Logverz*"
+						}
+					},
+					{
+						"Action": [
+							"lambda:UpdateFunctionCode",
+							"lambda:ListTags",
+							"lambda:TagResource",
+							"lambda:UntagResource",
+							"lambda:GetFunctionConfiguration",
+							"lambda:CreateFunction",
+							"lambda:AddPermission",
+							"lambda:InvokeFunction"
+						],
+						"Effect": "Allow",
+						"Resource": {"Fn::GetAtt": [
+							"LogverzWorkerFunction",
+							"Arn"
+						]}
+
+					},
+					{
+						"Effect": "Allow",
+						"Action": [
+							"codebuild:StartBuild",
+							"codebuild:BatchGetBuilds"
+
+						],
+						"Resource": {
+							"Fn::Sub": "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/Logverz*"
+						}
+					},
+					{
+						"Effect": "Allow",
+						"Action": [
+							"sqs:SendMessage",
+							"sqs:ReceiveMessage",
+							"sqs:DeleteMessage",
+							"sqs:GetQueueAttributes",
+							"sqs:GetQueueUrl",
+							"sqs:ListDeadLetterSourceQueues"
+						],
+						"Resource": {
+							"Fn::Sub": "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:LogverzMessageQueue*"
+						}
+					},						{
+						"Sid": "ListAndDescribe",
+						"Effect": "Allow",
+						"Action": [
+							"dynamodb:List*",
+							"dynamodb:DescribeReservedCapacity*",
+							"dynamodb:DescribeLimits",
+							"dynamodb:DescribeTimeToLive"
+						],
+						"Resource": "*"
+					}, {
+						"Sid": "SpecificTable",
+						"Effect": "Allow",
+						"Action": [
+							"dynamodb:BatchGet*",
+							"dynamodb:DescribeStream",
+							"dynamodb:DescribeTable",
+							"dynamodb:Get*",
+							"dynamodb:Query",
+							"dynamodb:Scan",
+							"dynamodb:BatchWrite*",
+							"dynamodb:Update*",
+							"dynamodb:PutItem"
+						],
+						"Resource": "arn:aws:dynamodb:*:*:table/Logverz*"
+					}
+					]
+				},
+				"PolicyName": {
+					"Fn::Sub": "Logverz-ControllerPolicy-${AWS::Region}"
+				},
+				"Roles": [{
+					"Ref": "LogverzControllerRole"
+				}]
+			},
+			"Type": "AWS::IAM::Policy"
+		},
+		"LogverzControllerRole": {
+			"Description": "Creating Logverz controller service role in IAM for AWS CodeBuild.",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Statement": [{
+						"Action": "sts:AssumeRole",
+						"Effect": "Allow",
+						"Principal": {
+							"Service": ["codebuild.amazonaws.com", "events.amazonaws.com"]
+						}
+					}]
+				},
+				"Path": "/",
+				"RoleName": {
+					"Fn::Sub": "Logverz-ControllerRole-${AWS::Region}"
+				}
+			},
+			"Type": "AWS::IAM::Role"
+		},
+		"LogverzJobsQueue": {
+			"Type": "AWS::SQS::Queue",
+			"Properties": {
+				"MessageRetentionPeriod": "86400",
+				"QueueName": "LogverzJobsQueue",
+				"RedrivePolicy": {
+					"deadLetterTargetArn": {
+						"Fn::GetAtt": ["LogverzJobsQDeadLetter", "Arn"]
+					},
+					"maxReceiveCount": 20
+				},
+				"Tags": [{
+					"Key": "Function",
+					"Value": "Logverz"
+				}],
+				"VisibilityTimeout": "90"
+			}
+		},
+		"LogverzJobsQDeadLetter": {
+			"Type": "AWS::SQS::Queue",
+			"Properties": {
+				"MessageRetentionPeriod": "28800",
+				"QueueName": "LogverzJobsQDeadLetter",
+				"Tags": [{
+					"Key": "Function",
+					"Value": "Logverz"
+				}]
+			}
+		},
+		"LogverzMQDeadLetter": {
+			"Type": "AWS::SQS::Queue",
+			"Properties": {
+				"ContentBasedDeduplication": "true",
+				"FifoQueue": "true",
+				"MessageRetentionPeriod": "28800",
+				"QueueName": "LogverzMQDeadLetter.fifo",
+				"Tags": [{
+					"Key": "Function",
+					"Value": "Logverz"
+				}]
+			}
+		},
+		"LogverzQueuesPolicy": {
+			"Type": "AWS::SQS::QueuePolicy",
+			"Properties": {
+				"PolicyDocument": {
+					"Version": "2012-10-17",
+					"Id": "Allow Account access to all Logverz* queues",
+					"Statement": [{
+						"Effect": "Allow",
+						"Principal": {
+							"AWS": {
+								"Fn::Sub": "arn:aws:iam::${AWS::AccountId}:root"
+							}
+
+						},
+						"Action": "SQS:*",
+						"Resource": {"Fn::Sub": "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:LogverzMessageQueue*"}
+					},
+					{
+						"Effect": "Allow",
+						"Principal": {
+							"AWS": {
+								"Fn::Sub": "arn:aws:iam::${AWS::AccountId}:root"
+							}
+
+						},
+						"Action": "SQS:*",
+						"Resource": {
+							"Fn::GetAtt": ["LogverzJobsQDeadLetter", "Arn"]
+						}
+					},
+					{
+						"Effect": "Allow",
+						"Principal": {
+							"AWS": {
+								"Fn::Sub": "arn:aws:iam::${AWS::AccountId}:root"
+							}
+
+						},
+						"Action": "SQS:*",
+						"Resource": {
+							"Fn::GetAtt": ["LogverzMQDeadLetter", "Arn"]
+						}
+					}
+					]
+				},
+				"Queues": [{
+					"Ref": "LogverzJobsQDeadLetter"
+				}, {
+					"Ref": "LogverzJobsQueue"
+				}, {
+					"Ref": "LogverzMQDeadLetter"
+				}
+				]
+
+			}
+		},
+		"LogverzWorkerPolicy": {
+			"Description": "Setting IAM policy for service role for Logverz Worker Role",
+			"Properties": {
+				"PolicyDocument": {
+					"Statement": [{
+						"Action": [
+							"logs:CreateLogGroup",
+							"logs:CreateLogStream",
+							"logs:PutLogEvents",
+							"ec2:CreateNetworkInterface",
+							"ec2:DescribeNetworkInterfaces",
+							"ec2:DeleteNetworkInterface"
+						],
+						"Effect": "Allow",
+						"Resource": "*"
+					},
+					{
+						"Action": [
+							"s3:Get*",
+							"s3:List*"
+						],
+						"Effect": "Allow",
+						"Resource": "*"
+					},
+					{
+						"Effect": "Allow",
+						"Action": [
+							"ssm:DescribeParameters"
+						],
+						"Resource": "*"
+					},
+					{
+						"Action": [
+							"ssm:GetParameter"
+						],
+						"Effect": "Allow",
+						"Resource": {
+							"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/Logverz*"
+						}
+					},
+					{
+						"Action": [
+							"lambda:UpdateFunctionCode",
+							"lambda:ListTags",
+							"lambda:TagResource",
+							"lambda:UntagResource",
+							"lambda:GetFunctionConfiguration",
+							"lambda:CreateFunction",
+							"lambda:AddPermission"
+						],
+						"Effect": "Allow",
+						"Resource": {
+							"Fn::Sub": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}"
+						}
+					},
+					{
+						"Effect": "Allow",
+						"Action": [
+							"sqs:SendMessage",
+							"sqs:ReceiveMessage",
+							"sqs:DeleteMessage"
+						],
+						"Resource": {"Fn::Sub": "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:LogverzMessageQueue*"}
+					},
+					{
+						"Sid": "ListAndDescribe",
+						"Effect": "Allow",
+						"Action": [
+							"dynamodb:List*",
+							"dynamodb:DescribeReservedCapacity*",
+							"dynamodb:DescribeLimits",
+							"dynamodb:DescribeTimeToLive"
+						],
+						"Resource": "*"
+					},
+					{
+						"Sid": "SpecificTable",
+						"Effect": "Allow",
+						"Action": [
+							"dynamodb:BatchGet*",
+							"dynamodb:DescribeStream",
+							"dynamodb:DescribeTable",
+							"dynamodb:Get*",
+							"dynamodb:Query",
+							"dynamodb:Scan",
+							"dynamodb:BatchWrite*",
+							"dynamodb:Update*",
+							"dynamodb:PutItem"
+						],
+						"Resource": "arn:aws:dynamodb:*:*:table/Logverz*"
+					}
+					]
+				},
+				"PolicyName": {
+					"Fn::Sub": "Logverz-WorkerPolicy-${AWS::Region}"
+				},
+				"Roles": [{
+					"Ref": "LogverzWorkerRole"
+				}]
+			},
+			"Type": "AWS::IAM::Policy"
+		},
+		"LogverzWorkerRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [{
+						"Effect": "Allow",
+						"Principal": {
+							"Service": [
+								"lambda.amazonaws.com"
+							]
+						},
+						"Action": "sts:AssumeRole"
+					}]
+				},
+				"RoleName":{
+					"Fn::Sub": "Logverz-WorkerRole-${AWS::Region}"
+				}
+			}
+		},
+		"LogverzWorkerFunction": {
+			"Type": "AWS::Lambda::Function",
+			"DependsOn":"LogverzWorkerPolicy",
+			"Properties": {
+				"Code": {
+					"S3Bucket": { "Ref" : "InitBucket"},
+					"S3Key": "bin/worker.zip"
+				},
+				"Environment": {
+					"Variables": {
+						"StackName" : {"Ref": "AWS::StackName"},
+						"TestingTimeout" : "0"
+					}
+				},
+				"Description": "To Retrive matching data from S3",
+				"FunctionName": "Logverz-Worker",
+				"Handler": "worker.handler",
+				"Role": {
+					"Fn::GetAtt": ["LogverzWorkerRole", "Arn"]
+				},
+				"Runtime": "nodejs16.x",
+				"Timeout": "300",
+				"MemorySize":"1536",
+				"VpcConfig": {
+					"SecurityGroupIds" : [ { "Ref" : "DBSecGroup" } ],
+					"SubnetIds" :{ "Fn::Split": [",", { "Ref" : "PrivateSubnet" }]}
+				}
+			}
+		},
+		"MasterControllerRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [{
+						"Effect": "Allow",
+						"Principal": {
+							"Service": [
+								"lambda.amazonaws.com"
+							]
+						},
+						"Action": "sts:AssumeRole"
+					}]
+				},
+				"RoleName": {
+					"Fn::Sub": "Logverz-MasterControllerRole-${AWS::Region}"
+				}
+			}
+		},
+		"MasterControllerPolicy": {
+			"Type": "AWS::IAM::Policy",
+			"Properties": {
+				"PolicyName": {
+					"Fn::Sub": "Logverz-MasterControllerPolicy-${AWS::Region}"
+				},
+				"PolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Effect": "Allow",
+							"Action": [
+								"sqs:SendMessage",
+								"sqs:ReceiveMessage",
+								"sqs:DeleteMessage",
+								"sqs:GetQueueAttributes",
+								"sqs:GetQueueUrl",
+								"sqs:ListDeadLetterSourceQueues"
+							],
+							"Resource": [{"Fn::Sub": "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:LogverzMessageQueue*"},
+								{"Fn::GetAtt": ["LogverzJobsQDeadLetter", "Arn"]},
+								{"Fn::GetAtt": ["LogverzJobsQueue", "Arn"]},
+								{"Fn::GetAtt": ["LogverzMQDeadLetter", "Arn"]}
+							]
+						},
+						{
+							"Action": "kms:Decrypt",
+							"Effect": "Allow",
+							"Resource": "*"
+						},
+						{
+							"Action": "logs:*",
+							"Effect": "Allow",
+							"Resource": "arn:aws:logs:*:*:*"
+						},
+						{
+							"Effect": "Allow",
+							"Action": [
+								"codebuild:StartBuild",
+								"codebuild:ListBuildsForProject",
+								"codebuild:BatchGetBuilds",
+								"codebuild:BatchGetProjects"
+							],
+							"Resource": {
+								"Fn::Sub": "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/Logverz*"
+							}
+						},
+						{
+							"Sid": "ListAndDescribe",
+							"Effect": "Allow",
+							"Action": [
+								"dynamodb:List*",
+								"dynamodb:DescribeReservedCapacity*",
+								"dynamodb:DescribeLimits",
+								"dynamodb:DescribeTimeToLive"
+							],
+							"Resource": "*"
+						},
+						{
+							"Sid": "SpecificTable",
+							"Effect": "Allow",
+							"Action": [
+								"dynamodb:PutItem"
+							],
+							"Resource":{
+								"Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Logverz*"
+							}
+						},
+						{
+							"Sid": "GetQuotasandPerformancemetrics",
+							"Effect": "Allow",
+							"Action": [
+								"servicequotas:GetServiceQuota",
+								"cloudwatch:GetMetricData",
+								"ec2:DescribeNetworkInterfaces"
+							],
+							"Resource": "*"
+						}
+					]
+				},
+				"Roles": [{
+					"Ref": "MasterControllerRole"
+				}]
+			}
+		},
+		"MasterControllerFunction": {
+			"Type": "AWS::Lambda::Function",
+			"DependsOn":["MasterControllerPolicy", "SSMControllersList"],
+			"Properties": {
+				"Code": {
+					"S3Bucket": { "Ref" : "InitBucket" },
+					"S3Key": "bin/mastercontroller.zip"
+				},
+				"Description": "Checks for jobs in LogverzJobs queue, allocates it to the appropiate free controller.",
+				"FunctionName": "Logverz-MasterController",
+				"Handler": "mastercontroller.handler",
+				"Role": {
+					"Fn::GetAtt": ["MasterControllerRole", "Arn"]
+				},
+				"Runtime": "nodejs16.x",
+				"Timeout": "15",
+				"MemorySize":"256",
+				"ReservedConcurrentExecutions": 1,
+				"Environment": {
+					"Variables": {
+						"WorkerFunction": {
+							"Ref": "LogverzWorkerFunction"
+						},
+						"SQSMessageQueues":{
+							"Fn::GetAtt": ["SSMControllersList", "Value"]
+						},
+						"JobsQueueURL": {"Ref":"LogverzJobsQueue"
+						}
+					}
+				}
+			}
+		},
+		"MasterControllerTrigger": {
+			"Type" : "AWS::Lambda::EventSourceMapping",
+			"Properties" : {
+				"BatchSize":"1",
+				"Enabled" : "true",
+				"EventSourceArn" : {
+					"Fn::GetAtt": ["LogverzJobsQueue", "Arn"]
+				},
+				"FunctionName" : {
+					"Ref": "MasterControllerFunction"
+				}
+			}
+		},
+		"LogverzScalePolicy": {
+			"Description": "IAM policy for service role for Logverz AWS Infrastrucure Scale Role",
+			"Properties": {
+				"PolicyDocument": {
+					"Statement": [
+						{
+							"Action": [
+								"logs:CreateLogGroup",
+								"logs:CreateLogStream",
+								"logs:PutLogEvents",
+								"rds:DescribeEvents",
+								"rds:DescribeDBInstances",
+								"autoscaling:DescribeAutoScalingGroups"
+							],
+							"Effect": "Allow",
+							"Resource": "*"
+						},
+						{
+							"Sid": "RDSStartStop4AllLogverzDBInstances",
+							"Effect": "Allow",
+							"Action": [
+								"rds:StopDBInstance",
+								"rds:StartDBInstance"
+
+							],
+							"Resource": "*",
+							"Condition": {
+								"StringEquals": {
+									"rds:db-tag/Logverz": "true"
+								}
+							}
+						},
+						{
+							"Sid": "RDSStartStop4AllLogverzDBClusters",
+							"Effect": "Allow",
+							"Action": [
+								"rds:StartDBCluster",
+								"rds:StopDBCluster"
+							],
+							"Resource": "*",
+							"Condition": {
+								"StringEquals": {
+									"rds:cluster-tag/Logverz": "true"
+								}
+							}
+						},
+						{
+							"Sid": "EC2LimitedtoLogverzResources",
+							"Effect": "Allow",
+							"Action": [
+								"ec2:RebootInstances",
+								"ec2:TerminateInstances",
+								"ec2:CreateFlowLogs",
+								"ec2:StopInstances",
+								"ec2:StartInstances"
+							],
+							"Resource": [
+								{"Fn::Sub": "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"},
+								{"Fn::Sub": "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:vpc-flow-log/*"}
+							],
+							"Condition": {
+								"StringEquals": {
+									"ec2:ResourceTag/Logverz": "true"
+								}
+							}
+						},
+						{
+							"Effect": "Allow",
+							"Action": [
+								"ssm:DescribeParameters",
+								"cloudwatch:GetMetricData"
+							],
+							"Resource": "*"
+						},
+						{
+							"Action": [
+								"ssm:GetParameter"
+							],
+							"Effect": "Allow",
+							"Resource": {
+								"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/Logverz*"
+							}
+						},
+						{
+							"Sid": "SpecificTable",
+							"Effect": "Allow",
+							"Action": [
+								"dynamodb:BatchGet*",
+								"dynamodb:Get*",
+								"dynamodb:Query",
+								"dynamodb:Scan"
+							],
+							"Resource":{
+								"Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Logverz-Identities*"
+							}
+						},
+						{
+							"Sid": "ScaleLogverzASGS",
+							"Action": [
+								"autoscaling:SetDesiredCapacity"
+							],
+							"Effect": "Allow",
+							"Resource": "*",
+							"Condition": {
+								"StringEquals": {
+									"autoscaling:ResourceTag/Logverz": "true"
+								}
+							}
+						},
+						{
+							"Sid": "RecordErrors",
+							"Effect": "Allow",
+							"Action": [
+								"dynamodb:PutItem"
+							],
+							"Resource":[{
+								"Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Logverz-Invocations"
+							}]
+						}
+					]
+				},
+				"PolicyName": {
+					"Fn::Sub": "Logverz-ScalePolicy-${AWS::Region}"
+				},
+				"Roles": [{
+					"Ref": "LogverzScaleRole"
+				}]
+			},
+			"Type": "AWS::IAM::Policy"
+		},
+		"LogverzScaleRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [{
+						"Effect": "Allow",
+						"Principal": {
+							"Service": [
+								"lambda.amazonaws.com"
+							]
+						},
+						"Action": "sts:AssumeRole"
+					}]
+				},
+				"RoleName": {
+					"Fn::Sub":"Logverz-ScaleRole-${AWS::Region}"
+				}
+			}
+		},
+		"LogverzScaleFunction": {
+			"Type": "AWS::Lambda::Function",
+			"Properties": {
+				"Code": {
+					"S3Bucket": {
+						"Ref": "InitBucket"
+					},
+					"S3Key": "bin/scale.zip"
+				},
+				"Environment": {
+					"Variables": {
+						"StackName" : {"Ref": "AWS::StackName"},
+						"AllowedOrigins":"http://localhost:8080,http://127.0.0.1:8080,https://testapi.logleads.com",
+						"PublicKey":{
+							"Fn::Sub":[ "{{resolve:ssm:${key}}}", {
+								"key":{
+									"Ref": "PublicKeyVersion"
+								}
+							}]
+						},
+						"MaximumCacheTime": {"Ref": "MaximumCacheTime"}
+					}
+				},
+				"Description": "To modify infrastructure, Start-Stop DBs and WEBRTC infrastructure",
+				"FunctionName": "Logverz-Scale",
+				"Handler": "scale.handler",
+				"Role": {
+					"Fn::GetAtt": ["LogverzScaleRole", "Arn"]
+				},
+				"Runtime": "nodejs16.x",
+				"Timeout": "30",
+				"MemorySize":"256"
+			}
+		},
+		"LogverzScaleFunctionTrigger": {
+			"Type": "AWS::Events::Rule",
+			"Properties": {
+				"Description": "To run scale function to stop and start resources automatically.",
+				"ScheduleExpression":"rate(30 minutes)",
+				"Name":"Logverz_Scale_Resources",
+				"State": "ENABLED",
+				"Targets": [{
+					"Arn": {"Fn::GetAtt" : ["LogverzScaleFunction", "Arn"]},
+					"Id": "ScaleFunction"
+				}]
+			}
+		},
+		"PermissionForEventsToInvokeLambda": {
+			"Type": "AWS::Lambda::Permission",
+			"Properties": {
+				"FunctionName": { "Ref": "LogverzScaleFunction" },
+				"Action": "lambda:InvokeFunction",
+				"Principal": "events.amazonaws.com",
+				"SourceArn": { "Fn::GetAtt": ["LogverzScaleFunctionTrigger", "Arn"] }
+			}
+		},
+		"SSMControllersList": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": "/Logverz/Engine/ControllersList",
+				"Type": "String",
+				"Value": { "Fn::Sub": [ "${sample}", {"sample":{"Ref": "LogverzJobsQueue"}}]},
+				"Description": "Logverz Controllers List"
+			}
+		},
+		"SSMSchemaDefaultDatatype": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": "/Logverz/Engine/Schemas/SetDataTypePlease",
+				"Type": "String",
+				"Value": "Please change from default data type to the one that is relevant for the query.",
+				"Description": "Logverz DataSource Default datatype, must change."
+			}
+		},
+		"SSMSchemaCtrail": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": "/Logverz/Engine/Schemas/CloudTrail",
+				"Type": "String",
+				"Value": "{\n\"Schema\":[\n\"'eventVersion':{type: Sequelize.STRING},\",\n\"'userIdentity':{type: Sequelize.JSON},\",\n\"'eventTime':{type: Sequelize.DATE},\",\n\"'eventSource':{type: Sequelize.STRING},\",\n\"'eventName':{type: Sequelize.STRING},\",\n\"'awsRegion':{type: Sequelize.STRING},\",\n\"'sourceIPAddress':{type: Sequelize.STRING},\",\n\"'userAgent':{type: Sequelize.STRING},\",\n\"'errorCode':{type: Sequelize.STRING},\",\n\"'errorMessage':{type: Sequelize.STRING(8192)},\",\n\"'requestParameters':{type: Sequelize.JSON},\",\n\"'responseElements':{type: Sequelize.JSON},\",\n\"'additionalEventData':{type: Sequelize.JSON},\",\n\"'requestID':{type: Sequelize.STRING},\",\n\"'eventID':{type: Sequelize.STRING},\",\n\"'eventType':{type: Sequelize.STRING},\",\n\"'recipientAccountId':{type: Sequelize.STRING},\",\n\"'vpcEndpointId':{type: Sequelize.STRING},\",\n\"'serviceEventDetails': {type: Sequelize.STRING},\",\n\"'readOnly':{type: Sequelize.STRING},\",\n\"'resources': {type: Sequelize.JSON}\"],\n\"S3SelectParameters\":{\n  \"IO\":{\n    \"InputSerialization\":{\n      \"Compression\":\"GZIP\",\n      \"JsonType\":\"LINES\",\n      \"RootElement\":\"Records\"\n    }\n  },\n  \"Cast\":{\n      \"eventTime\": {\n        \"format\": \"TBD\",\n        \"postfix\": \"Z\"\n      }\n    }\n},\n\"Views\": [{\n  \"Default\":[\n    \"eventTime\",\n    \"sourceIPAddress\",\n    \"eventName\",\n    \"errorCode\"\n]},{\n  \"Origin\":[\n    \"eventTime\",\n    \"eventSource\",\n    \"userAgent\",\n    \"eventName\",\n    \"errorMessage\"\n]}],\n\"Indexes\": [],\n\"TransForms\": []\n}",
+				"Description": "Logverz CloudTrail DataSource Schema definition."
+			}
+		},
+		"SSMSchemaCtrailSample": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": "/Logverz/Engine/SchemaSamples/CloudTrail",
+				"Type": "String",
+				"Value": "{\n\"Records\": [{\n    \"eventVersion\": \"1.0\",\n    \"userIdentity\": {\n        \"type\": \"IAMUser\",\n        \"principalId\": \"EX_PRINCIPAL_ID\",\n        \"arn\": \"arn:aws:iam::123456789012:user/Alice\",\n        \"accessKeyId\": \"EXAMPLE_KEY_ID\",\n        \"accountId\": \"123456789012\",\n        \"userName\": \"Alice\"\n    },    \"eventTime\": \"2014-03-06T21:22:54Z\",\n    \"eventSource\": \"ec2.amazonaws.com\",\n    \"eventName\": \"StartInstances\",\n    \"awsRegion\": \"us-east-2\",\n    \"sourceIPAddress\": \"205.251.233.176\",\n    \"userAgent\": \"ec2-api-tools 1.6.12.2\",\n    \"requestParameters\": {\"instancesSet\": {\"items\": [{\"instanceId\": \"i-ebeaf9e2\"}]}},\n    \"responseElements\": {\"instancesSet\": {\"items\": [{\n        \"instanceId\": \"i-ebeaf9e2\",\n        \"currentState\": {\n            \"code\": 0,\n            \"name\": \"pending\"\n        },\n        \"previousState\": {\n            \"code\": 80,\n            \"name\": \"stopped\"\n        }\n    }]}}  \n}],\n\"Info\":\"https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-log-file-examples.html\"\n}",
+				"Description": "AWS CloudTrail logs data sample."
+			}
+		},
+		"SSMSchemaVPCFlow": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": "/Logverz/Engine/Schemas/VPCFlow",
+				"Type": "String",
+				"Value": "{\"Schema\": [\n\"'version':{type: Sequelize.INTEGER},\",\n\"'account-id':{type: Sequelize.BIGINT},\",\n\"'interface-id':{type: Sequelize.STRING},\",\n\"'srcaddr':{type: Sequelize.STRING(64)},\",\n\"'dstaddr':{type: Sequelize.STRING(64)},\",\n\"'srcport':{type: Sequelize.INTEGER},\",\n\"'dstport':{type: Sequelize.INTEGER},\",\n\"'protocol':{type: Sequelize.INTEGER},\",\n\"'packets':{type: Sequelize.BIGINT},\",\n\"'bytes':{type: Sequelize.BIGINT},\",\n\"'start':{type: Sequelize.BIGINT},\",\n\"'end':{type: Sequelize.BIGINT},\",\n\"'action':{type: Sequelize.STRING(8)},\",\n\"'log-status':{type: Sequelize.STRING(8)},\",\n\"'vpc-id':{type: Sequelize.STRING(32)},\",\n\"'subnet-id':{type: Sequelize.STRING(32)},\",\n\"'instance-id':{type: Sequelize.STRING(32)},\",\n\"'tcp-flags':{type: Sequelize.STRING(8)},\",\n\"'type':{type: Sequelize.STRING(8)},\",\n\"'pkt-srcaddr': {type: Sequelize.STRING(64)},\",\n\"'pkt-dstaddr':{type: Sequelize.STRING(64)},\",\n\"'region': {type: Sequelize.STRING(32)},\",\n\"'az-id': {type: Sequelize.STRING(32)},\",\n\"'sublocation-type': {type: Sequelize.STRING(32)},\",\n\"'sublocation-id': {type: Sequelize.STRING(32)},\",\n\"'pkt-src-aws-service':{type: Sequelize.STRING(64)},\",\n\"'pkt-dst-aws-service':{type: Sequelize.STRING(64)},\",\n\"'flow-direction':{type: Sequelize.STRING(16)},\",\n\"'traffic-path':{type: Sequelize.INTEGER}\"\n],\n\"S3SelectParameters\":{\n  \"IO\":{\n    \"InputSerialization\":{\n      \"Compression\":\"GZIP\",\n      \"CSV\": {\n        \"FileHeaderInfo\": \"USE\",\n        \"FieldDelimiter\": \" \"\n      }\n    }\n  },\n  \"Cast\":{\n      \"version\": \"int\",\n      \"account-id\": \"int\",\n      \"srcport\": \"int\",\n      \"dstport\": \"int\",\n      \"protocol\": \"int\",\n      \"packets\": \"int\",\n      \"bytes\": \"int\",\n      \"start\": \"int\",\n      \"end\": \"int\",\n      \"traffic-path\": \"int\"\n    }\n},\n\"Views\": [{\n  \"Default\":[\n    \"srcaddr\",\n    \"dstaddr\",\n    \"srcport\",\n    \"dstport\",\n    \"packets\",\n    \"bytes\",\n    \"action\"\n]},{\n  \"Extended\":[\n    \"interface-id\",\n    \"srcaddr\",\n    \"dstaddr\",\n    \"srcport\",\n    \"dstport\",\n    \"packets\",\n    \"bytes\",\n    \"action\",\n    \"vpc-id\",\n    \"subnet-id\"\n]}],\n\"Indexes\": [],\n\"TransForms\": []}",
+				"Description": "Logverz VPC Flow logs DataSource Schema definition."
+			}
+		},
+		"SSMSchemaVPCFlowSample": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": "/Logverz/Engine/SchemaSamples/VPCFlow",
+				"Type": "String",
+				"Value": "{ \n\"Rows\":[\n     \"5 123456789012 eni-1235b8ca123456789 52.95.128.179 10.0.0.71 80 34210 6 14 15044 1616729292 1616729349 ACCEPT OK vpc-abcdefab012345678 subnet-aaaaaaaa012345678 i-0c50d5961bcb2d47b 19 IPv4 52.95.128.179 10.0.0.71 ap-southeast-2 apse2-az3 - - S3 - ingress -\",\n     \"5 123456789012 eni-1235b8ca123456789 10.0.0.71 52.95.128.179 34210 80 6 7 471 1616729292 1616729349 ACCEPT OK vpc-abcdefab012345678 subnet-aaaaaaaa012345678 i-0c50d5961bcb2d47b 3 IPv4 10.0.0.71 52.95.128.179 ap-southeast-2 apse2-az3 - - - S3 egress -\"\n],\n\"Info\": \"https://docs.aws.amazon.com/vpc/latest/userguide/flow-logs-records-examples.html\"\n}",
+				"Description": "AWS VPC Flow logs data sample."
+			}
+		},
+		"SSMSchemaApplicationLB": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": "/Logverz/Engine/Schemas/ApplicationLB",
+				"Type": "String",
+				"Value": "{\"Schema\":[\n\"'type':{type: Sequelize.STRING(8)},\",\n\"'timestamp':{type: Sequelize.DATE},\",\n\"'elb':{type: Sequelize.STRING(64)},\",\n\"'client:port':{type: Sequelize.STRING(64)},\",\n\"'target:port':{type: Sequelize.STRING},\",\n\"'request_processing_time':{type: Sequelize.DOUBLE},\",\n\"'target_processing_time':{type: Sequelize.DOUBLE},\",\n\"'response_processing_time':{type: Sequelize.DOUBLE},\",\n\"'elb_status_code':{type: Sequelize.INTEGER},\",\n\"'target_status_code':{type: Sequelize.INTEGER},\",\n\"'received_bytes':{type: Sequelize.BIGINT},\",\n\"'sent_bytes':{type: Sequelize.BIGINT},\",\n\"'request':{type: Sequelize.STRING(4096)},\",\n\"'user_agent':{type: Sequelize.STRING(1024)},\",\n\"'ssl_cipher':{type: Sequelize.STRING},\",\n\"'ssl_protocol':{type: Sequelize.STRING(8)},\",\n\"'target_group_arn':{type: Sequelize.STRING},\",\n\"'trace_id':{type: Sequelize.STRING(64)},\",\n\"'domain_name':{type: Sequelize.STRING},\",\n\"'chosen_cert_arn': {type: Sequelize.STRING},\",\n\"'matched_rule_priority':{type: Sequelize.INTEGER},\",\n\"'request_creation_time': {type: Sequelize.DATE},\",\n\"'actions_executed':{type: Sequelize.STRING(32)},\",\n\"'redirect_url': {type: Sequelize.STRING(2048)},\",\n\"'error_reason':{type: Sequelize.STRING(32)},\",\n\"'target:port_list': {type: Sequelize.STRING},\",\n\"'target_status_code_list':{type: Sequelize.INTEGER},\",\n\"'classification':{type: Sequelize.STRING},\",\n\"'classification_reason':{type: Sequelize.STRING}\"],\n\"S3SelectParameters\":{\n  \"IO\":{\n    \"InputSerialization\":{\n      \"Compression\":\"GZIP\",\n      \"CSV\": {\n        \"FileHeaderInfo\": \"NONE\",\n        \"FieldDelimiter\": \" \"\n      }\n    },\n    \"OutputSerialization\":{\n      \"CSV\":{\n        \"RecordDelimiter\":\";;\",\n        \"FieldDelimiter\":\" \"\n      }\n    }\n  },\n  \"Cast\":{\n    \"request_processing_time\":\"float\",\n    \"target_processing_time\":\"float\",\n    \"response_processing_time\":\"float\",\n    \"elb_status_code\":\"int\",\n    \"target_status_code\":\"int\",\n    \"received_bytes\":\"int\",\n    \"sent_bytes\":\"int\",\n    \"matched_rule_priority\":\"int\",\n    \"target_status_code_list\":\"int\",\n    \"timestamp\":{\n        \"format\":\"TBD\",\n        \"postfix\":\"Z\"\n    },\n    \"request_creation_time\":{\n        \"format\":\"TBD\",\n        \"postfix\":\"Z\"\n    }\n  }\n},\n\"Views\": [{\n  \"Default\":[\n    \"timestamp\",\n    \"elb\",\n    \"client:port\",\n    \"elb_status_code\",\n    \"request\"\n]},{\n  \"HTTP\":[\n    \"timestamp\",\n    \"request\",\n    \"user_agent\",\n    \"ssl_cipher\",\n    \"ssl_protocol\"\n]}],\n\"Indexes\": [],\n\"TransForms\": []}",
+				"Description": "Logverz Application LoadBalancer logs DataSource Schema definition."
+			}
+		},
+		"SSMSchemaApplicationLBSample": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": "/Logverz/Engine/SchemaSamples/ApplicationLB",
+				"Type": "String",
+				"Value": "{\n\"Rows\":[\n     \"http 2018-07-02T22:23:00.186641Z app/my-loadbalancer/50dc6c495c0c9188 \n192.168.131.39:2817 10.0.0.1:80 0.000 0.001 0.000 200 200 34 366 \n'GET http://www.example.com:80/ HTTP/1.1 '  'curl/7.46.0 ' - - \narn:aws:elasticloadbalancing:us-east-2:123456789012:targetgroup/my-targets/73e2d6bc24d8a067\n'Root=1-58337262-36d228ad5d99923122bbe354 '  '- '  '- ' \n0 2018-07-02T22:22:48.364000Z  'forward '  '- '  '- ' 10.0.0.1:80 200  '- '  '- '\",\n\n     \"https 2018-07-02T22:23:00.186641Z app/my-loadbalancer/50dc6c495c0c9188 \n192.168.131.39:2817 10.0.0.1:80 0.086 0.048 0.037 200 200 0 57 \n'GET https://www.example.com:443/ HTTP/1.1' 'curl/7.46.0' ECDHE-RSA-AES128-GCM-SHA256 TLSv1.2 \narn:aws:elasticloadbalancing:us-east-2:123456789012:targetgroup/my-targets/73e2d6bc24d8a067\n'Root=1-58337281-1d84f3d73c47ec4e58577259' 'www.example.com'\n 'arn:aws:acm:us-east-2:123456789012:certificate/12345678-1234-1234-1234-123456789012'\n1 2018-07-02T22:22:48.364000Z 'authenticate,forward' '-' '-' 10.0.0.1:80 200 '-' '-'\"\n],\n\"Info\": \"https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-access-logs.html\"\n}",
+				"Description": "AWS Application load balancer logs data sample."
+			}
+		},
+		"SSMSchemaClassicLB": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": "/Logverz/Engine/Schemas/ClassicLB",
+				"Type": "String",
+				"Value": "{\"Schema\": [\"'timestamp':{type: Sequelize.STRING(64)},\",\n\"'elb':{type: Sequelize.STRING(64)},\",\n\"'client:port':{type: Sequelize.STRING(64)},\",\n\"'backend:port':{type: Sequelize.STRING},\",\n\"'request_processing_time':{type: Sequelize.DOUBLE},\",\n\"'backend_processing_time':{type: Sequelize.DOUBLE},\",\n\"'response_processing_time':{type: Sequelize.DOUBLE},\",\n\"'elb_status_code':{type: Sequelize.INTEGER},\",\n\"'backend_status_code':{type: Sequelize.INTEGER},\",\n\"'received_bytes':{type: Sequelize.BIGINT},\",\n\"'sent_bytes':{type: Sequelize.BIGINT},\",\n\"'request':{type: Sequelize.STRING(8192)},\",\n\"'user_agent':{type: Sequelize.STRING(8192)},\",\n\"'ssl_cipher':{type: Sequelize.STRING},\",\n\"'ssl_protocol':{type: Sequelize.STRING(8)}\"],\n\"S3SelectParameters\":{\n  \"IO\":{\n    \"InputSerialization\":{\n      \"Compression\":\"NONE\",\n      \"CSV\": {\n        \"FileHeaderInfo\": \"NONE\",\n        \"FieldDelimiter\": \" \"\n      }\n    },\n    \"OutputSerialization\":{\n      \"CSV\":{\n        \"RecordDelimiter\":\";;\",\n        \"FieldDelimiter\":\" \"\n      }\n    }\n  },\n  \"Cast\":{\n      \"request_processing_time\":\"float\",\n      \"backend_processing_time\":\"float\",\n      \"response_processing_time\":\"float\",\n      \"elb_status_code\":\"int\",\n      \"backend_status_code\":\"int\",\n      \"received_bytes\":\"int\",\n      \"sent_bytes\":\"int\",\n      \"timestamp\":{\n        \"format\":\"'TBD'\",\n        \"postfix\":\"Z\"\n      }\n  }\n},\n\"Views\": [{\n  \"Default\":[\n    \"timestamp\",\n    \"request\",\n    \"backend_status_code'\",\n    \"backend_processing_time\"\n]}],\n\"Indexes\": [],\n\"TransForms\": []}",
+				"Description": "Logverz Classic LoadBalancer logs DataSource Schema definition."
+			}
+		},
+		"SSMSchemaClassicLBSample": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": "/Logverz/Engine/SchemaSamples/ClassicLB",
+				"Type": "String",
+				"Value": "{ \n\"Rows\":[\n     \"2015-05-13T23:39:43.945958Z my-loadbalancer 192.168.131.39:2817 10.0.0.1:80 0.000073 0.001048 0.000057 200 200 0 29 'GET http://www.example.com:80/ HTTP/1.1' 'curl/7.38.0' - -\",\n     \"2015-05-13T23:39:43.945958Z my-loadbalancer 192.168.131.39:2817 10.0.0.1:80 0.000086 0.001048 0.001337 200 200 0 57 'GET https://www.example.com:443/ HTTP/1.1' 'curl/7.38.0' DHE-RSA-AES128-SHA TLSv1.2\"\n],\n\"Info\": \"https://docs.aws.amazon.com/elasticloadbalancing/latest/classic/access-log-collection.html\"\n}",
+				"Description": "AWS Classic load balancer logs data sample."
+			}
+		},
+		"SSMSchemaNetworkLB": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": "/Logverz/Engine/Schemas/NetworkLB",
+				"Type": "String",
+				"Value": "{\"Schema\": [\"'type':{type: Sequelize.STRING(8)},\",\n\"'version':{type: Sequelize.STRING(8)},\",\n\"'timestamp':{type: Sequelize.STRING(64)},\",\n\"'elb':{type: Sequelize.STRING(64)},\",\n\"'listener':{type: Sequelize.STRING(64)},\",\n\"'client:port':{type: Sequelize.STRING(64)},\",\n\"'destination:port':{type: Sequelize.STRING},\",\n\"'connection_time':{type: Sequelize.DOUBLE},\",\n\"'tls_handshake_time':{type: Sequelize.DOUBLE},\",\n\"'received_bytes':{type: Sequelize.BIGINT},\",\n\"'sent_bytes':{type: Sequelize.BIGINT},\",\n\"'incoming_tls_alert':{type: Sequelize.INTEGER},\",\n\"'chosen_cert_arn':{type: Sequelize.STRING},\",\n\"'chosen_cert_serial':{type: Sequelize.STRING},\",\n\"'tls_cipher':{type: Sequelize.STRING},\",\n\"'tls_protocol_version':{type: Sequelize.STRING(8)},\",\n\"'tls_named_group':{type: Sequelize.STRING},\",\n\"'domain_name':{type: Sequelize.STRING},\",\n\"'alpn_fe_protocol':{type: Sequelize.STRING(32)},\",\n\"'alpn_be_protocol':{type: Sequelize.STRING(32)},\",\n\"'alpn_client_preference_list':{type: Sequelize.STRING(1024)}\"],\n\"S3SelectParameters\":{\n  \"IO\":{\n    \"InputSerialization\":{\n      \"Compression\":\"GZIP\",\n      \"CSV\": {\n        \"FileHeaderInfo\": \"NONE\",\n        \"FieldDelimiter\": \" \"\n      }\n    },\n    \"OutputSerialization\":{\n      \"CSV\":{\n        \"RecordDelimiter\":\";;\",\n        \"FieldDelimiter\":\" \"\n      }\n    }\n  },\n  \"Cast\":{\n      \"connection_time\": \"float\",\n      \"tls_handshake_time\": \"float\",\n      \"received_bytes\": \"int\",\n      \"sent_bytes\": \"int\",\n      \"incoming_tls_alert\": \"int\",\n      \"eventTime\": {\n        \"format\": \"TBD\",\n        \"postfix\": \"Z\"\n      }\n    }\n},\n\"Views\":  [{\n  \"Default\":[\n    \"timestamp\",\n    \"listener\",\n    \"received_bytes\",\n    \"sent_bytes\"\n]}],\n\"Indexes\": [],\n\"TransForms\": []}",
+				"Description": "Logverz Network LoadBalancer logs DataSource Schema definition."
+			}
+		},
+		"SSMSchemaNetworkLBSample": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": "/Logverz/Engine/SchemaSamples/NetworkLB",
+				"Type": "String",
+				"Value": "{ \n\"Rows\":[\n     \"tls 2.0 2018-12-20T02:59:40 net/my-network-loadbalancer/c6e77e28c25b2234 g3d4b5e8bb8464cd 72.21.218.154:51341 172.100.100.185:443 5 2 98 246 - arn:aws:acm:us-east-2:671290407336:certificate/2a108f19-aded-46b0-8493-c63eb1ef4a99 - ECDHE-RSA-AES128-SHA tlsv12 - my-network-loadbalancer-c6e77e28c25b2234.elb.us-east-2.amazonaws.com - - -\",\n     \"tls 2.0 2020-04-01T08:51:42 net/my-network-loadbalancer/c6e77e28c25b2234 g3d4b5e8bb8464cd 72.21.218.154:51341 172.100.100.185:443 5 2 98 246 - arn:aws:acm:us-east-2:671290407336:certificate/2a108f19-aded-46b0-8493-c63eb1ef4a99 - ECDHE-RSA-AES128-SHA tlsv12 - my-network-loadbalancer-c6e77e28c25b2234.elb.us-east-2.amazonaws.com h2 h2 \"h2\",\"http/1.1\"\"\n],\n\"Info\": \"https://docs.aws.amazon.com/elasticloadbalancing/latest/network/load-balancer-access-logs.html#access-log-entry-examples\"\n}",
+				"Description": "AWS Network load balancer logs data sample."
+			}
+		},
+		"SSMSchemaInvocations": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": "/Logverz/Engine/Schemas/Invocations",
+				"Type": "String",
+				"Value": "{\"Schema\": [\"'jobid':{type: Sequelize.STRING},\",\n\"'invocationid':{type: Sequelize.STRING},\",\n\"'updateunixtime':{type: Sequelize.BIGINT},\",\n\"'status':{type: Sequelize.STRING},\",\n\"'loggroup':{type: Sequelize.STRING},\",\n\"'logstream':{type: Sequelize.STRING}\"],\n\"S3SelectParameters\":{\n  \"IO\":{\n    \"InputSerialization\":{\n      \"Compression\":\"NONE\",\n      \"CSV\": {\n        \"FileHeaderInfo\": \"NONE\",\n        \"FieldDelimiter\": \" \"\n      }\n    },\n    \"OutputSerialization\":{\n      \"CSV\":{\n        \"RecordDelimiter\":\";;\",\n        \"FieldDelimiter\":\" \"\n      }\n    }\n  },\n  \"Cast\":{}\n},\n\"Views\": [{\n  \"Default\":[\n    \"jobid\",\n    \"invocationid\",\n    \"status\",\n    \"logstream\"\n]}],\n\"Indexes\": [],\n\"TransForms\": []}",
+				"Description": "Logverz Lambda functions status"
+			}
+		},
+		"SSMSchemaProcessingErrors": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": "/Logverz/Engine/Schemas/ProcessingErrors",
+				"Type": "String",
+				"Value": "{\"Schema\": [\"'jobid':{type: Sequelize.STRING},\",\n\"'invocationid':{type: Sequelize.STRING},\",\n\"'updateunixtime':{type: Sequelize.BIGINT},\",\n\"'errormessage':{type: Sequelize.STRING(8192)},\",\n\"'path':{type: Sequelize.STRING},\",\n\"'loggroup':{type: Sequelize.STRING},\",\n\"'logstream':{type: Sequelize.STRING\"],\n\"S3SelectParameters\":{\n  \"IO\":{\n    \"InputSerialization\":{\n      \"Compression\":\"NONE\",\n      \"CSV\": {\n        \"FileHeaderInfo\": \"NONE\",\n        \"FieldDelimiter\": \" \"\n      }\n    },\n    \"OutputSerialization\":{\n      \"CSV\":{\n        \"RecordDelimiter\":\";;\",\n        \"FieldDelimiter\":\" \"\n      }\n    }\n  },\n  \"Cast\":{}\n},\n\"Views\": [{\n  \"Default\":[\n    \"jobid\",\n    \"invocationid\",\n    \"logstream\",\n    \"errormessage\"\n]}],\n\"Indexes\": [],\n\"TransForms\": []}",
+				"Description": "Logverz DataProcessing errors"
+			}
+		},
+		"SSMLogverzIdleTime": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": "/Logverz/Settings/IdleTime",
+				"Type": "String",
+				"Value": "{\"WebRTCProxy\":{\n   \"Container\":\"15\",\n   \"LastContainer\":\"120\",\n   \"StartAtUserLogin\":true,\n   \"StartDesiredCount\":\"1\"\n},\n\"TurnService\":{\n   \"Period\":\"120\",\n   \"CombinedTrafficKbyte\":\"100\",\n   \"StartAtUserLogin\":true,\n   \"StartDesiredCount\":\"1\",\n   \"CoupledToProxy\":true\n},\n\"Database\":[{\n   \"DBName\":\"DefaultDB\",\n   \"_comment\":\"\\\"StartAfterUTC\\\":\\\"22:30\\\"\",\n   \"StartAtUserLogin\":true,\n   \"Threshold\":{\n      \"CpuAvg\":\"15\",\n      \"SessionMax\":\"1\"\n   },\n   \"Period\":\"60\",\n   \"Configuration\":\"COS\"\n}]}",
+				"Description": "Providing ASG minimum count equals to 0, the time (in minutes) after the WebRTC Proxy (Container Host) considered not in use and shutsdown to save cost.\n Setting honors ASG minimum value ie ASG minimum count 1 will prevent ASG shutdown.\n   Configuration options for RDS: \"C\" only CPU limit triggers,\"S\" only Session limit (DB connection count) triggers.\"CAS\" Cpu AND Session triggers , \"COS\" either Cpu OR Session triggers scaling event.\n   Configuration options Turnservice: total combined traffic in+out less than specified value. As for \"StartAfterUTC\" parameter use 24h time format such as 08:00 or 19:00."
+			}
+		}
+	},
+	"Outputs": {
+		"JobsQueue" : {
+			"Description" : "The Queue where the Search jobs are stored.",
+			"Value" :{
+				"Ref": "LogverzJobsQueue"
+			}
+		},
+		"ScaleFunction":{
+			"Description":"Scale function arn",
+			"Value":{ "Fn::GetAtt" : [ "LogverzScaleFunction", "Arn" ] }
+		}
+	}
+}

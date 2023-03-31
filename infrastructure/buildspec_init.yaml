@@ -1,0 +1,69 @@
+version: 0.2
+env:
+  variables:
+    NODE_VERSION: "16.18.0"
+phases:
+  install:
+    runtime-versions:
+      nodejs: 16
+    commands:
+      - echo Installing build dependencies...
+      - curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add -
+      - apt-get update
+      - apt-get install -y moreutils
+  pre_build:
+    commands:
+      - export InitBucket
+      - echo "Downloading dependencies to build environment for installation."
+      - initialpath=$(pwd)
+      - aws s3 cp s3://$InitBucket/bin/sources.zip ./sources.zip && aws s3 cp s3://$InitBucket/bin/Portal.zip ./Portal.zip && aws s3 cp s3://$InitBucket/bin/PortalAccess.zip ./PortalAccess.zip
+      - mkdir bin && mkdir PortalAccess && mkdir PortalAccess/src && mkdir Portal && mkdir sources && unzip -q sources.zip -d ./sources
+      - cd sources && chmod +x ./scripts/npminstall.sh ./scripts/zipcopy.sh ./scripts/appbuild.sh ./scripts/sidebar.sh ./scripts/pwshdl.sh ./scripts/lambdaupdate.sh
+      - cp ./scripts/appbuild.sh ../PortalAccess &&  cp ./scripts/sidebar.sh ../PortalAccess/src && cp ./scripts/appbuild.sh ../Portal
+      - echo "Building Lambda functions"
+      - ./scripts/npminstall.sh
+      - echo "Finished building Lambda bundles"
+      - ./scripts/zipcopy.sh
+      - echo "Finished copying Lambda functions"
+      - ./scripts/lambdaupdate.sh
+      - cd ..
+      - pwd && ls -la
+  build:
+    commands:
+      - echo "Building the web application"
+      - cd $initialpath
+      - unzip -q PortalAccess.zip -d ./PortalAccess && unzip -q Portal.zip -d ./Portal
+      - cd PortalAccess/ && ./appbuild.sh && cd ./src/ && ./sidebar.sh && cd ..
+      - npm install --loglevel error && npm run build && mkdir public
+      - mv build/* public && aws s3 sync ./public s3://$LogicBucket/public && cd ..
+      # - codebuild-breakpoint
+      - cd Portal && ./appbuild.sh && npm install --loglevel error && npm run build && mkdir ui
+      - mv build/* ui && aws s3 sync ./ui s3://$LogicBucket/ui && cd ..
+      - echo "Checking PowerShell local installer"
+      - ./sources/scripts/pwshdl.sh
+  post_build:
+    commands:
+       - echo "Installing Golang framework, adding dependencies"
+       - cd $initialpath && pwd && ls -la && cd sources/webrtcproxy
+       - curl https://dl.google.com/go/go1.17.6.linux-amd64.tar.gz --output go1.17.6.linux-amd64.tar.gz
+       - rm -rf /usr/local/go && tar -C /usr/local -xzf go1.17.6.linux-amd64.tar.gz &&  rm -rf ./go1.17.6.linux-amd64.tar.gz
+       - npm install -g browserify
+       - echo "Building 'gotable' app for MySQL table validation."
+       - /usr/local/go/bin/go mod tidy
+       - /usr/local/go/bin/go build
+       - echo "Starting building WebRTC Proxy"
+       # - pwd && ls -la
+       - npm install --no-progress --loglevel warn && browserify ./landingpage/index.js -o ./landingpage/bundle.js
+       - echo "Logging in to Amazon ECR..."
+       # - codebuild-breakpoint
+       - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+       - echo Build of WebRTCProxy image started on `date`
+       - docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG . --build-arg NODE_VERSION=$NODE_VERSION
+       - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
+       - echo Build completed on `date`
+       - echo "Pushing the Docker image..."
+       - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
+# artifacts:
+#   files:
+#     - '**/*'
+#   discard-paths: no

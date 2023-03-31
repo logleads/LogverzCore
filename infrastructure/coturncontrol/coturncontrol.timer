@@ -1,0 +1,17 @@
+#/etc/systemd/system/turnserverstatus.timer
+[Unit]
+Description=Run coturncontrol every X minutes
+Requires=coturncontrol.service
+
+[Timer]
+Unit=coturncontrol.service
+#every minute, if you change the frequency the conturncontrol.ps1 functions
+#such as s3 and cloudwatch metrics update might not work correctly, make sure you test. 
+OnCalendar=*-*-* *:*:00 
+
+#every 3 minute
+#OnCalendar=*:0/3
+
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,266 @@
+<html>
+    <script> 
+        var loaded = false; 
+    </script> 
+    <script src="landingpage/bundle.js" defer onload="loaded=true;"></script>
+    <script>
+      // When the user clicks on div, open the popup
+      function myFunction() {
+        var popup = document.getElementById("myPopup");
+        popup.classList.toggle("show");
+      }
+      </script>
+    <header>
+      <style>
+        {
+            box-sizing: border-box;
+        }
+        /* Set additional styling options for the columns https://www.educative.io/edpresso/how-to-create-columns-in-html */
+        .column {
+        float: left;
+        width: 50%;
+        }
+    
+        .row:after {
+        content: "";
+        display: table;
+        clear: both;
+        }
+        #urlpath{
+        width:30%;
+        }
+
+        #urlpath option{
+          width:30%;
+        }
+      </style>
+      <style>
+        /* source: https://www.w3schools.com/howto/tryit.asp?filename=tryhow_js_popup */
+        .popup {
+          position: relative;
+          display: inline-block;
+          cursor: pointer;
+          -webkit-user-select: none;
+          -moz-user-select: none;
+          -ms-user-select: none;
+          user-select: none;
+
+        }
+        
+        /* The actual popup */
+        .popup .popuptext {
+          visibility: hidden;
+          width: 1000px;
+          background-color: #555;
+          color: #fff;
+          text-align: left;
+          border-radius: 6px;
+          padding: 8px 8px;
+          position: absolute;
+          z-index: 1;
+          bottom: 20%;
+          left: 50%;
+          margin-left: 20px;
+          margin-top: 80px;
+          overflow:auto;
+        }
+        
+        /* Popup arrow */
+        .popup .popuptext::after {
+          content: "";
+          position: absolute;
+          top: 100%;
+          left: 50%;
+          margin-left: 20px;
+          border-width: 5px;
+          border-style: solid;
+          border-color: #555 transparent transparent transparent;
+        }
+        
+        /* Toggle this class - hide and show the popup */
+        .popup .show {
+          visibility: visible;
+          -webkit-animation: fadeIn 1s;
+          animation: fadeIn 1s;
+        }
+        
+        /* Add animation (fade in the popup) */
+        @-webkit-keyframes fadeIn {
+          from {opacity: 0;} 
+          to {opacity: 1;}
+        }
+        
+        @keyframes fadeIn {
+          from {opacity: 0;}
+          to {opacity:1 ;}
+        }
+      </style>
+      <h1>WebRTC Proxy Connectivity Tests.</h1>
+      <p>Use them sequentely to  1.) Peer connectivity, 2.) Echo test, 3.) SQL connectivity</p>
+        Fyi:  IE 11 is not supported!, need chrome 41+ or FF 40+. 
+    </header>
+    <body onload="onLoadFunct()">
+    <p id = "BUNDLE_STATUS">
+      <i style="font-size: 150%;">Bundle loading <b style="color:tomato;">FAILED</b>, try adding "/" ad the end of the url.</i>
+    </p>
+  
+      
+    <br/>
+    <div class="row">
+      <div class="column" style="width: 45%;background-color:#ffde59;">
+      <br/>
+      <label><u>Test 1:Establish Peer to Peer connection</u></label>
+      <br/>
+      <br/>
+      <label>Your ID:</label><br/>
+      <textarea id="yourId" rows="8" style="width: 100%"></textarea><br/>
+      <br/>
+      <label>Other ID:</label><br/>
+      <textarea id="otherId" rows="8" style="width: 100%"></textarea><br/>
+      <br/>
+      <button id="connect">1.) Establish Connection TEST</button><br/>
+      <small>In order for sucessfully establising p2p connection HTTP(S)connection +UrlPath and  Encryptionkey, plus turnserver url and pass</small>
+      <br/>
+      <br/>
+      <hr style="height:2px;border-width:0;color:gray;background-color:gray">
+      <br/>
+      <label><u>Test 2:Verify Peer to Peer connection</u></label>
+      <br/>
+      <br/>
+      <textarea id="EchoMessage" rows="3" style="width: 100%">...your messagehere...</textarea><br/>
+      <br/>
+      <button id="send1">2.) Echo Test</button>
+      <br/>
+      <small>if webrtc connection works it will repeat/echo your message.</small>
+      <br/>
+      <br/>
+      <hr style="height:2px;border-width:0;color:gray;background-color:gray">
+      <br/>
+      <label><u>Test 3:Return Data from SQLserver test</u></label>
+      <br/>
+      <br/>
+      <label>SQL Query:</label><br/>
+      <textarea id="SQLQuery" rows="6" style="width: 100%"></textarea><br/>
+      <br/>
+      <small>Native SQL query example: {"LogverzDBFriendlyName":"DefaultDB","Mode":"Native","QueryParams":"Select * FROM \"First_Table\""}</small>
+      <br/><br/>
+      <small>Sequalise example:{"LogverzDBFriendlyName":"DefaultDB","DBTableName":"First_Table","QueryType":"CloudTrail","Mode":"findAll","QueryParams":{"where":{"id":{"&ltlt&gt":10}}}}</small>
+      </br><br/>
+      <small>List tables example: {"LogverzDBFriendlyName":"DefaultDB","Mode":"ListTables","QueryParams":{"where":{"Table Name":{"&ltlike&gt":"<b><font size="4" color="red">.</font>*</b>"}}}}</small><br/>
+      <br/>
+      <small>Describe tables example: {"LogverzDBFriendlyName":"DefaultDB", "Mode":"describeTable", "DBTableName":"Invocations"}</small><br/>
+      </br>
+      <small>Delete tables example: {"LogverzDBFriendlyName":"DefaultDB","Mode":"DeleteTable","DBTableName":"First_Table"}</small><br/>
+      </br>
+      <button id="send2">3.) Query SQL DB TEST</button>
+      <br/>
+      <small>In order for query to work need to establish p2p connection with test #3 and SQL server needs to be available.</small>
+      <br/>
+      <br/>
+      <hr style="height:2px;border-width:0;color:gray;background-color:gray">
+      </br>
+
+      <label><b>WebRTC statistics:</b></label>
+      <br/>
+      Use after the connection has been initiated, all the data is available on the Dev Console.
+      <br/>
+      <div class="popup" onclick="myFunction()"><button id="getstats" >getstats</button>
+        <span class="popuptext" id="myPopup"></span>
+      </div>
+        
+    </div>
+    <div class="column" style="width: 55%;background-color:#55a4a5;">
+      <br/>
+
+      <table style="width:100%">
+        <tr>
+          <th><label style="float: left;"><u>HTTP(S) Connection:</u></label></th>
+          <th><label><u>UrlPath:</u></label></th>
+        </tr>
+        <tr>
+
+          <td style="width: 70%">
+            <textarea id="host" style="width: 100%;" rows="1" >https://iimw521s71.execute-api.ap-southeast-2.amazonaws.com/V3/</textarea>
+          </td>
+             <td style="width: 30%"> 
+              <!-- <textarea id="urlpath" style="width: 100%" rows="3">/ or &#13;&#10;/WebRTC/Signal</textarea><br/> -->
+              <select name="urlpath" id="urlpath"  style="width: 100%" rows="3">
+                <option value="WebRTC/Signal">WebRTC/Signal</option>
+              </select>
+
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <small>use AGIGW url such as: <i> http<b style="color:FFB695">s</b>://iimw521s71.execute-api.ap-southeast-2.amazonaws.com/V3<b style="color:FFB695">/</b></i> &nbsp; or </small>
+            <br>
+            <small>use WebRTCProxy containerurl <i>htt<b style="color:brown">p</b>://privateip<b style="color:brown">/</b></i> when you directly connecting</small>
+            <br>
+            <br>
+          </td>
+        </tr>
+      </table>      
+      <b>Full url:</b> <div id="Fullurl"></div>
+      <br/>
+      <label><u>WebRTCProxyKey</u>:</label><br/>
+      <textarea type="text" id="httpeckey" value="Value of /Logverz/Logic/WebRTCProxyKey" style="width: 100%" ></textarea><br/>
+      <small>CONDITIONAL! While accessing regular API GW endpoint URL does not need the WebRTCProxyKey. </br>Needed In case of <b>direct access</b>  to the Proxyserver the value is located in SSM at /Logverz/Logic/WebRTCProxyKey. </small>
+      <br/>
+      <br/>
+      <hr style="height:2px;border-width:0;color:gray;background-color:gray">
+      <br/>
+      <label><u>TurnServer DNS name:</u></label><br/>
+      <textarea id="TurnSrv" style="width: 100%" ></textarea><br/>
+      <small>CONDITIONAL! depending on your network setup, While accessing regular API GW endpoint URL Turnserver FQDN and <b>port</b> such as ec2-54-206-87-237.ap-southeast-2.compute.amazonaws.com:<b style="color:FFB695">3478</b> is needed<br/>
+      In case of local access or over VPN the Turnserver DNS name (and password) are likely not needed. 
+      </small>
+      
+      <br/>
+      <br/>
+      <label><u>TURN Server Password:</u></label><br/>
+      <textarea type="text" id="TurnSrvPassword" value="Value of /Logverz/Settings/TurnSrvPassword" style="width: 100%" ></textarea><br/>
+      <small>use the secret located in SSM at <i> /Logverz/Settings/TurnSrvPassword</i> </small><br/>
+      <label><u>TURN Server Username:</u></label><br/>
+      <textarea type="text" id="TurnSrvUser" style="width: 100%" >lisa</textarea><br/>
+      <br/>
+      <hr style="height:2px;border-width:0;color:gray;background-color:gray">
+      <div>
+          <label><b>Server's Message:</b></label><br/>
+          <br/>
+          <textarea id="ServerMessage" rows="35" style="width: 95%;justify-content: right;margin-left: 20px;margin-right: 10px"></textarea><br/>
+          <br/>
+          <button id="clear" onClick="clearFunction('ServerMessage');" >clear</button><br/>
+      </div>
+    <script>
+    function clearFunction(variable){
+       document.getElementById(variable).textContent='.';
+       document.getElementById(variable).textContent='';
+    };
+    
+    function onLoadFunct(){
+      //Misc: ui refresh #1
+      document.getElementById('urlpath').addEventListener('change', function () {
+        var host= document.getElementById('host').value
+        var urlpath= document.getElementById('urlpath').value
+        document.querySelector('#Fullurl').textContent =host+urlpath;
+      })
+      //Misc: ui refresh #2
+      document.getElementById('host').addEventListener('change', function () {
+         var host= document.getElementById('host').value
+         var urlpath= document.getElementById('urlpath').value
+         document.querySelector('#Fullurl').textContent =host+urlpath;
+      })
+
+      if (loaded == false) {
+        document.getElementById("BUNDLE_STATUS").style.display = "block";
+      }
+      else{
+        document.getElementById("BUNDLE_STATUS").style.display = "none";
+
+      }
+    
+    }
+    </script>
+
+  </body>
+</html>

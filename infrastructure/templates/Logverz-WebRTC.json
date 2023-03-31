@@ -1,0 +1,805 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Description": "Logverz WebRTC proxy stack",
+	"Metadata": {
+
+	},
+	"Parameters": {
+		"DBSecGroup":{
+			"Type":"String"
+		},
+		"WebRTCProxyAmiId": {
+			"Type": "String"
+		},
+		"WebRTCProxyInstanceSize":{
+			"Type":"String"
+		},
+		"WebRTCProxyASGConfig":{
+			"Type":"String"
+		},
+		"myKeyPair" : {
+			"Type" : "String",
+			"Default":""
+		},
+		"VPCID":{
+			"Type": "AWS::EC2::VPC::Id"
+		},
+		"PrivateSubnet":{
+			"Type":"String"
+		},
+		"InitBucket":{
+			"Type": "String"
+		},
+		"LogicBucket":{
+			"Type": "String"
+		},
+		"APIGWLogverzLogic":{
+			"Type":"String"
+		},
+		"PublicKeyVersion":{
+			"Type": "String",
+			"Default": "/Logverz/Logic/PublicKey:1"
+		},
+		"MaximumCacheTime":{
+			"Type":"String"
+		}
+	},
+	"Mappings" : {
+		"RegionMap" : {
+			"af-south-1":{"Instances" : "t3"},
+			"ap-northeast-1" : {"Instances" : "t3,t3a"},
+			"ap-southeast-1" : {"Instances" : "t3,t3a"},
+			"eu-central-1": {"Instances" : "t3,t3a"},
+			"eu-west-1": {"Instances" : "t3,t3a"},
+			"eu-west-2": {"Instances" : "t3,t3a"},
+			"us-east-1": {"Instances" : "t3,t3a"},
+			"us-east-2": {"Instances" : "t3,t3a"},
+			"ap-east-1": {"Instances" :"t3"},
+			"ap-northeast-2":{"Instances" : "t3,t3a"},
+			"ap-southeast-2" : {"Instances" : "t3,t3a"},
+			"ca-central-1": {"Instances" : "t3,t3a"},
+			"eu-north-1": {"Instances" :"t3"},
+			"eu-south-1": {"Instances" :"t3"},
+			"me-south-1": {"Instances" :"t3"},
+			"us-west-1":{"Instances" : "t3,t3a"},
+			"ap-northeast-3":{"Instances" : "t3,t3a"},
+			"ap-south-1":{"Instances" : "t3,t3a"},
+			"eu-west-3":{"Instances" : "t3,t3a"},
+			"sa-east-1":{"Instances" : "t3,t3a"},
+			"us-west-2":{"Instances" : "t3,t3a"}
+		},
+		"TaskSize" : {
+			"nano":{"Memory":300, "Cpu":"1024"},
+			"micro":{"Memory":800, "Cpu":"1024"},
+			"small":{"Memory":1800, "Cpu":"1024"},
+			"medium":{"Memory":3800, "Cpu":"1024"},
+			"large":{"Memory":3800, "Cpu":"1024"},
+			"xlarge":{"Memory":8000, "Cpu":"2048"}
+		}
+	},
+	"Conditions": {
+		"multipleinstancetypes" : {"Fn::Equals" : [{ "Fn::FindInMap" : [ "RegionMap", { "Ref" : "AWS::Region" }, "Instances"]}, "t3,t3a"]},
+		"singleinstancetypes" : {"Fn::Equals" : [{ "Fn::FindInMap" : [ "RegionMap", { "Ref" : "AWS::Region" }, "Instances"]}, "t3"]},
+		"HasKeyName": {"Fn::Not": [{"Fn::Equals": ["", {"Ref": "myKeyPair"}]}]}
+	},
+	"Resources": {
+		"LogverzWebRTCInstanceRole":{
+			"Type":"AWS::IAM::Role",
+			"Properties":{
+				"AssumeRolePolicyDocument":{
+					"Statement":[
+						{
+							"Effect":"Allow",
+							"Principal":{
+								"Service":[
+									"ec2.amazonaws.com"
+								]
+							},
+							"Action":[
+								"sts:AssumeRole"
+							]
+						}
+					]
+				},
+				"ManagedPolicyArns":["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"],
+				"Path":"/",
+				"Policies":[
+					{
+						"PolicyName":{
+							"Fn::Sub": "Logverz-WebRTCHost-${AWS::Region}"
+						},
+						"PolicyDocument":{
+							"Statement":[
+								{
+									"Effect":"Allow",
+									"Action":[
+										"autoscaling:DescribeAutoScalingGroups",
+										"autoscaling:DescribeAutoScalingInstances",
+										"ec2:DescribeTags",
+										"ecr:GetAuthorizationToken",
+										"ecr:BatchCheckLayerAvailability",
+										"ecr:GetDownloadUrlForLayer",
+										"ecr:BatchGetImage",
+										"logs:CreateLogStream",
+										"logs:PutLogEvents"
+									],
+									"Resource":"*"
+								},
+								{
+									"Sid": "LogverzInstancesMetrics",
+									"Effect": "Allow",
+									"Action": [
+										"cloudwatch:GetMetricData"
+									],
+									"Resource": "*"
+								},
+								{
+									"Sid": "ScaleLogverzASGS",
+									"Action": [
+										"autoscaling:SetDesiredCapacity"
+									],
+									"Effect": "Allow",
+									"Resource": "*",
+									"Condition": {
+										"StringEquals": {
+											"autoscaling:ResourceTag/Logverz": "true"
+										}
+									}
+								},
+								{
+									"Sid": "ListAndDescribe",
+									"Effect": "Allow",
+									"Action": [
+										"dynamodb:List*",
+										"dynamodb:DescribeReservedCapacity*",
+										"dynamodb:DescribeLimits",
+										"dynamodb:DescribeTimeToLive"
+									],
+									"Resource": "*"
+								}, {
+									"Sid": "SpecificTable",
+									"Effect": "Allow",
+									"Action": [
+										"dynamodb:BatchGet*",
+										"dynamodb:DescribeStream",
+										"dynamodb:DescribeTable",
+										"dynamodb:Get*",
+										"dynamodb:Query",
+										"dynamodb:Scan",
+										"dynamodb:BatchWrite*",
+										"dynamodb:Update*",
+										"dynamodb:PutItem"
+									],
+									"Resource": {
+										"Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Logverz*"
+									}
+								},
+								{
+									"Effect": "Allow",
+									"Action": [
+										"ssm:DescribeParameters"
+									],
+									"Resource": "*"
+								},
+								{
+									"Action": [
+										"ssm:PutParameter",
+										"ssm:GetParameter",
+										"ssm:DeleteParameter"
+									],
+									"Effect": "Allow",
+									"Resource": {
+										"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/Logverz*"
+									}
+								},
+								{
+									"Sid": "RetrieveDependency",
+									"Action": [
+										"s3:GetObject",
+										"s3:GetObjectVersion",
+										"s3:ListBucket"
+									],
+									"Effect": "Allow",
+									"Resource": [
+										{
+											"Fn::Join": [
+												"",
+												[
+													"arn:aws:s3:::",
+													{
+														"Ref" : "InitBucket"
+													},
+													"/*"
+												]
+											]
+										}, {
+											"Fn::Join": [
+												"",
+												[
+													"arn:aws:s3:::",
+													{
+														"Ref" : "InitBucket"
+													}
+												]
+											]
+										}
+									]
+								}
+							]
+						}
+					}
+				],
+				"RoleName" : {"Fn::Join":["", ["LogverzWebRTCInstanceRole-", { "Ref":"AWS::Region"}]]}
+			}
+		},
+		"LogverzWebRTCLogs":{
+			"Type" : "AWS::Logs::LogGroup",
+			"Properties" : {
+				"LogGroupName" : "/Logverz/WebRTCProxy",
+				"RetentionInDays" : 14
+			}
+		},
+		"LogverzWebRTCInstanceProfile":{
+			"Type":"AWS::IAM::InstanceProfile",
+			"Properties":{
+				"Path":"/",
+				"Roles":[
+					{
+						"Ref":"LogverzWebRTCInstanceRole"
+					}
+				]
+			}
+		},
+		"LogverzWebRTCLaunchTemplate":{
+			"Type" : "AWS::EC2::LaunchTemplate",
+			"Properties" : {
+				"LaunchTemplateData" : {
+					"CreditSpecification":{
+						"CpuCredits":"unlimited"
+					},
+					"InstanceType" : { "Fn::Sub": [ "t3.${instancesize}", { "instancesize": {"Ref" : "WebRTCProxyInstanceSize" }} ]},
+					"KeyName" : {"Fn::If": ["HasKeyName", {"Ref": "myKeyPair"}, {"Ref": "AWS::NoValue"}]},
+					"ImageId" : {"Ref":"WebRTCProxyAmiId"},
+					"IamInstanceProfile" : {
+						"Arn" : {"Fn::GetAtt": ["LogverzWebRTCInstanceProfile", "Arn"]}
+					},
+					"InstanceInitiatedShutdownBehavior":"terminate",
+					"Monitoring":{
+						"Enabled" : "true"
+					},
+					"SecurityGroupIds":[
+						{
+							"Ref": "DBSecGroup"
+						},
+						{
+							"Ref":"LogverzSGWebRTCProxy"
+						}
+					],
+					"UserData":{
+						"Fn::Base64" : {
+							"Fn::Sub": [ "#!/bin/bash\nwget -O /home/ec2-user/identitydocument http://169.254.169.254:80/latest/dynamic/instance-identity/document\ncurl https://packages.microsoft.com/config/rhel/7/prod.repo | sudo tee /etc/yum.repos.d/microsoft.repo\naws s3 cp s3://${bucketname}/bin/webrtcproxycontrol.zip /home/ec2-user/webrtcproxycontrol.zip\n#Grabbing PS installer from local storage because of MS outage @18.06.21\npsversion=$(aws s3 ls ${bucketname}/bin/ |grep powershell|grep rpm| head -n 1 | awk '{print $4}')\naws s3 cp s3://${bucketname}/bin/$psversion /home/ec2-user/$psversion\n\nsudo yum install -y jq htop\nsudo yum localinstall -y /home/ec2-user/$psversion\nsudo amazon-linux-extras install docker\nsudo service docker start\nsudo usermod -a -G docker ec2-user\n[ -f /usr/bin/jq ] && echo \"JQ dependencies install success\" || $(echo \"JQ dependency install failure\";init 0;)\n[ -f /usr/bin/docker ] && echo \"Docker dependency install success\" || $(echo \"Docker dependency install failure\"; init 0;)\n\nInstanceId=$(cat /home/ec2-user/identitydocument  |jq --raw-output .instanceId)\nASGTags=$(aws ec2 describe-tags --region ${AWS::Region} --filters \"Name=resource-id,Values=$InstanceId\")\nASGValue=$(echo $ASGTags| jq --raw-output '.Tags[] | select(.Key==\"aws:autoscaling:groupName\") | .Value')\n\necho $ASGValue > /home/ec2-user/ASGName\necho ${AWS::Region} > /home/ec2-user/Region\necho ${taskmemorysize} > /home/ec2-user/taskmemorysize\necho $(date +%s) >/home/ec2-user/serverstarttime\n\nsudo pwsh -Command \"Expand-Archive -Path /home/ec2-user/webrtcproxycontrol.zip -DestinationPath /home/ec2-user/ &&Copy-Item /home/ec2-user/webrtcproxycontrol.service,/home/ec2-user/webrtcproxycontrol.timer -Destination /etc/systemd/system/\"\nsystemctl start webrtcproxycontrol\n\nsudo yum update -y",
+								{"bucketname": {"Ref" : "InitBucket" }, "taskmemorysize": { "Fn::FindInMap" : [ "TaskSize", { "Ref" : "WebRTCProxyInstanceSize" }, "Memory"]}
+								}]
+						}
+					},
+					"TagSpecifications":[{
+						"ResourceType": "instance",
+						"Tags":[{
+							"Key" : "Name",
+							"Value" : "LogverzWebRTCProxy"
+						},
+						{
+							"Key" : "Logverz",
+							"Value" : "true"
+						}]
+					}]
+				},
+				"LaunchTemplateName" : "LogverzProxyLT"
+
+			}
+		},
+		"LogverzWebRTCSingleITASG":{
+			"Condition":"singleinstancetypes",
+			"Type" : "AWS::AutoScaling::AutoScalingGroup",
+			"Properties" : {
+				"Cooldown" : "180",
+				"HealthCheckType" : "EC2",
+				"HealthCheckGracePeriod":"120",
+				"MaxSize" : { "Fn::Select" : [ "2", { "Fn::Split" : [ ",", {"Ref":"WebRTCProxyASGConfig"} ] } ] },
+				"MinSize" : { "Fn::Select" : [ "0", { "Fn::Split" : [ ",", {"Ref":"WebRTCProxyASGConfig"} ] } ] },
+				"DesiredCapacity":{ "Fn::Select" : [ "1", { "Fn::Split" : [ ",", {"Ref":"WebRTCProxyASGConfig"} ] } ] },
+				"MixedInstancesPolicy" : {
+					"InstancesDistribution" : {
+						"SpotAllocationStrategy" : "capacity-optimized",
+						"OnDemandPercentageAboveBaseCapacity":"0"
+					},
+					"LaunchTemplate" : {
+						"LaunchTemplateSpecification" : {
+							"LaunchTemplateId":{
+								"Ref":"LogverzWebRTCLaunchTemplate"
+							},
+							"Version" : {"Fn::GetAtt": ["LogverzWebRTCLaunchTemplate", "LatestVersionNumber"]}
+						}
+					}
+				},
+				"NewInstancesProtectedFromScaleIn":"true",
+				"VPCZoneIdentifier" :{ "Fn::Split": [",", { "Ref" : "PrivateSubnet" }]},
+				"Tags": [{
+					"Key": "Logverz",
+					"PropagateAtLaunch" : "true",
+					"Value": "true"
+				}
+				]
+			}
+		},
+		"LogverzWebRTCSingleITScaleUpPolicy" : {
+			"Condition":"singleinstancetypes",
+			"Type" : "AWS::AutoScaling::ScalingPolicy",
+			"Properties" : {
+				"AdjustmentType" : "ChangeInCapacity",
+				"AutoScalingGroupName" : { "Ref" : "LogverzWebRTCSingleITASG" },
+				"Cooldown" : "240",
+				"ScalingAdjustment" : "1"
+			}
+		},
+		"LogverzWebRTCSingleITCPUAlarmHigh": {
+			"Condition":"singleinstancetypes",
+			"Type": "AWS::CloudWatch::Alarm",
+			"Properties": {
+				"AlarmDescription": "Scale-up if CPU > 70% for 10 minutes",
+				"MetricName": "CPUUtilization",
+				"Namespace": "AWS/EC2",
+				"Statistic": "Average",
+				"Period": "300",
+				"EvaluationPeriods": "2",
+				"Threshold": "70",
+				"AlarmActions": [ { "Ref": "LogverzWebRTCSingleITScaleUpPolicy" } ],
+				"Dimensions": [
+					{
+						"Name": "AutoScalingGroupName",
+						"Value": { "Ref": "LogverzWebRTCSingleITASG" }
+					}
+				],
+				"ComparisonOperator": "GreaterThanThreshold"
+			}
+		},
+		"LogverzWebRTCMultiITASG":{
+			"Condition":"multipleinstancetypes",
+			"Type" : "AWS::AutoScaling::AutoScalingGroup",
+			"Properties" : {
+				"Cooldown" : "180",
+				"HealthCheckType" : "EC2",
+				"HealthCheckGracePeriod":"120",
+				"MaxSize" : { "Fn::Select" : [ "2", { "Fn::Split" : [ ",", {"Ref":"WebRTCProxyASGConfig"} ] } ] },
+				"MinSize" : { "Fn::Select" : [ "0", { "Fn::Split" : [ ",", {"Ref":"WebRTCProxyASGConfig"} ] } ] },
+				"DesiredCapacity":{ "Fn::Select" : [ "1", { "Fn::Split" : [ ",", {"Ref":"WebRTCProxyASGConfig"} ] } ] },
+				"MixedInstancesPolicy" : {
+					"InstancesDistribution" : {
+						"SpotAllocationStrategy" : "capacity-optimized",
+						"OnDemandPercentageAboveBaseCapacity":"0"
+					},
+					"LaunchTemplate" : {
+						"LaunchTemplateSpecification" : {
+							"LaunchTemplateId":{
+								"Ref":"LogverzWebRTCLaunchTemplate"
+							},
+							"Version" : {"Fn::GetAtt": ["LogverzWebRTCLaunchTemplate", "LatestVersionNumber"]}
+						},
+						"Overrides":[{
+							"InstanceType" :{ "Fn::Sub": [ "t3.${instancesize}", { "instancesize": {"Ref" : "WebRTCProxyInstanceSize" }}]}
+						}, {
+							"InstanceType" : { "Fn::Sub": [ "t3a.${instancesize}", { "instancesize": {"Ref" : "WebRTCProxyInstanceSize" }}]}
+						}]
+					}
+				},
+				"NewInstancesProtectedFromScaleIn":"true",
+				"VPCZoneIdentifier" :{ "Fn::Split": [",", { "Ref" : "PrivateSubnet" }]},
+				"Tags": [{
+					"Key": "Logverz",
+					"PropagateAtLaunch" : "true",
+					"Value": "true"
+				}
+				]
+			}
+		},
+		"LogverzWebRTCMultiITScaleUpPolicy" : {
+			"Condition":"multipleinstancetypes",
+			"Type" : "AWS::AutoScaling::ScalingPolicy",
+			"Properties" : {
+				"AdjustmentType" : "ChangeInCapacity",
+				"AutoScalingGroupName" : { "Ref" : "LogverzWebRTCMultiITASG" },
+				"Cooldown" : "240",
+				"ScalingAdjustment" : "1"
+			}
+		},
+		"LogverzWebRTCMultiITCPUAlarmHigh": {
+			"Condition":"multipleinstancetypes",
+			"Type": "AWS::CloudWatch::Alarm",
+			"Properties": {
+				"AlarmDescription": "Scale-up if CPU > 70% for 10 minutes",
+				"MetricName": "CPUUtilization",
+				"Namespace": "AWS/EC2",
+				"Statistic": "Average",
+				"Period": "300",
+				"EvaluationPeriods": "2",
+				"Threshold": "70",
+				"AlarmActions": [ { "Ref": "LogverzWebRTCMultiITScaleUpPolicy" } ],
+				"Dimensions": [
+					{
+						"Name": "AutoScalingGroupName",
+						"Value": { "Ref": "LogverzWebRTCMultiITASG" }
+					}
+				],
+				"ComparisonOperator": "GreaterThanThreshold"
+			}
+		},
+		"LogverzSGWebRTCProxy": {
+			"Type": "AWS::EC2::SecurityGroup",
+			"Properties": {
+				"GroupDescription": "Allows WebRTC Proxy connectivity over HTTP and ephemeral UDP.",
+				"SecurityGroupIngress":[{
+					"CidrIp" : "10.0.0.0/8",
+					"Description" : "Internal access to the proxy.",
+					"IpProtocol": "tcp",
+					"FromPort": "80",
+					"ToPort": "80"
+				},
+				{
+					"CidrIp" : "172.16.0.0/12",
+					"Description" : "Internal access to the proxy.",
+					"IpProtocol": "tcp",
+					"FromPort": "80",
+					"ToPort": "80"
+				},
+				{
+					"CidrIp" : "192.168.0.0/16",
+					"Description" : "Internal access to the proxy.",
+					"IpProtocol": "tcp",
+					"FromPort": "80",
+					"ToPort": "80"
+				}, {
+					"CidrIp" : "10.0.0.0/8",
+					"Description" : "Internal access to the proxy, on UDP ephemeral ports.",
+					"IpProtocol": "udp",
+					"FromPort": "49152",
+					"ToPort": "65535"
+				},
+				{
+					"CidrIp" : "172.16.0.0/12",
+					"Description" : "Internal access to the proxy, on UDP ephemeral ports.",
+					"IpProtocol": "udp",
+					"FromPort": "49152",
+					"ToPort": "65535"
+				},
+				{
+					"CidrIp" : "192.168.0.0/16",
+					"Description" : "Internal access to the proxy, on UDP ephemeral ports.",
+					"IpProtocol": "udp",
+					"FromPort": "49152",
+					"ToPort": "65535"
+				},
+				{
+					"CidrIp" : "10.0.0.0/8",
+					"Description" : "Internal ssh access to the WebRTC proxy Server.",
+					"IpProtocol": "tcp",
+					"FromPort": "22",
+					"ToPort": "22"
+				},
+				{
+					"CidrIp" : "172.16.0.0/12",
+					"Description" : "Internal ssh access to the WebRTC proxy Server.",
+					"IpProtocol": "tcp",
+					"FromPort": "22",
+					"ToPort": "22"
+				},
+				{
+					"CidrIp" : "192.168.0.0/16",
+					"Description" : "Internal ssh access to the WebRTC proxy Server.",
+					"IpProtocol": "tcp",
+					"FromPort": "22",
+					"ToPort": "22"
+				}],
+				"Tags": [{
+					"Key": "Function",
+					"Value": "Logverz"
+				}],
+				"VpcId": { "Ref" : "VPCID" }
+			}
+		},
+		"LogverzSGWebRTCProxySignal": {
+			"Type": "AWS::EC2::SecurityGroupIngress",
+			"Properties": {
+				"GroupId": {
+					"Ref": "LogverzSGWebRTCProxy"
+				},
+				"IpProtocol": "tcp",
+				"FromPort": "80",
+				"ToPort": "80",
+				"SourceSecurityGroupId": {
+					"Ref": "LogverzSGWebRTCProxy"
+				}
+			}
+		},
+		"LogverzSGWebRTCProxyEphemeral": {
+			"Type": "AWS::EC2::SecurityGroupIngress",
+			"Properties": {
+				"GroupId": {
+					"Ref": "LogverzSGWebRTCProxy"
+				},
+				"IpProtocol": "udp",
+				"FromPort": "49152",
+				"ToPort": "65535",
+				"SourceSecurityGroupId": {
+					"Ref": "LogverzSGWebRTCProxy"
+				}
+			}
+		},
+		"LogverzSGWebRTCProxyWebRTCTCP": {
+			"Type": "AWS::EC2::SecurityGroupIngress",
+			"Properties": {
+				"GroupId": {
+					"Ref": "LogverzSGWebRTCProxy"
+				},
+				"IpProtocol": "tcp",
+				"FromPort": "3478",
+				"ToPort": "3479",
+				"SourceSecurityGroupId": {
+					"Ref": "LogverzSGWebRTCProxy"
+				}
+			}
+		},
+		"LogverzSGWebRTCProxyWebRTCUDP": {
+			"Type": "AWS::EC2::SecurityGroupIngress",
+			"Properties": {
+				"GroupId": {
+					"Ref": "LogverzSGWebRTCProxy"
+				},
+				"IpProtocol": "udp",
+				"FromPort": "3478",
+				"ToPort": "3479",
+				"SourceSecurityGroupId": {
+					"Ref": "LogverzSGWebRTCProxy"
+				}
+			}
+		},
+		"WebRTCSignalFunction": {
+			"Type": "AWS::Lambda::Function",
+			"DependsOn":"WebRTCSignalPolicy",
+			"Properties": {
+				"Code": {
+					"S3Bucket": { "Ref" : "InitBucket" },
+					"S3Key": "bin/signal.zip"
+				},
+				"Environment": {
+					"Variables": {
+						"ASGName" : {
+							"Fn::If" : [
+								"multipleinstancetypes",
+								{ "Ref" : "LogverzWebRTCMultiITASG" },
+								{"Ref" : "LogverzWebRTCSingleITASG"}
+							]
+						},
+						"PublicKey":{
+							"Fn::Sub":[ "{{resolve:ssm:${key}}}", {
+								"key":{
+									"Ref": "PublicKeyVersion"
+								}
+							}]
+						},
+						"LogicBucket":{"Ref" : "LogicBucket" },
+						"AllowedOrigins":"http://localhost:8080,http://127.0.0.1:8080,https://testapi.logleads.com",
+						"MaximumCacheTime": {"Ref": "MaximumCacheTime"}
+					}
+				},
+				"Description": "Routes client requests to WebRTCProxy instance/container",
+				"FunctionName": "Logverz-WebRTCSignal",
+				"Handler": "signal.handler",
+				"Role": {
+					"Fn::GetAtt": ["WebRTCSignalRole", "Arn"]
+				},
+				"Runtime": "nodejs16.x",
+				"Timeout": "300",
+				"MemorySize":"256",
+				"VpcConfig": {
+					"SecurityGroupIds" : [ { "Ref" : "DBSecGroup" } ],
+					"SubnetIds" :{ "Fn::Split": [",", { "Ref" : "PrivateSubnet" }]}
+				}
+			}
+		},
+		"WebRTCSignalPolicy": {
+			"Type": "AWS::IAM::Policy",
+			"Properties": {
+				"PolicyName": {
+					"Fn::Sub": "Logverz-WebRTCSignalPolicy-${AWS::Region}"
+				},
+				"PolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Action": "logs:*",
+							"Effect": "Allow",
+							"Resource": "arn:aws:logs:*:*:*"
+						},
+						{
+							"Effect": "Allow",
+							"Action": [
+								"autoscaling:DescribeAutoScalingGroups",
+								"autoscaling:DescribeAutoScalingInstances",
+								"ec2:DescribeInstances",
+								"ec2:DescribeNetworkInterfaces",
+								"ec2:DescribeSecurityGroups",
+								"ec2:DescribeSubnets",
+								"ec2:DescribeVpcs",
+								"ec2:DescribeDhcpOptions",
+								"rds:DescribeDBInstances",
+								"ssm:DescribeParameters"
+							],
+							"Resource": "*"
+						},
+						{
+							"Action": [
+								"ec2:CreateNetworkInterface",
+								"ec2:DeleteNetworkInterface",
+								"ec2:CreateNetworkInterfacePermission"
+							],
+							"Effect": "Allow",
+							"Resource": {
+								"Fn::Sub": "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:*"
+							}
+						},
+						{
+							"Action": "autoscaling:SetDesiredCapacity",
+							"Effect": "Allow",
+							"Resource": {
+								"Fn::Sub": "arn:aws:autoscaling:${AWS::Region}:${AWS::AccountId}:*"
+							}
+						},
+						{
+							"Action": "cloudwatch:GetMetricData",
+							"Effect": "Allow",
+							"Resource": "*"
+						},
+						{
+							"Action": "rds:startDBInstance",
+							"Effect": "Allow",
+							"Resource": {
+								"Fn::Sub": "arn:aws:rds:${AWS::Region}:${AWS::AccountId}:*"
+							}
+						},
+						{
+							"Action": [
+								"ssm:PutParameter",
+								"ssm:GetParameter"
+							],
+							"Effect": "Allow",
+							"Resource": {
+								"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/Logverz*"
+							}
+						},
+						{
+							"Action": "kms:Decrypt",
+							"Effect": "Allow",
+							"Resource": {
+								"Fn::Sub": "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/*"
+							}
+						},
+						{
+							"Sid": "ListAndDescribe",
+							"Effect": "Allow",
+							"Action": [
+								"dynamodb:List*",
+								"dynamodb:DescribeReservedCapacity*",
+								"dynamodb:DescribeLimits",
+								"dynamodb:DescribeTimeToLive"
+							],
+							"Resource": "*"
+						},
+						{
+							"Sid": "SpecificTable",
+							"Effect": "Allow",
+							"Action": [
+								"dynamodb:BatchGet*",
+								"dynamodb:DescribeStream",
+								"dynamodb:DescribeTable",
+								"dynamodb:Get*",
+								"dynamodb:Query",
+								"dynamodb:Scan",
+								"dynamodb:BatchWrite*",
+								"dynamodb:Update*",
+								"dynamodb:PutItem"
+							],
+							"Resource": {
+								"Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Logverz*"
+							}
+						}
+					]
+				},
+				"Roles": [{
+					"Ref": "WebRTCSignalRole"
+				}]
+			}
+		},
+		"WebRTCSignalRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [{
+						"Effect": "Allow",
+						"Principal": {
+							"Service": [
+								"lambda.amazonaws.com"
+							]
+						},
+						"Action": "sts:AssumeRole"
+					}]
+				},
+				"RoleName": {
+					"Fn::Sub": "Logverz-WebRTCSignalRole-${AWS::Region}"
+				}
+			}
+		},
+		"APIGWWebRTCSignalPermission":{
+			"Type": "AWS::Lambda::Permission",
+			"Properties": {
+				"Action": "lambda:InvokeFunction",
+				"SourceArn": {
+					"Fn::Join": [
+						"",
+						[
+							"arn:aws:execute-api:",
+							{
+								"Ref": "AWS::Region"
+							},
+							":",
+							{
+								"Ref": "AWS::AccountId"
+							},
+							":",
+							{
+								"Ref": "APIGWLogverzLogic"
+							},
+							"/*"
+						]
+					]
+				},
+				"FunctionName": {
+					"Fn::Join": [
+						"",
+						[
+							"arn:aws:lambda:",
+							{
+								"Ref": "AWS::Region"
+							},
+							":",
+							{
+								"Ref": "AWS::AccountId"
+							},
+							":function:",
+							{
+								"Ref": "WebRTCSignalFunction"
+							}
+						]
+					]
+				},
+				"Principal": "apigateway.amazonaws.com"
+			}
+		}
+	},
+	"Outputs": {
+		"Test":{
+			"Description": "taskmemorysize",
+			"Value":{ "Fn::FindInMap" : [ "TaskSize", { "Ref" : "WebRTCProxyInstanceSize" }, "Memory"]}
+		},
+		"WebRTCProxyASGM":{
+			"Condition":"multipleinstancetypes",
+			"Description": "AutoscalinggroupName",
+			"Value":{"Ref":"LogverzWebRTCMultiITASG"}
+		},
+		"WebRTCProxyASGS":{
+			"Condition":"singleinstancetypes",
+			"Description": "AutoscalinggroupName",
+			"Value":{"Ref":"LogverzWebRTCSingleITASG"}
+		}
+	}
+}

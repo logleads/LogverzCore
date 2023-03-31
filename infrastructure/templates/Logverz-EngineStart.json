@@ -1,0 +1,494 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Description": "Initiate Data Collection using CloudFormation",
+	"Metadata": {
+		"AWS::CloudFormation::Interface": {
+			"ParameterGroups": [
+				{
+					"Label": {
+						"default": "Query generic configuration"
+					},
+					"Parameters": ["S3Folders", "DataTypeSelector", "QueryString", "DBServerAlias", "DatasetName", "DatasetDescription", "DatasetOwners", "DatasetAccess"
+					]
+				},
+				{
+					"Label": {
+						"default": "Advanced Configuration Options"
+					},
+					"Parameters": ["PreferedWorkerNumber", "LogVolume", "S3EnumerationDepth", "AllocationStrategy", "CustomQuerySchema", "CustomS3Select"]
+				},
+				{
+					"Label": {
+						"default": "System and internal parameters"
+					},
+					"Parameters": [
+						"PublicKeyVersion", "MaximumCacheTime", "InitBucket", "LogverzJobsQueue", "RestApiId", "StartJob"
+					]
+				}
+			]
+		}
+	},
+	"Parameters": {
+		"S3Folders": {
+			"Type": "String",
+			"MaxLength": "2000",
+			"Default": "",
+			"Description": "Semi Colon (;) separated list of folders containing the log files. Specify it as s3://bucket/folder/any/number/of/subfolders; s3://otherbucket/folder/subfolder; etc."
+		},
+		"S3EnumerationDepth": {
+			"Type": "String",
+			"Default": "2",
+			"AllowedValues": ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
+			"Description": "To achieve maximum speed file processing needs to happen parallel.It works by listing subfolders and working on subfolders individually.This parameter controls how deep enumeration should go. Select a setting where the number of subfolders (as seen in the logs) are between approximately 40 - 400 as that provides the optimal level of parallelisation. Going much deeper only increases the execution time."
+		},
+		"DataTypeSelector": {
+			"Type": "String",
+			"Default": "",
+			"AllowedValues": ["CloudTrail", "VPCFlow", "ApplicationLB", "ClassicLB", "NetworkLB", "Custom",
+				""
+			],
+			"Description": "The dataformat/schema of the files located in the specified S3 bucket(s)."
+		},
+		"LogVolume": {
+			"Description": "To allocate the necessary resources, please specify the number of log files to be processed. Job will be configured accordingly. Small: number of files up to 5M and less than 20 GB. Medium: number of files 5M-25M and less than 100GB. Large:number of files over 25M and 100GB",
+			"Type": "String",
+			"AllowedValues": ["small", "medium", "large"],
+			"Default": "small"
+		},
+		"AllocationStrategy": {
+			"Description": "The way small to large jobs are scheduled. 'cost-sensitive': small jobs run only on small controllers, medium jobs run only on medium controller as they become available.'time-sensitive': small and medium jobs can run on any controller including Large. 'balanced': small jobs will prefer small controller, if none available use medium controller, medium jobs will prefer medium controller, if none available use large controller. In all cases large jobs only use large controller.",
+			"Type": "String",
+			"AllowedValues": ["cost-sensitive", "balanced", "time-sensitive"],
+			"Default": "cost-sensitive"
+		},
+		"PreferedWorkerNumber": {
+			"Type": "String",
+			"Description": "You can specify the number of worker lambdas running in parallel. For most cases automaticaly determined setting is correct. If you specify a number keep in mind selected controller capabilities, aws account limits and check concurrent executions.",
+			"Default": "auto"
+		},
+		"DatasetAccess": {
+			"Type": "String",
+			"Description": "You can specify here addititional users and IAM groups, example:admin:UserAWS,LogverzUsers-region:GroupAWS, who will have read access to the dataset.",
+			"Default": ""
+		},
+		"QueryString": {
+			"Type": "String",
+			"Default": "SELECT * FROM S3Object s",
+			"Description": "Specify here the S3 select query parameters. Syntax changes on datatype CloudTrail for example \"SELECT * FROM  S3Object[*].Records[*] s\", for additional examples check https://microsite.logverz.io/docs/intro. For complex queries, before execution we recommend testing on the S3 console or CLI. "
+		},
+		"CustomQuerySchema": {
+			"Type": "String",
+			"Default": "*",
+			"MaxLength": "1800",
+			"Description": "Select DataTypeSelector custom than, you can provide the schema definition for your custom logfile. In case the Schema is more than 1800 charchters please save it to paramter store like '/Logverz/Engine/Schemas/mycustomschema' and reference it here as 'mycustomschema'"
+		},
+		"CustomS3Select": {
+			"Type": "String",
+			"Default": "*",
+			"MaxLength": "300",
+			"Description": "Select DataTypeSelector custom than, you can provide the S3 select {\"Compression\":\"GZIP\",\"CSV\": {\"FileHeaderInfo\": \"NONE\",\"FieldDelimiter\": \" \"}} for your data."
+		},
+		"DBServerAlias": {
+			"Type": "String",
+			"Default": "DefaultDB",
+			"Description": "The friendly/short name of the target database server"
+		},
+		"DatasetName": {
+			"Type": "String",
+			"Default": "dataset",
+			"MinLength": "1",
+			"MaxLength": "63",
+			"Description": "Database table name,a name convention such as team_projectname_task or personname_issue_number max 63 characters. Please specify a unique name, otherwise the existing table will be overwritten."
+		},
+		"DatasetDescription": {
+			"Type": "String",
+			"Default": "The settings used to create the data in the dataset",
+			"MinLength": "0",
+			"MaxLength": "500",
+			"Description": "You can record here the settings used to create the dataset, like logs creation intervall time, services involved, api call types purpose of the data any additional information on retention or sharing instructions."
+		},
+		"DatasetOwners": {
+			"Type": "String",
+			"Default": "admin:UserAWS",
+			"MinLength": "0",
+			"MaxLength": "500",
+			"Description": "Besides the creator, who is automatically the owner of the dataset, you can specify here addititional users and IAM groups, example: admin:UserAWS,LogverzUsers:GroupAWS, who will also be owners of the specified dataset."
+		},
+		"PublicKeyVersion": {
+			"Type": "String",
+			"Default": "/Logverz/Logic/PublicKey:1"
+		},
+		"LogverzJobsQueue": {
+			"Type": "String",
+			"Description": "Internal to Logverz, please do not change."
+		},
+		"InitBucket": {
+			"Type": "String",
+			"Description": "Internal to Logverz, please do not change."
+		},
+		"RestApiId": {
+			"Type": "String",
+			"Description": "Internal to Logverz, please do not change."
+		},
+		"StartJob": {
+			"Type": "String",
+			"Description": "Internal to Logverz, please do not change."
+		},
+		"MaximumCacheTime": {
+			"Type": "String"
+		}
+	},
+	"Mappings": {},
+	"Conditions": {},
+	"Resources": {
+		"JobProducerFunction": {
+			"Type": "AWS::Lambda::Function",
+			"Properties": {
+				"Code": {
+					"S3Bucket": {
+						"Ref": "InitBucket"
+					},
+					"S3Key": "bin/jobproducer.zip"
+				},
+				"Description": "To create Query job consumed by the Controllers",
+				"Environment": {
+					"Variables": {
+						"PublicKey": {
+							"Fn::Sub": [
+								"{{resolve:ssm:${key}}}",
+								{
+									"key": {
+										"Ref": "PublicKeyVersion"
+									}
+								}
+							]
+						},
+						"RestApiId": { "Ref": "RestApiId" },
+						"StartJob": { "Ref": "StartJob" },
+						"JOBQueueURL": { "Ref": "LogverzJobsQueue" },
+						"AllowedOrigins": "http://localhost:8080,http://127.0.0.1:8080,https://testapi.logleads.com",
+						"MaximumCacheTime": {"Ref": "MaximumCacheTime"}
+					}
+				},
+				"FunctionName": "Logverz-JobProducer",
+				"Handler": "jobproducer.handler",
+				"Role": {
+					"Fn::GetAtt": ["JobProducerRole", "Arn"]
+				},
+				"Runtime": "nodejs16.x",
+				"Timeout": "30",
+				"MemorySize": "512"
+			}
+		},
+		"JobProducerRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"Description": "TODO: Add proper scoping to the JobProducerPolicy simmilar to {\"Fn::GetAtt\": [\"LogverzQueueMessages\", \"Arn\"]}",
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Effect": "Allow",
+							"Principal": {
+								"Service": ["lambda.amazonaws.com"]
+							},
+							"Action": "sts:AssumeRole"
+						}
+					]
+				},
+				"RoleName": {
+					"Fn::Sub": "Logverz-JobProducerRole-${AWS::Region}"
+				}
+			}
+		},
+		"JobProducerPolicy": {
+			"Type": "AWS::IAM::Policy",
+			"Properties": {
+				"PolicyName": {
+					"Fn::Sub": "Logverz-JobProducerPolicy-${AWS::Region}"
+				},
+				"PolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Action": "kms:Decrypt",
+							"Effect": "Allow",
+							"Resource": "*"
+						},
+						{
+							"Action": [
+								"logs:CreateLogGroup",
+								"logs:CreateLogStream",
+								"logs:PutLogEvents"
+							],
+							"Effect": "Allow",
+							"Resource": "*"
+						},
+						{
+							"Action": ["cloudformation:Describe*", "cloudformation:Get*"],
+							"Effect": "Allow",
+							"Resource": {
+								"Ref": "AWS::StackId"
+							}
+						},
+						{
+							"Effect": "Allow",
+							"Action": [
+								"sqs:SendMessage",
+								"sqs:ReceiveMessage",
+								"sqs:DeleteMessage",
+								"sqs:GetQueueAttributes",
+								"sqs:GetQueueUrl",
+								"sqs:ListDeadLetterSourceQueues"
+							],
+							"Resource": "*"
+						},
+						{
+							"Effect": "Allow",
+							"Action": ["ssm:DescribeParameters"],
+							"Resource": "*"
+						},
+						{
+							"Action": ["ssm:GetParameter", "ssm:GetParameterHistory"],
+							"Effect": "Allow",
+							"Resource": {
+								"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/Logverz*"
+							}
+						},
+						{
+							"Sid": "ListAndDescribe",
+							"Effect": "Allow",
+							"Action": [
+								"dynamodb:List*",
+								"dynamodb:DescribeReservedCapacity*",
+								"dynamodb:DescribeLimits",
+								"dynamodb:DescribeTimeToLive"
+							],
+							"Resource": "*"
+						},
+						{
+							"Sid": "SpecificTable",
+							"Effect": "Allow",
+							"Action": [
+								"dynamodb:BatchGet*",
+								"dynamodb:DescribeStream",
+								"dynamodb:DescribeTable",
+								"dynamodb:Get*",
+								"dynamodb:Query",
+								"dynamodb:Scan",
+								"dynamodb:BatchWrite*",
+								"dynamodb:Update*",
+								"dynamodb:PutItem"
+							],
+							"Resource": "arn:aws:dynamodb:*:*:table/Logverz*"
+						}
+					]
+				},
+				"Roles": [
+					{
+						"Ref": "JobProducerRole"
+					}
+				]
+			}
+		},
+		"JobProducerResource": {
+			"Type": "Custom::LambdaFunction",
+			"DependsOn": [
+				"JobProducerFunction",
+				"JobProducerPolicy",
+				"ExecutionHistory"
+			],
+			"Properties": {
+				"ServiceToken": {
+					"Fn::GetAtt": ["JobProducerFunction", "Arn"]
+				},
+				"DatabaseParameters": {
+					"Ref": "DBServerAlias"
+				},
+				"JOBQueueURL": { "Ref": "LogverzJobsQueue" },
+				"LogVolume": {
+					"Ref": "LogVolume"
+				},
+				"AllocationStrategy": {
+					"Ref": "AllocationStrategy"
+				},
+				"PreferedWorkerNumber": {
+					"Ref": "PreferedWorkerNumber"
+				},
+				"S3Folders": {
+					"Ref": "S3Folders"
+				},
+				"S3EnumerationDepth": {
+					"Ref": "S3EnumerationDepth"
+				},
+				"DataTypeSelector": {
+					"Ref": "DataTypeSelector"
+				},
+				"QueryString": {
+					"Ref": "QueryString"
+				},
+				"CustomQueryParameters": {
+					"Fn::Sub": [
+						"CustomQuerySchema=${CustomQuerySchema}<!!>CustomS3Select=${CustomS3Select}",
+						{
+							"CustomQuerySchema": {
+								"Ref": "CustomQuerySchema"
+							},
+							"CustomS3Select": {
+								"Ref": "CustomS3Select"
+							}
+						}
+					]
+				},
+				"TableParameters": {
+					"Fn::Sub": [
+						"TableName=${DatasetName}<!!>TableDescription=${DatasetDescription}<!!>TableOwners=${DatasetOwners}<!!>TableAccess=${DatasetAccess}",
+						{
+							"DatasetName": {
+								"Ref": "DatasetName"
+							},
+							"DatasetDescription": {
+								"Ref": "DatasetDescription"
+							},
+							"DatasetOwners": {
+								"Ref": "DatasetOwners"
+							},
+							"DatasetAccess": {
+								"Ref": "DatasetAccess"
+							}
+						}
+					]
+				}
+			}
+		},
+		"ExecutionHistory": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": "/Logverz/Engine/ExecutionHistory",
+				"Type": "String",
+				"Value": {
+					"Fn::Sub": [
+						"S3Folders:${S3Folders};\nDataTypeSelector:${DataTypeSelector};\nQueryString:${QueryString};\nTableParameters:${TableParameters};\nCustomQueryParameters:${CustomQueryParameters};\n",
+						{
+							"S3Folders": {
+								"Ref": "S3Folders"
+							},
+							"DataTypeSelector": {
+								"Ref": "DataTypeSelector"
+							},
+							"QueryString": {
+								"Ref": "QueryString"
+							},
+							"TableParameters": {
+								"Fn::Sub": [
+									"TableName=${DatasetName}<!!>TableDescription=${DatasetDescription}<!!>TableOwners=${DatasetOwners}<!!>TableAccess=${DatasetAccess}",
+									{
+										"DatasetName": {
+											"Ref": "DatasetName"
+										},
+										"DatasetDescription": {
+											"Ref": "DatasetDescription"
+										},
+										"DatasetOwners": {
+											"Ref": "DatasetOwners"
+										},
+										"DatasetAccess": {
+											"Ref": "DatasetAccess"
+										}
+									}
+								]
+							},
+							"CustomQueryParameters": {
+								"Fn::Sub": [
+									"CustomQuerySchema=${CustomQuerySchema}<!!>CustomS3Select=${CustomS3Select}",
+									{
+										"CustomQuerySchema": {
+											"Ref": "CustomQuerySchema"
+										},
+										"CustomS3Select": {
+											"Ref": "CustomS3Select"
+										}
+									}
+								]
+							}
+						}
+					]
+				},
+				"Description": "Contains the details of Queries executions."
+			}
+		},
+		"APIGWJobPostPermission": {
+			"Type": "AWS::Lambda::Permission",
+			"DependsOn": "JobProducerFunction",
+			"Properties": {
+				"Action": "lambda:InvokeFunction",
+				"SourceArn": {
+					"Fn::Join": [
+						"",
+						[
+							"arn:aws:execute-api:",
+							{
+								"Ref": "AWS::Region"
+							},
+							":",
+							{
+								"Ref": "AWS::AccountId"
+							},
+							":",
+							{
+								"Ref": "RestApiId"
+							},
+							"/*"
+						]
+					]
+				},
+				"FunctionName": {
+					"Fn::Join": [
+						"",
+						[
+							"arn:aws:lambda:",
+							{
+								"Ref": "AWS::Region"
+							},
+							":",
+							{
+								"Ref": "AWS::AccountId"
+							},
+							":function:",
+							{
+								"Ref": "JobProducerFunction"
+							}
+						]
+					]
+				},
+				"Principal": "apigateway.amazonaws.com"
+			}
+		},
+		"JobProducerResourcePermission": {
+			"Type": "AWS::Lambda::Permission",
+			"Properties": {
+				"Action": "lambda:InvokeFunctionUrl",
+				"SourceArn": { "Fn::GetAtt": ["JobProducerRole", "Arn"] },
+				"FunctionName": {
+					"Fn::Join": [
+						"",
+						[
+							"arn:aws:lambda:",
+							{
+								"Ref": "AWS::Region"
+							},
+							":",
+							{
+								"Ref": "AWS::AccountId"
+							},
+							":function:",
+							{ "Ref": "JobProducerFunction" }
+						]
+					]
+				},
+				"Principal": "lambda.amazonaws.com"
+			}
+		}
+	},
+	"Outputs": {}
+}

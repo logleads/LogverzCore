@@ -1,0 +1,142 @@
+[   
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Queries",
+        "Parameters": [
+            {
+                "AttributeName": "UsersQuery",
+                "AttributeValue": "Sample:UserAWS",
+                "Expression": "="
+            }, {
+                "AttributeName": "UnixTime",
+                "AttributeValue": 1610584942329,
+                "Expression": "="
+            }
+        ],
+        "Operation": "dynamodb:DeleteItem"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Queries",
+        "Parameters": [
+            {
+                "AttributeName": "UsersQuery",
+                "AttributeValue": "Sample:UserAWS",
+                "Expression": "="
+            }, {
+                "AttributeName": "UnixTime",
+                "AttributeValue": 1610584942329,
+                "Expression": "="
+            },
+            {
+                "Payload":{
+                    "DatabaseName": "DefaultDB",
+                    "DataType": "CloudTrail",
+                    "QueryName": "JUSTasamplefox3",
+                    "Access": ["LogverzUsers:GroupAWS"],
+                    "Owners": ["demouser:UserAWS","admin:UserAWS"],
+                    "UnixTime": 1610584942329,
+                    "UsersQuery": "Sample:UserAWS",
+                    "TableName": "Table1",
+                    "QuerySettings": {
+                        "ComputeEnvironment": "Logverz-Engine-1DXHYGGLBKYVN-Controller-S0",
+                        "Description": "The settings used to create the data in table 1...!",
+                        "QueryString": "select * from S3Object[*].Records[*] s Where s.errorMessage!='null'",
+                        "S3Folders": "s3://lltestdata/ctrail/06/"
+                    },
+                    "QueryType":"C"
+                }
+            }
+        ],
+        "Operation": "dynamodb:PutItem"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Queries",
+        "Parameters": [
+            {
+                "AttributeName": "UsersQuery",
+                "AttributeValue": "Sample:UserAWS",
+                "Expression": "="
+            }, {
+                "AttributeName": "UnixTime",
+                "AttributeValue": 1610585212678,
+                "Expression": "="
+            },
+            {
+                "Payload":{
+                    "DatabaseName": "DefaultDB",
+                    "DataType": "CloudTrail",
+                    "QueryName": "Investigate",
+                    "Access": [],
+                    "Owners": [],
+                    "TableName": "Table1",
+                    "QuerySettings": {
+                        "Description": "NOTABLE information/settings regarding the analysis in clear text",
+                        "Any":"Number",
+                        "Off":"other",
+                        "Properties":"can be",
+                        "Recorded": "here"
+                    },
+                    "UnixTime": 1610585212678,
+                    "UsersQuery": "Sample:UserAWS",
+                    "QueryType":"A"
+                }
+            }
+        ],
+        "Operation": "dynamodb:PutItem"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Queries",
+        "Parameters": [
+            {
+                "AttributeName": "UsersQuery",
+                "AttributeValue": "Sample:UserAWS",
+                "Expression": "="
+            }, {
+                "AttributeName": "UnixTime",
+                "AttributeValue": 1610585212658,
+                "Expression": "="
+            },
+            {
+                "Payload":{
+                    "DatabaseName": "DefaultDB",
+                    "DataType": "CloudTrail",
+                    "QueryName": "Investigate",
+                    "Access": [],
+                    "Owners": [],
+                    "TableName": "Table1",
+                    "QuerySettings": {
+                        "DataBaseName":"DefaultDB",
+                        "TableName":"DemoCloudTrail",
+                        "QuerySettings":[
+                            {"Field": "useridentity", "Operator":"like", "Value": "frfr"},
+                            {"Field":"eventTime","Operator":"notlike","Value": "rrrr"}
+                        ],
+                        "Batch":{
+                            "Start":"0",
+                            "End":"500"
+                         },
+                        "Analysis Type":"Table",
+                        "Fields":{
+                           "EventTime":{
+                              "Filter": "" 
+                         },
+                           "EventName":{
+                              "Filter": "" 
+                         },
+                           "Sourceipaddress":{
+                              "Filter": "" 
+                         },
+                           "Errorcode":{
+                             "Filter": "" 
+                          }
+                        },
+                     "Findings": "My text in *MarkDown* format"
+                     },
+                    "UnixTime": 1610584942827,
+                    "UsersQuery": "Sample:UserAWS",
+                    "QueryType":"A"
+                }
+            }
+        ],
+        "Operation": "dynamodb:PutItem"
+    }
+]

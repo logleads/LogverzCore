@@ -1,0 +1,21 @@
+{
+  "name": "Logverz",
+  "version": "0.7.00",
+  "description": "Log Interpreter Serverless Application: ssmpassword function",
+  "main": "setconnectionparamsdns.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://logleads@dev.azure.com/logleads/Logverz/_git/Logverz"
+  },
+  "author": "platformlead",
+  "license": "LogLeads License 1.0",
+  "dependencies": {
+    "aws-sdk": "^2.726.0",
+    "cfn-response": "^1.0.1",
+    "generate-password": "^1.5.1",
+    "lodash": "^4.17.21"
+  }
+}

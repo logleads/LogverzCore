@@ -1,0 +1,39 @@
+[
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Identities",
+        "Parameters": [{
+                "AttributeName": "Name",
+                "AttributeValue": "TESTBOB",
+                "Expression": "="
+            }, {
+                "AttributeName": "Type",
+                "AttributeValue": "UserGoogle",
+                "Expression": "="
+            },
+            {
+                "Payload":{
+                    "IAM": "true",
+                    "IAMGroups": ["LogverzUsers","LogverzPowerUsers"],
+                    "IAMPolicies": ["ViewOnlyAccess"],
+                    "Name": "TESTBOB",
+                    "Type": "UserGoogle"
+                }
+            }
+        ],
+        "Operation": "dynamodb:PutItem"
+    },
+    {
+        "Resource": "arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz-Identities",
+        "Parameters": [{
+                "AttributeName": "Name",
+                "AttributeValue": "TESTBOB",
+                "Expression": "="
+            }, {
+                "AttributeName": "Type",
+                "AttributeValue": "UserGoogle",
+                "Expression": "="
+            }
+        ],
+        "Operation": "dynamodb:DeleteItem"
+    }
+]

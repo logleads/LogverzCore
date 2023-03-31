@@ -1,0 +1,186 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Metadata": {
+		"AWS::CloudFormation::Interface": {
+			"ParameterGroups": [
+				{
+					"Label": {
+						"default": "Main Settings"
+					},
+					"Parameters": ["AutomatedSetup", "AppFQDN","ApiGatewayRestApiId", "ApiGatewayStageName"]
+				},
+				{
+					"Label": {
+						"default": "Automated Setup"
+					},
+					"Parameters": ["HostedZoneId", "ApiGatewayHostedZoneID"]
+				},
+				{
+					"Label": {
+						"default": "Manual Setup"
+					},
+					"Parameters": ["ManualCertArn" ]
+				}
+			]
+		}
+	},
+    "Parameters": {
+        "AppFQDN": {
+            "Description": "The domain name, such as Logverz.yourdomain.com",
+            "Default": "Logverz.yourdomain.com",
+            "Type": "String"
+        },
+        "HostedZoneId": {
+            "Description": "Conditional! Specify only if DNS is hosted in the same account, the value is the HostedZone Id of  yourdomain.com as seen in console R53 -> Hosted Zones ->Hosted zone ID",
+            "Default": "Z01420023TPO9L7D6QZRZ",
+            "Type": "String"
+        },
+        "ApiGatewayRestApiId": {
+            "Description": "The API GW RestApiId as seen in console APIGW -> APIs -> Ids, or the first segment in the url after https://ApiGatewayRestApiId.execute-api.region.amazonaws.com",
+            "Type": "String",
+            "Default": "4hqirnl70l"
+        },
+        "ApiGatewayStageName": {
+            "Description": "The API GW stageName, it is case sensitive",
+            "Type": "String",
+            "Default": "V3"
+        },
+        "AutomatedSetup":{
+            "AllowedValues": [
+                "true",
+                "false"
+            ],
+            "Default": "true",
+            "Description": "Controls create certificate and dns record, use true only if DNS is hosted in the same account as the APIGW endpoint",
+            "Type": "String"
+        },
+        "ApiGatewayHostedZoneID": {
+            "Description": "The API GW Hosted Zone ID as seen in console APIGW -> Custom domain names -> Configurations tab. If this is the first custom domain, than manually create one such as temporary.yourdomain.com to get the value than delete.",
+            "Type": "String",
+            "Default": "Z2RPCDW04V8134"
+        },
+        "ManualCertArn":{
+            "Default": "arn:aws:acm:REGION:ACCOUNTID:certificate/GUID",
+            "Description": "Conditional! Specify only if certificate is manualy managed.After deployment remember to also create the CNAME record pointing to *specific* ApiGatewayFQDN value as seen in console APIGW -> Custom domain names -> Configurations tab (AppFQDN url)",
+            "Type": "String"
+        }
+    },
+    "Conditions": {
+		"Automated" : {"Fn::Equals" : [{"Ref" : "AutomatedSetup"}, "true"]},
+        "Manual": {"Fn::Equals" : [{"Ref" : "AutomatedSetup"}, "false"]}
+	},
+    "Resources": {
+        "Cert": {
+            "Type": "AWS::CertificateManager::Certificate",
+            "Condition": "Automated",
+            "Properties": {
+                "DomainName": {
+                    "Ref": "AppFQDN"
+                },
+                "DomainValidationOptions": [
+                    {
+                        "DomainName": {
+                            "Ref": "AppFQDN"
+                        },
+                        "HostedZoneId": {
+                            "Ref": "HostedZoneId"
+                        }
+                    }
+                ],
+                "ValidationMethod": "DNS"
+            }
+        },
+        "myDomainNameAuto": {
+            "Type": "AWS::ApiGateway::DomainName",
+            "Condition": "Automated",
+            "Properties": {
+                "RegionalCertificateArn": {
+                    "Ref": "Cert"
+                },
+                "DomainName": {
+                    "Ref": "AppFQDN"
+                },
+                "EndpointConfiguration": {
+                    "Types": [
+                        "REGIONAL"
+                    ]
+                }
+            }
+        },
+        "myDomainNameManual": {
+            "Type": "AWS::ApiGateway::DomainName",
+            "Condition": "Manual",
+            "Properties": {
+                "RegionalCertificateArn": {
+                    "Ref": "ManualCertArn"
+                },
+                "DomainName": {
+                    "Ref": "AppFQDN"
+                },
+                "EndpointConfiguration": {
+                    "Types": [
+                        "REGIONAL"
+                    ]
+                }
+            }
+        },
+        "myMappingAuto": {
+            "Condition": "Automated",
+            "DependsOn" : "myDomainNameAuto",
+            "Type": "AWS::ApiGateway::BasePathMapping",
+            "Properties": {
+                "DomainName": {
+                    "Ref": "AppFQDN"
+                },
+                "RestApiId": {
+                    "Ref": "ApiGatewayRestApiId"
+                },
+                "Stage": {
+                    "Ref": "ApiGatewayStageName"
+                }
+            }
+        },
+        "myMappingManual": {
+            "Condition": "Manual",
+            "DependsOn" : "myDomainNameManual",
+            "Type": "AWS::ApiGateway::BasePathMapping",
+            "Properties": {
+                "DomainName": {
+                    "Ref": "AppFQDN"
+                },
+                "RestApiId": {
+                    "Ref": "ApiGatewayRestApiId"
+                },
+                "Stage": {
+                    "Ref": "ApiGatewayStageName"
+                }
+            }
+        },
+        "myDNSRecord": {
+            "Type": "AWS::Route53::RecordSet",
+            "Condition": "Automated",
+            "DependsOn": "myDomainNameAuto",
+            "Properties": {
+                "HostedZoneId": {
+                    "Ref": "HostedZoneId"
+                },
+                "Name": {
+                    "Ref": "AppFQDN"
+                },
+                "AliasTarget": {
+                    "DNSName": {
+                        "Fn::GetAtt": [
+                            "myDomainNameAuto",
+                            "RegionalDomainName"
+                        ]
+                    },
+                    "EvaluateTargetHealth": false,
+                    "HostedZoneId": {
+                        "Ref": "ApiGatewayHostedZoneID"
+                    }
+                },
+                "Type" :"A"
+            }
+        }
+    }
+}

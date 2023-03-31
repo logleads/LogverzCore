@@ -1,0 +1,386 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Transform": ["LogverzTransform", "AWS::Serverless-2016-10-31"],
+	"Description": "The Default Logverz Database",
+	"Metadata": {
+		"stackname":"Logverz-DefaultDB"
+	},
+	"Parameters": {
+		"DBAllocatedStorage":{
+			"Type": "Number"
+		},
+		"DBInstanceClass": {
+			"Type": "String"
+		},
+		"DBSnapshotID":{
+			"Type":"String"
+		},
+		"DBDeploymentMethod": {
+			"Type": "String"
+		},
+		"DBPrincipalProperty":{
+			"Type": "String"
+		},
+		"DBEngineType": {
+			"Type": "String"
+		},
+		"DBUserName": {
+			"Type": "String"
+		},
+		"DBUserPasswd": {
+			"Type": "String"
+		},
+		"SetConnectionParamsDB":{
+			"Type":"String"
+		},
+		"DBSecGroup":{
+			"Type":"String"
+		},
+		"LogverzDBIAMGroup":{
+			"Type":"String"
+		},
+		"PublicSubnet":{
+			"Type":"String"
+		},
+		"PrivateSubnet":{
+			"Type":"String"
+		},
+		"MaximumCacheTime":{
+			"Type":"String"
+		}
+	},
+	"Mappings": {
+		"DeploymentType" : {
+			"Serverless":{"Value":"setbyLambdaTransform"},
+			"Server":{"Value": "setbyLambdaTransform"}
+		}
+	},
+	"Conditions": {
+		"MSSQLServer":{"Fn::Or": [{"Fn::Equals" : [{"Ref" : "DBEngineType"}, "sqlserver-web"]}, {"Fn::Equals" : [{"Ref" : "DBEngineType"}, "sqlserver-ex"]}, {"Fn::Equals" : [{"Ref" : "DBEngineType"}, "sqlserver-se"]}, {"Fn::Equals" : [{"Ref" : "DBEngineType"}, "sqlserver-ee"]}]},
+		"HasSnapshotID": { "Fn::Not" : [{
+			"Fn::Equals" : ["",
+				{"Ref" : "DBSnapshotID"}
+			]
+		}]
+		},
+		"isServerless":{ "Fn::Equals": [ { "Fn::FindInMap" : [ "DeploymentType", "Serverless", "Value"]}, "true"]},
+		"isServer": { "Fn::Equals": [ { "Fn::FindInMap" : [ "DeploymentType", "Server", "Value"]}, "true"]}
+	},
+	"Resources": {
+		"LogverzDB": {
+			"Condition" : "isServer",
+			"Type": "AWS::RDS::DBInstance",
+			"DependsOn":"GetDBPasswordResource",
+			"Properties": {
+				"DBName": {"Fn::If": ["MSSQLServer", {"Ref": "AWS::NoValue"}, "Logverz"]},
+				"DBSubnetGroupName":{"Ref":"LogverzDBSubnetGroupPrivate"},
+				"MonitoringInterval": 60,
+				"MonitoringRoleArn": {
+					"Fn::GetAtt": ["LogverzDBMonitoringRole", "Arn"]
+				},
+				"AllocatedStorage": {
+					"Ref": "DBAllocatedStorage"
+				},
+				"StorageType": "gp2",
+				"DBInstanceClass": {
+					"Ref": "DBInstanceClass"
+				},
+				"DBSnapshotIdentifier":{"Fn::If": ["HasSnapshotID", {"Ref":"DBSnapshotID"}, {"Ref": "AWS::NoValue"}]},
+				"Engine": {
+					"Ref": "DBEngineType"
+				},
+				"MasterUsername": {
+					"Ref": "DBUserName"
+				},
+				"MasterUserPassword": {
+					"Ref": "DBUserPasswd"
+				},
+				"VPCSecurityGroups": [{
+					"Ref": "DBSecGroup"
+				}],
+				"Tags": [{
+					"Key": "Logverz",
+					"Value": "true"
+				}
+				]
+			},
+			"DeletionPolicy": "Delete"
+		},
+		"LogverzDBMonitoringRole":{
+			"Condition" : "isServer",
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Sid": "",
+							"Effect": "Allow",
+							"Principal": {
+								"Service": "monitoring.rds.amazonaws.com"
+							},
+							"Action": "sts:AssumeRole"
+						}
+					]
+				},
+				"ManagedPolicyArns": [
+					"arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
+				],
+				"Path": "/"
+			}
+		},
+		"GetDBPasswordResource": {
+			"Type": "Custom::LambdaFunction",
+			"Properties": {
+				"ServiceToken": { "Ref" : "SetConnectionParamsDB"},
+				"Mode":"RetrieveSecret",
+				"LogverzDBSecretRef":"/Logverz/Database/DefaultDBPassword"
+			}
+		},
+		"SetConnectionResourceServer": {
+			"Condition" : "isServer",
+			"Type": "Custom::LambdaFunction",
+			"Properties": {
+				"ServiceToken": { 
+					"Ref" : "SetConnectionParamsDB"
+				},
+				"RegistryNewValue":{ 
+					"Fn::Sub": [ "LogverzDBFriendlyName=${LogverzDBFriendlyName},LogverzDBEndpointName=${LogverzDBEndpointName},LogverzDBEndpointPort=${LogverzDBEndpointPort},LogverzEngineType=${LogverzEngineType},LogverzDBUserName=${LogverzDBUserName},LogverzDBSecretRef=${LogverzDBSecretRef},LogverzDBInstanceClass=${LogverzDBInstanceClass},[[DBDELIM]]", {
+						"LogverzDBFriendlyName":"DefaultDB", 
+						"LogverzDBEndpointName": {
+							"Fn::GetAtt": ["LogverzDB", "Endpoint.Address"]
+						},
+						"LogverzDBEndpointPort": {
+							"Fn::GetAtt": ["LogverzDB", "Endpoint.Port"]
+						},
+						"LogverzEngineType": {
+							"Ref": "DBEngineType"
+						},
+						"LogverzDBUserName": {
+							"Ref": "DBUserName"
+						},
+						"LogverzDBSecretRef":"/Logverz/Database/DefaultDBPassword", 
+						"LogverzDBInstanceClass": {
+							"Ref": "DBInstanceClass"
+						}
+					}]
+				},
+				"Mode": "RegistryRequest",
+				"RegistryName": "/Logverz/Database/Registry"
+			}
+		},
+		"SetConnectionResourceServerless": {
+			"Condition" : "isServerless",
+			"Type": "Custom::LambdaFunction",
+			"DependsOn":"LogverzDBServerlessInstance",
+			"Properties": {
+				"ServiceToken": {
+					"Ref" : "SetConnectionParamsDB"
+				},
+				"RegistryNewValue": {
+					"Fn::Sub": ["LogverzDBFriendlyName=${LogverzDBFriendlyName},LogverzDBEndpointName=${LogverzDBEndpointName},LogverzDBEndpointPort=${LogverzDBEndpointPort},LogverzEngineType=${LogverzEngineType},LogverzDBUserName=${LogverzDBUserName},LogverzDBSecretRef=${LogverzDBSecretRef},LogverzDBInstanceClass=${LogverzDBInstanceClass},LogverzDBClusterID=${LogverzDBClusterID},[[DBDELIM]]", {
+						"LogverzDBFriendlyName": "DefaultDB",
+						"LogverzDBEndpointName": {
+							"Fn::GetAtt": ["LogverzDBServerlessInstance", "Endpoint.Address"]
+						},
+						"LogverzDBEndpointPort": {
+							"Fn::GetAtt": ["LogverzDBServerlessInstance", "Endpoint.Port"]
+						},
+						"LogverzEngineType": {
+							"Ref": "DBEngineType"
+						},
+						"LogverzDBUserName": {
+							"Ref": "DBUserName"
+						},
+						"LogverzDBSecretRef": "/Logverz/Database/DefaultDBPassword",
+						"LogverzDBInstanceClass":{
+							"Ref": "DBInstanceClass"
+						},
+						"LogverzDBClusterID": {
+							"Fn::Select" : [6,
+								{
+									"Fn::Split" : [ ":", {
+										"Fn::GetAtt" : [ "LogverzDBServerless", "DBClusterArn" ]
+									} 
+									]
+								}
+							]
+						}
+					}]
+				},
+				"Mode": "RegistryRequest",
+				"RegistryName": "/Logverz/Database/Registry"
+			}
+		},
+		"SendDeleteSignal": {
+			"Type": "Custom::LambdaFunction",
+			"Condition" : "isServer",
+			"DependsOn":"LogverzDB",
+			"Properties": {
+				"ServiceToken": { "Ref" : "SetConnectionParamsDB"},
+				"RegistryNewValue": {
+					"Fn::Sub": ["LogverzDBFriendlyName=${LogverzDBFriendlyName},LogverzDBEndpointName=${LogverzDBEndpointName},LogverzDBSecretRef=${LogverzDBSecretRef}", {
+						"LogverzDBFriendlyName": "DefaultDB",
+						"LogverzDBEndpointName": {
+							"Fn::GetAtt": ["LogverzDB", "Endpoint.Address"]
+						},
+						"LogverzDBSecretRef": "/Logverz/Database/DefaultDBPassword"
+					}]
+				},
+				"Mode": "StackDelete",
+				"RegistryName": "/Logverz/Database/Registry"
+			}
+		},
+		"SendDeleteSignalServerless": {
+			"Type": "Custom::LambdaFunction",
+			"Condition" : "isServerless",
+			"DependsOn":"LogverzDBServerless",
+			"Properties": {
+				"ServiceToken": { 
+					"Ref" : "SetConnectionParamsDB"
+			},
+				"RegistryNewValue": {
+					"Fn::Sub": ["LogverzDBFriendlyName=${LogverzDBFriendlyName},LogverzDBEndpointName=${LogverzDBEndpointName},LogverzDBSecretRef=${LogverzDBSecretRef}", {
+						"LogverzDBFriendlyName": "DefaultDB",
+						"LogverzDBEndpointName": {
+							"Fn::GetAtt": ["LogverzDBServerless", "Endpoint.Address"]
+						},
+						"LogverzDBSecretRef": {
+							"Fn::Sub": ["/Logverz/Database/${DBFriendlyName}Password", {
+								"DBFriendlyName": "DefaultDB"
+							}]
+						}
+					}]
+				},
+				"Mode": "StackDelete",
+				"RegistryName": "/Logverz/Database/Registry"
+			}
+		},
+		"LogverzDBGroupPolicy": {
+			"Type": "AWS::IAM::Policy",
+			"Properties": {
+				"PolicyName": {
+					"Fn::Sub": "Logverz-DBGroup-DefaultDB-Policy"
+				},
+				"PolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Sid": "RDSStartStop4SpecificLogverzDB",
+							"Effect": "Allow",
+							"Action": [
+								"rds:StopDBInstance",
+								"rds:StartDBInstance",
+								"rds:StartDBCluster",
+								"rds:StopDBCluster"
+							],
+							"Resource": {
+								"Fn::If" : [
+									"isServer",
+									{
+										"Fn::Sub": ["arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:${DBName}", {
+										"DBName": {
+											"Ref": "LogverzDB"
+										}
+										}]
+									},
+									{
+										"Fn::Sub": ["arn:aws:rds:${AWS::Region}:${AWS::AccountId}:cluster:${DBName}", {
+										"DBName": {
+											"Ref": "LogverzDBServerless"
+										}
+										}]
+									}
+								]
+							}
+						}
+					]
+				},
+				"Groups": [{
+					"Ref": "LogverzDBIAMGroup"
+				}]
+			}
+		},
+		"LogverzDBServerless": {
+			"Condition" : "isServerless",
+			"Type": "AWS::RDS::DBCluster",
+			"DependsOn":"GetDBPasswordResource",
+			"Properties": {
+				"DatabaseName": "Logverz",
+				"DBSubnetGroupName":{"Ref":"LogverzDBSubnetGroupPrivate"},
+				"Engine": "setbyLambdaTransform",
+				"EngineVersion":"setbyLambdaTransform",
+				"DBClusterIdentifier": { "Fn::Join" : ["", ["Logverz", "-", "DefaultDB"] ] },
+				"MasterUsername": {
+					"Ref": "DBUserName"
+				},
+				"MasterUserPassword":{
+					"Ref": "DBUserPasswd"
+				},
+				"ServerlessV2ScalingConfiguration": {
+					"MinCapacity": { "Fn::Select" : [ "0",{ "Fn::Split" : [ "-", { "Fn::Select" : [ "1", { "Fn::Split" : [ ":", {"Ref":"DBInstanceClass"} ] }] }] }] },
+					"MaxCapacity": { "Fn::Select" : [ "1",{ "Fn::Split" : [ "-", { "Fn::Select" : [ "1", { "Fn::Split" : [ ":", {"Ref":"DBInstanceClass"} ] }] }] }] }
+				},
+				"VpcSecurityGroupIds": [{
+					"Ref": "DBSecGroup"
+				}],
+				"Tags": [{
+					"Key": "Logverz",
+					"Value": "true"
+				}]
+			},
+			"DeletionPolicy": "Delete"
+		},
+		"LogverzDBServerlessInstance":{
+			"Condition" : "isServerless",
+			"Type": "AWS::RDS::DBInstance",
+			"Properties":{
+				"DBClusterIdentifier": {
+					"Ref": "LogverzDBServerless"
+				},
+				"Engine": "setbyLambdaTransform",
+				"DBInstanceClass": "db.serverless",
+				"Tags": [{
+					"Key": "Logverz",
+					"Value": "true"
+				}]
+			}
+		},
+		"LogverzDBSubnetGroupPublic":{
+			"Type" : "AWS::RDS::DBSubnetGroup",
+			"Properties" : {
+				"DBSubnetGroupDescription" : "Optional PublicSubnet group for external connectivity,network access is controlled by \"DBSecGroup\"",
+				"DBSubnetGroupName" : "LogverzPublic",
+				"SubnetIds" : { "Fn::Split": [",", { "Ref" : "PublicSubnet" }]}
+			}
+		},
+		"LogverzDBSubnetGroupPrivate":{
+			"Type" : "AWS::RDS::DBSubnetGroup",
+			"Properties" : {
+				"DBSubnetGroupDescription" : "PrivateSubnet group for internal use in default and non default vpcs, network access is controlled by \"DBSecGroup\"",
+				"DBSubnetGroupName" : "LogverzPrivate",
+				"SubnetIds" : { "Fn::Split": [",", { "Ref" : "PrivateSubnet" }]}
+			}
+		}
+	},
+	"Outputs": {
+		"LogverzPrivateSubnetsGroup": {
+			"Export": {
+				"Name": "LogverzPrivateSubnetsGroup"
+			},
+			"Description": "The security groups for the databases ",
+			"Value": {
+				"Ref": "LogverzDBSubnetGroupPrivate"
+			}
+		},
+		"LogverzPublicSubnetsGroup": {
+			"Export": {
+				"Name": "LogverzPublicSubnetsGroup"
+			},
+			"Description": "The security groups for the databases ",
+			"Value": {
+				"Ref": "LogverzDBSubnetGroupPublic"
+			}
+		}
+	}
+}
