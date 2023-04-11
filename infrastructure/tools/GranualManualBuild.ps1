@@ -109,7 +109,7 @@ $buildrelativepath="sources/init"
 $buildfullpath="$projectpath/$buildrelativepath/build"
 $repobaseurl="https://logleads@dev.azure.com/logleads/LogverzPortal/_git/"
 
-build-webapp-source -builddirectory $buildfullpath -repo $($repobaseurl+"Portal") -appname "Portal" -branchname "composition-api" -OSType $OSType
+build-webapp-source -builddirectory $buildfullpath -repo $($repobaseurl+"Portal") -appname "Portal" -branchname "dev" -OSType $OSType
 build-webapp-source -builddirectory $buildfullpath -repo $($repobaseurl+"PortalAccess") -appname "PortalAccess" -branchname "dev" -OSType $OSType
 
 

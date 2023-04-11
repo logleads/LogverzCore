@@ -803,8 +803,7 @@ const deactivatequery = async (commonshared, docClient, DatabaseName, DBTableNam
     var lisofupdateitems=data.map(d=>{return [d.UsersQuery, d.UnixTime,d.TableName,d.QueryType]})
   }
 
-  for (let i = 0; i < lisofupdateitems.length; i++) {
-    const item = lisofupdateitems[i]
+  for await (item of lisofupdateitems) {
     console.log('Setting UsersQuery ' + item[0] + ' at ' + item[1] + " 'Active: false'.")
     if (item[2]!==undefined){
       console.log('Corresponding TableName ' + item[2] + " and QueryType'" + item[3] + " '.")
@@ -821,7 +820,7 @@ const deactivatequery = async (commonshared, docClient, DatabaseName, DBTableNam
       },
       ReturnValues: 'UPDATED_NEW'
     }
-    const updateresult = (await commonshared.UpdateDDB(docClient, updateparams))
+    var updateresult = (await commonshared.UpdateDDB(docClient, updateparams))
     console.log(updateresult)
   }
   return updateresult

@@ -135,11 +135,18 @@ main(ec2, s3, sqs, SSM, dynamodb, servicequotas, cloudwatch, Sequelize, fsPromis
 async function main (ec2, s3, sqs, SSM, dynamodb, servicequotas, cloudwatch, Sequelize, fsPromises, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber) {
   console.log('PreferedWorkerNumber: ' + PreferedWorkerNumber + '\n')
 
-  if (PreferedWorkerNumber !== 'auto' || Number.isInteger(PreferedWorkerNumber)){
-    //validate if input is either auto or a number if not change input to 'auto'
+  if (PreferedWorkerNumber !== 'auto' && (Number.isNaN(Number(PreferedWorkerNumber))===true)){
+    //validate if input is not auto and not a number. Than change PreferedWorkerNumber 'auto'
     PreferedWorkerNumber ='auto'
     console.log('The PreferedWorkerNumber parameter is incorrect, it has to be a whole number such as 20, 200 etc or auto which will automatically determine the most suitable worker count')
-  } 
+  }
+  else if (Number.isInteger(Number(PreferedWorkerNumber))){
+    //if its value eg "10" or 10, that can be converted to integer, than convert it to integer. 
+    PreferedWorkerNumber =Number(PreferedWorkerNumber) 
+  }
+  else {
+    PreferedWorkerNumber ='auto'
+  }
 
   const z0 = performance.now()
   console.log('1.) Starting execution')
