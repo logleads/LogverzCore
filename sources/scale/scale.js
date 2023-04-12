@@ -23,6 +23,7 @@ if (db.collections.length === 0) {
 }
 
 module.exports.handler = async function (event, context) {
+
   if (process.env.Environment !== 'LocalDev') {
     // Prod lambda function settings
     var arnList = (context.invokedFunctionArn).split(':')
@@ -550,22 +551,22 @@ async function VerifyRDSDesiredState (rds, dynamodb, commonshared, RDSCWmetrics,
 
       switch (rdbi.IdleConfiguration) {
         case 'CAS':
-          if ((performancemetrics.CpuUtilisation < rdbi.IdleTreshold[cpumetricname]) && (performancemetrics.SessionCount < rdbi.IdleTreshold[sessionmetricname])) {
+          if ((performancemetrics.CpuUtilisation <= rdbi.IdleTreshold[cpumetricname]) && (performancemetrics.SessionCount <= rdbi.IdleTreshold[sessionmetricname])) {
             stopdbinstance = true
           }
           break
         case 'COS':
-          if ((performancemetrics.CpuUtilisation < rdbi.IdleTreshold[cpumetricname]) || (performancemetrics.SessionCount < rdbi.IdleTreshold[sessionmetricname])) {
+          if ((performancemetrics.CpuUtilisation <= rdbi.IdleTreshold[cpumetricname]) || (performancemetrics.SessionCount <= rdbi.IdleTreshold[sessionmetricname])) {
             stopdbinstance = true
           }
           break
         case 'C':
-          if ((performancemetrics.CpuUtilisation < rdbi.IdleTreshold[cpumetricname])) {
+          if (performancemetrics.CpuUtilisation <= rdbi.IdleTreshold[cpumetricname]) {
             stopdbinstance = true
           }
           break
         case 'S':
-          if (performancemetrics.SessionCount < rdbi.IdleTreshold[sessionmetricname]) {
+          if (performancemetrics.SessionCount <= rdbi.IdleTreshold[sessionmetricname]) {
             stopdbinstance = true
           }
           break
