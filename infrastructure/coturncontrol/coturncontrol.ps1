@@ -165,7 +165,8 @@ function Update-ConnectionString{
             [string]$AutoScalingGroupName,
             [string]$ASGinstancesPath,
             [string]$bucket,
-            [string]$appconnectionstring
+            [string]$appconnectionstring,
+            [string]$TurnSrvUserName
     )
 
     #get asg current instances
@@ -177,7 +178,7 @@ function Update-ConnectionString{
     if (!( test-path -Path $ASGinstancesPath)) {
       
         New-item -Path $ASGinstancesPath -Value $($currentinstancids |Out-String) -Force
-        Create-ConnectionString -instanceids $currentinstancids -appconnectionstring $appconnectionstring -region $region
+        Create-ConnectionString -instanceids $currentinstancids -appconnectionstring $appconnectionstring -region $region -TurnSrvUserName $TurnSrvUserName
         #put config file to logic bucket so that application can use it.
         Invoke-Expression "aws s3 cp $appconnectionstring s3://$bucket/webrtc.config";
         
@@ -189,7 +190,7 @@ function Update-ConnectionString{
 
         if($compareresult -ne $null){
             New-item -Path $ASGinstancesPath -Value $($currentinstancids |Out-String) -Force
-            Create-ConnectionString -instanceids $currentinstancids -appconnectionstring $appconnectionstring -region $region
+            Create-ConnectionString -instanceids $currentinstancids -appconnectionstring $appconnectionstring -region $region -TurnSrvUserName $TurnSrvUserName
             #put config file to logic bucket so that application can use it.
             Invoke-Expression "aws s3 cp $appconnectionstring s3://$bucket/webrtc.config";
         }
@@ -203,7 +204,8 @@ function Create-ConnectionString{
             [Parameter()]
             [array]$instanceids,
             [string]$appconnectionstring,
-            [string]$region
+            [string]$region,
+            [string]$TurnSrvUserName
    )
 
     $instancenames=$(invoke-expression "aws ec2 describe-instances --instance-ids $instanceids --region $region"|ConvertFrom-Json).Reservations.Instances.PublicDnsName
@@ -216,7 +218,7 @@ function Create-ConnectionString{
         $server = New-Object -TypeName psobject
         $server | Add-Member -MemberType NoteProperty -Name urls -Value $($instance)
         $server | Add-Member -MemberType NoteProperty -Name credential -Value 'replaceme'
-        $server | Add-Member -MemberType NoteProperty -Name username -Value 'lisa'
+        $server | Add-Member -MemberType NoteProperty -Name username -Value $TurnSrvUserName
         $iceServers+=$($server|ConvertTo-Json)+","
     }
 
@@ -270,7 +272,7 @@ function Add-CWNetworkMetrics{
 
 if($env:Environment -eq "LocalDev"){
    #dev environment settings
-   $environmentpath="C:\Users\Administrator\Documents\LogverzCore\build\"
+   $environmentpath="C:/Users/Administrator/Documents/LogverzCore/build/"
    $coturnconfigdestination="C:\Users\Administrator\Documents\LogverzCore\build\turnserver.conf";
    $instanceid="i-0fe135a4d9440ad04";
    $instanceType="t3.nano";
@@ -308,6 +310,7 @@ $cpucreditmetricqueryfilepath=$($environmentpath+"environment/cpucreditmetric-da
 $turntrafficmetricqueryfilepath=$($environmentpath+"environment/turntrafficmetric-data-queries.json");
 $coturnconfigpath=$($environmentpath+"coturnconfig/turnserver.conf");
 $ASGNamePath=$($environmentpath+"environment/ASGsList.setting");
+$TurnSrvUserPath=$($environmentpath+"environment/TurnSrvUserPath.setting");
 $ASGinstancesPath=$($environmentpath+"environment/AutoScalingGroupInstanceIds");
 $appconnectionstring=$($environmentpath+"webrtc.config");
 $endtime=Get-Date $(Get-date).ToUniversalTime() -Format "yyyy-MM-ddTHH:mm:ssZ";
@@ -323,6 +326,8 @@ if (!( test-path -Path $firstrunpath)) {
     $turnpassword= $($(invoke-expression "aws ssm get-parameter --name '/Logverz/Settings/TurnSrvPassword' --region $region") |ConvertFrom-Json).Parameter.Value #sudo ??
     $turnusername= $($(invoke-expression "aws ssm get-parameter --name '/Logverz/Settings/TurnSrvUserName' --region $region") |ConvertFrom-Json).Parameter.Value
     
+    $turnusername| Out-File -FilePath $TurnSrvUserPath
+
     Create-coturn-Config -turnpassword $turnpassword -turnusername $turnusername -hostname $publichostname -hostip $publichostipv4 -port $port -coturnconfigpath $coturnconfigpath -privateip $privateip;
 
     #set turn server config
@@ -376,7 +381,7 @@ if (!( test-path -Path $firstrunpath)) {
 
 #updateconnectionstring as needed.
 Update-ConnectionString -hostname $instanceid -region $region -bucket $webrtcbucket -appconnectionstring $appconnectionstring `
-  -ASGinstancesPath $ASGinstancesPath -AutoScalingGroupName $(Get-Content -path $ASGNamePath|ConvertFrom-Json).TurnServerASG
+  -ASGinstancesPath $ASGinstancesPath -AutoScalingGroupName $(Get-Content -path $ASGNamePath|ConvertFrom-Json).TurnServerASG -TurnSrvUserName $(Get-Content -path $TurnSrvUserPath)
 
 #put the network interface metrics into AWS CloudWatch Metrics and reset traffic counters. 
 Add-CWNetworkMetrics -region $region
