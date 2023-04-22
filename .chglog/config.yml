@@ -2,7 +2,7 @@ style: github
 template: CHANGELOG.tpl.md
 info:
   title: CHANGELOG
-  repository_url: https://github.com/facebook/docusaurus
+  repository_url: https://github.com/logleads/LogverzCore
 options:
   commits:
     # filters:
@@ -21,6 +21,7 @@ options:
       - refactor
       - build
       - chore
+      - polish
     title_maps:
       feat: ✨ Features
       fix: 🐛 Bug Fixes
@@ -29,6 +30,7 @@ options:
       update: 🔄 Updates
       build: 👷 Building scripts changes
       chore: 🧹 Other changes
+      polish: 💅 Style changes
       # other images https://gitmoji.dev/
   header:
     pattern: "^(\\w*)(?:\\(([\\w\\$\\.\\-\\*\\s]*)\\))?\\:\\s(.*)$"

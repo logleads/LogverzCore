@@ -14,8 +14,7 @@ const axios = require('axios')
 // Also Lambda was unable to configure your environment variables because the environment variables you have provided exceeded the 4KB limit.
 // Possible workarround of sharingmore paths, is lambda layers: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-lambda-layerversion.html
 
-// User,           Access key ID,      Secret access key,                       Password,
-// dummyuser,  AKIAQRAHZBKZE35UACDD, ltSseplsuXNJyWhEsvIMF+6THRcTFyERsxai612j, 1sXu-JHWrEyH
+// User,           Access key ID,      Secret access key,                       Password
 
 module.exports.handler = async function (event, context) {
   if (process.env.Environment !== 'LocalDev') {

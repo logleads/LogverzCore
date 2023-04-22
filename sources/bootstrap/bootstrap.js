@@ -1,6 +1,7 @@
 /* eslint-disable array-callback-return */
 /* eslint-disable no-redeclare */
 /* eslint-disable no-var */
+/* eslint brace-style: ["error", "stroustrup"] */
 const AWS = require('aws-sdk')
 // const fs = require('fs');
 const path = require('path')
@@ -40,6 +41,7 @@ module.exports.handler = async function (event, context) {
     params.PublicKeyVersion = '/Logverz/Logic/PublicKey:1'
     params.MaximumCacheTime = '20'
     params.EnableSocialIdenties = 'false'
+    params.LocalBundle = 'init.zip'
     environment.localpath = '/var/task/'
     // params.myKeyPair="";
     environment.BootStrapBucket = process.env.BootStrapBucket
@@ -47,7 +49,8 @@ module.exports.handler = async function (event, context) {
     var maskedevent = maskcredentials(JSON.parse(JSON.stringify(event)))
     console.log('THE EVENT: \n' + JSON.stringify(maskedevent) + '\n\n')
     console.log('context RECEIVED: ' + JSON.stringify(context))
-  } else {
+  }
+  else {
     // Dev environment settings
     const mydev = require(path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'bootstrap', 'mydev.js'))
     var region = mydev.region
@@ -81,6 +84,7 @@ module.exports.handler = async function (event, context) {
     params.EnableSocialIdenties = mydev.params.EnableSocialIdenties
     params.SourcesVersion = mydev.params.SourcesVersion
     params.Mode = event.ResourceProperties.Mode
+    params.LocalBundle = mydev.params.LocalBundle
     environment.BootStrapBucket = mydev.environment.BootStrapBucket
     environment.localpath = mydev.environment.localpath
     environment.CFNRole = mydev.environment.CFNRole
@@ -88,8 +92,8 @@ module.exports.handler = async function (event, context) {
 
   environment.templatename = 'Logverz.json'
   params.SourcesBucket = environment.BootStrapBucket
-  params.SourcesPath = 'init.zip'
-
+  params.ChildStackName= event.StackId.split("/")[1].replace("serverlessrepo-","")
+  
   AWS.config.update({
     region
   })
@@ -107,53 +111,34 @@ async function main (event, cloudformation, s3, params, region) {
   console.log('main')
 
   var initzipversion = 'init_v' + params.SourcesVersion + '.zip'
-  var remotepath = ''
+  params.SourcesPath=initzipversion
 
-  if (params.Mode === 'CreateUpdate' && event.RequestType === 'Create') {
-    // new stack creation
-    remotepath = initzipversion
-    await s3putdependencies(environment.localpath + environment.templatename, environment.BootStrapBucket, s3, environment.templatename)
-    await s3putdependencies(environment.localpath + 'init.zip', environment.BootStrapBucket, s3, initzipversion)
-    params.SourcesPath = remotepath
-  } else if (params.Mode === 'CreateUpdate' && event.RequestType === 'Update') {
-    // existing stack update
-    const cfnparams = {
-      // NextToken: 'STRING_VALUE'
-    }
-    remotepath = 'bin/' + initzipversion
-    var allexports = []
-    await cfnlistexports(cloudformation, cfnparams, allexports)
-    const initbucketname = allexports.filter(e => e.Name === 'InitBucket')[0].Value
-    await s3putdependencies(environment.localpath + environment.templatename, environment.BootStrapBucket, s3, environment.templatename)
-    await s3putdependencies(environment.localpath + 'init.zip', initbucketname, s3, remotepath)
-    params.SourcesPath = remotepath
-    // console.log(allexports)
-  }
-
+  //upload template and initv_x.y.z.zip to serverless bucket
+  await s3putdependencies(environment.localpath + environment.templatename, environment.BootStrapBucket, s3, environment.templatename)
+  await s3putdependencies(path.join(environment.localpath + params.LocalBundle), environment.BootStrapBucket, s3, params.SourcesPath)
+  
   const cfnresult = await cfnoperation(event, cloudformation, s3, params, environment, region)
   return cfnresult
 }
 
 async function cfnoperation (event, cloudformation, s3, params, environment, region) {
+
   const stackparameters = []
-  // var resolveparameters=event.ResourceProperties.ResolveParameters;
 
   if (params.Mode === 'StackDelete' && event.RequestType === 'Create') {
     console.log('Inital service call to create the SendDeleteSignal Custom::LambdaFunction')
-  } else if (params.Mode === 'StackDelete' && event.RequestType === 'Delete') {
+  }
+  else if (params.Mode === 'StackDelete' && event.RequestType === 'Delete') {
     console.log('Starting delete')
     const result = await emptybucket(s3, params.SourcesBucket)
     console.log('Finished all delete')
     return result
-  } else if (event.RequestType === 'Create') {
-    console.log('\n\n')
-    // console.log(JSON.stringify(environment))
+  }
+  else if (event.RequestType === 'Create') {
 
     Object.keys(params).map(p => {
-      if (p !== 'Mode' && p !== 'SourcesVersion') {
+      if (p !== 'Mode' && p !== 'SourcesVersion' && p!='LocalBundle' && p!="ChildStackName") {
         const parametervalue = convertparamtostring(params, p)
-        // console.log(p)
-        // console.log(parametervalue)
         const value = {
           ParameterKey: p,
           ParameterValue: parametervalue
@@ -163,7 +148,7 @@ async function cfnoperation (event, cloudformation, s3, params, environment, reg
     })
 
     var cfnparams = {
-      StackName: 'Logverz',
+      StackName: params.ChildStackName,
       Capabilities: [
         'CAPABILITY_NAMED_IAM',
         'CAPABILITY_AUTO_EXPAND'
@@ -177,14 +162,15 @@ async function cfnoperation (event, cloudformation, s3, params, environment, reg
       TimeoutInMinutes: '20'
     }
     console.log('The CFN params:\n')
-    // TODO use commonshared.masktoken function here
-    // console.log(JSON.stringify(cfnparams))
+    console.log(JSON.stringify(maskcredentials (cfnparams)))
     return await cfncreate(cloudformation, cfnparams)
-  } else if (event.RequestType === 'Update') {
+  }
+  else if (event.RequestType === 'Update') {
+
     Object.keys(params).map(p => {
-      if (p === 'Mode') {
-        // skipping Mode
-      } else {
+
+      if (p !== 'Mode' && p !== 'SourcesVersion' && p!='LocalBundle' && p!="ChildStackName") {
+
         const parametervalue = convertparamtostring(params, p)
         const value = {
           ParameterKey: p,
@@ -195,7 +181,7 @@ async function cfnoperation (event, cloudformation, s3, params, environment, reg
     })
 
     var cfnparams = {
-      StackName: 'LogverzSAR',
+      StackName: params.ChildStackName,
       Capabilities: [
         'CAPABILITY_NAMED_IAM',
         'CAPABILITY_AUTO_EXPAND'
@@ -206,24 +192,27 @@ async function cfnoperation (event, cloudformation, s3, params, environment, reg
       TemplateURL: 'https://' + environment.BootStrapBucket + '.s3.' + region + '.amazonaws.com/' + environment.templatename
     }
     return await cfnupdate(cloudformation, cfnparams)
-  } else {
+  }
+  else {
     console.log('Some other operation.')
   }
 }
 
-async function cfnlistexports (cloudformation, cfnparams, allexports = []) {
-  const response = await cloudformation.listExports(cfnparams).promise()
-  response.Exports.forEach(obj => allexports.push({
-    Name: obj.Name,
-    Value: obj.Value
-  }))
+// async function cfnlistexports (cloudformation, cfnparams, allexports = []) {
 
-  if (response.NextToken) {
-    cfnparams.NextToken = response.NextToken
-    await cfnlistexports(cloudformation, cfnparams, allexports) // RECURSIVE CALL
-  }
-  return allexports
-}
+//   const response = await cloudformation.listExports(cfnparams).promise()
+//   response.Exports.forEach(obj => allexports.push({
+//     Name: obj.Name,
+//     Value: obj.Value
+//   }))
+
+//   if (response.NextToken) {
+//     cfnparams.NextToken = response.NextToken
+//     await cfnlistexports(cloudformation, cfnparams, allexports) // RECURSIVE CALL
+//   }
+
+//   return allexports
+// }
 
 async function cfncreate (cloudformation, cfnparams) {
   const promisedcfnresult = new Promise((resolve, reject) => {
@@ -231,7 +220,8 @@ async function cfncreate (cloudformation, cfnparams) {
       if (err) {
         console.error(JSON.stringify(err, null, 2))
         reject(err)
-      } else {
+      }
+      else {
         // console.log("Query succeeded.");
         resolve(data)
       }
@@ -242,12 +232,14 @@ async function cfncreate (cloudformation, cfnparams) {
 }
 
 async function cfnupdate (cloudformation, cfnparams) {
+
   const promisedcfnresult = new Promise((resolve, reject) => {
     cloudformation.updateStack(cfnparams, function (err, data) {
       if (err) {
         console.error(JSON.stringify(err, null, 2))
         reject(err)
-      } else {
+      }
+      else {
         // console.log("Query succeeded.");
         resolve(data)
       }
@@ -285,7 +277,8 @@ async function s3putdependencies (FileNameandPath, Bucket, s3, FileName) {
       if (err) {
         console.error(err)
         reject(err)
-      } else {
+      }
+      else {
         console.log('Successfully put dependency ' + FileName + ' to: ' + Bucket + ' bucket.')
         resolve(data)
       }
@@ -330,6 +323,7 @@ async function emptybucket (s3, bucket) {
 }
 
 async function getallversions (s3, params, allversions = []) {
+
   const response = await s3.listObjectVersions(params).promise()
   response.Versions.forEach(obj => allversions.push([params.Bucket, obj.Key, obj.VersionId]))
 
@@ -406,6 +400,7 @@ function convertparamtostring (params, p) {
 }
 
 function maskcredentials (mevent) {
+
   if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.TokenSigningPassphrase !== undefined) {
     mevent.ResourceProperties.TokenSigningPassphrase = '****'
     mevent.OldResourceProperties.TokenSigningPassphrase = '****'
