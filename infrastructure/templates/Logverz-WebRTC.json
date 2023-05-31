@@ -322,6 +322,14 @@
 						}
 					}
 				},
+				"LifecycleHookSpecificationList" : [
+					{
+						"DefaultResult" : "CONTINUE",
+						"HeartbeatTimeout" : 150,
+						"LifecycleHookName" : "startupdelay",
+						"LifecycleTransition" : "autoscaling:EC2_INSTANCE_LAUNCHING"
+					  }
+				],
 				"NewInstancesProtectedFromScaleIn":"true",
 				"VPCZoneIdentifier" :{ "Fn::Split": [",", { "Ref" : "PrivateSubnet" }]},
 				"Tags": [{
@@ -392,6 +400,14 @@
 						}]
 					}
 				},
+				"LifecycleHookSpecificationList" : [
+					{
+						"DefaultResult" : "CONTINUE",
+						"HeartbeatTimeout" : 150,
+						"LifecycleHookName" : "startupdelay",
+						"LifecycleTransition" : "autoscaling:EC2_INSTANCE_LAUNCHING"
+					  }
+				],
 				"NewInstancesProtectedFromScaleIn":"true",
 				"VPCZoneIdentifier" :{ "Fn::Split": [",", { "Ref" : "PrivateSubnet" }]},
 				"Tags": [{

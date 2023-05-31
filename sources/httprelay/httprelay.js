@@ -235,7 +235,7 @@ async function S3Process (event, commonshared, ProvidedBucket) {
     } else {
       var requestbucket = ((event.path.split('/')[3]).toLowerCase())
     }
-  } else if (event.path.match('^/V3.*') != null) {
+  } else if (event.path.match('^/V3.*') !== null) {
     // in case its called by the apiGW custom domain name it needs to contain the /V3 path
     var requestedfile = decodeURIComponent(event.path.split('/').slice(5).join().replace(/,/g, '/'))
     if (ProvidedBucket !== '') {
