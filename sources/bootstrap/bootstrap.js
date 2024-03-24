@@ -161,8 +161,8 @@ async function cfnoperation (event, cloudformation, s3, params, environment, reg
       TemplateURL: 'https://' + environment.BootStrapBucket + '.s3.' + region + '.amazonaws.com/' + environment.templatename,
       TimeoutInMinutes: '20'
     }
-    console.log('The CFN params:\n')
-    console.log(JSON.stringify(maskcredentials (cfnparams)))
+    var maskedcfn = maskcredentials(JSON.parse(JSON.stringify(cfnparams)))
+    console.log('THE  CFN params: \n' + JSON.stringify(maskedcfn) + '\n\n')
     return await cfncreate(cloudformation, cfnparams)
   }
   else if (event.RequestType === 'Update') {
@@ -404,7 +404,11 @@ function maskcredentials (mevent) {
   if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.TokenSigningPassphrase !== undefined) {
     mevent.ResourceProperties.TokenSigningPassphrase = '****'
     mevent.OldResourceProperties.TokenSigningPassphrase = '****'
-  } else if (mevent.ResourceProperties.TokenSigningPassphrase !== undefined) {
+  } 
+  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "TokenSigningPassphrase")){
+      mevent.Parameters.filter(k=> k.ParameterKey === "TokenSigningPassphrase")[0].ParameterValue ='****'
+  }  
+  else if(mevent.ResourceProperties.TokenSigningPassphrase !== undefined) {
     // at first deployment time no OldResourceProperties exists
     mevent.ResourceProperties.TokenSigningPassphrase = '****'
   }
@@ -412,7 +416,11 @@ function maskcredentials (mevent) {
   if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.TurnSrvPassword !== undefined) {
     mevent.ResourceProperties.TurnSrvPassword = '****'
     mevent.OldResourceProperties.TurnSrvPassword = '****'
-  } else if (mevent.ResourceProperties.TurnSrvPassword !== undefined) {
+  } 
+  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "TurnSrvPassword")){
+    mevent.Parameters.filter(k=> k.ParameterKey === "TurnSrvPassword")[0].ParameterValue ='****'
+  }  
+  else if (mevent.ResourceProperties.TurnSrvPassword !== undefined) {
     // at first deployment time no OldResourceProperties exists
     mevent.ResourceProperties.TurnSrvPassword = '****'
   }
@@ -420,7 +428,11 @@ function maskcredentials (mevent) {
   if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.WebRTCProxyKey !== undefined) {
     mevent.ResourceProperties.WebRTCProxyKey = '****'
     mevent.OldResourceProperties.WebRTCProxyKey = '****'
-  } else if (mevent.ResourceProperties.WebRTCProxyKey !== undefined) {
+  }
+  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "WebRTCProxyKey")){
+    mevent.Parameters.filter(k=> k.ParameterKey === "WebRTCProxyKey")[0].ParameterValue ='****'
+  }  
+  else if (mevent.ResourceProperties.WebRTCProxyKey !== undefined) {
     // at first deployment time no OldResourceProperties exists
     mevent.ResourceProperties.WebRTCProxyKey = '****'
   }
@@ -428,7 +440,11 @@ function maskcredentials (mevent) {
   if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.DBpassword !== undefined) {
     mevent.ResourceProperties.DBpassword = '****'
     mevent.OldResourceProperties.DBpassword = '****'
-  } else if (mevent.ResourceProperties.DBpassword !== undefined) {
+  }
+  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "DBUserPasswd")){
+    mevent.Parameters.filter(k=> k.ParameterKey === "DBUserPasswd")[0].ParameterValue ='****'
+  }  
+  else if (mevent.ResourceProperties.DBpassword !== undefined) {
     // at first deployment time no OldResourceProperties exists
     mevent.ResourceProperties.DBpassword = '****'
   }
