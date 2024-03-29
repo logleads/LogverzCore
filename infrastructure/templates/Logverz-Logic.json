@@ -2024,9 +2024,9 @@
 				"Role": {
 					"Fn::GetAtt": ["LogverzInfoRole", "Arn"]
 				},
-				"Runtime": "nodejs16.x",
+				"Runtime": "nodejs18.x",
 				"Timeout": "30",
-				"MemorySize":"384"
+				"MemorySize":"512"
 			}
 		},
 		"LogverzHTTPRelayFunction": {
@@ -2067,7 +2067,7 @@
 				"Role": {
 					"Fn::GetAtt": ["LogverzHTTPRelayRole", "Arn"]
 				},
-				"Runtime": "nodejs16.x",
+				"Runtime": "nodejs18.x",
 				"Timeout": "10",
 				"MemorySize":"512",
 				"VpcConfig": {
@@ -2575,7 +2575,7 @@
 					"Fn::GetAtt": ["LogverzIdentitySyncRole", "Arn"]
 				},
 				"ReservedConcurrentExecutions":"1",
-				"Runtime": "nodejs16.x",
+				"Runtime": "nodejs18.x",
 				"Timeout": "60",
 				"MemorySize":"512"
 			}
