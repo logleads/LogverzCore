@@ -176,6 +176,11 @@ async function main (event, commonshared, authenticationshared, _, userattribute
           while (((subfolderlist.length + tobeprocessed.length) !== 0) && (tobeprocessed.length !== 0))
 
           var result = JSON.stringify(TransformOutputValues(parameters.Path, subfolderlist))
+          if (result ==="{}"){
+            //the function did not have permission to list folders eg (bucket policies) it results in empty list and currently frontend datacollection s3 tree listing fails with an empty list. 
+            result="{\""+parameters.Path.replace('s3://',"")+"\":{"+"\"\": \"/\"}}"
+            
+          }
         } else {
           var result = apicalltranslator(apicall)
         }
@@ -284,7 +289,10 @@ const getCommonPrefixes = async (dynamodb, commonshared, s3, params, allKeys = [
         console.error('Error with input parameters:\n', JSON.stringify(params), JSON.stringify(err, null, 2))
         resolve({
           Result: 'Fail',
-          Data: err
+          Data: {
+                "error":err,
+                "input":params
+                }
         })
       } else {
         resolve({
@@ -298,7 +306,7 @@ const getCommonPrefixes = async (dynamodb, commonshared, s3, params, allKeys = [
   if (response.Result !== 'PASS') {
     var details = {
       source: 'info.js:getCommonPrefixes',
-      message: JSON.stringify(response.Data)
+      message: JSON.stringify(response.Data.error.message) +"   " +JSON.stringify(response.Data.input)  
     }
     await commonshared.AddDDBEntry(dynamodb, 'Logverz-Invocations', 'S3List', 'Error', 'Infra', details, 'API')
   } else {
