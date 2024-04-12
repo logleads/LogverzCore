@@ -638,37 +638,6 @@ const average = (nums) => {
   }
 }
 
-// const updatelambdaenvironmentvariables = async (lambda, functionname, data) => {
-//   var configparams = {
-//     FunctionName: functionname
-//   }
-
-//   var configpromise = new Promise((resolve, reject) => {
-//     lambda.getFunctionConfiguration(configparams, function (err, data) {
-//       if (err) reject(err) // console.log(err, err.stack); // an error occurred
-//       else resolve(data) // console.log(data);           // successful response
-//     })
-//   })
-//   var lambdaconfig = await configpromise
-//   var environmentvariables = lambdaconfig.Environment.Variables
-//   environmentvariables[data.AttributeName] = data.AttributeValue
-
-//   var updateparams = {
-//     FunctionName: functionname,
-//     Environment: {
-//       Variables: environmentvariables
-//     }
-//   }
-//   var updatepromise = new Promise((resolve, reject) => {
-//     lambda.updateFunctionConfiguration(updateparams, function (err, data) {
-//       if (err) reject(err) // console.log(err, err.stack); // an error occurred
-//       else resolve(data) // console.log(data);           // successful response
-//     })
-//   })
-//   var updateresult = await updatepromise
-//   console.log(updateresult)
-// }
-
 const getbuildstatus = async (codebuild, buildid) => {
   var params = {
     ids: buildid
@@ -872,7 +841,6 @@ exports.GetRDSInstancesMetrics = GetRDSInstancesMetrics
 exports.GetCWmetrics = GetCWmetrics
 exports.CreatePeriod = CreatePeriod
 exports.average = average
-//exports.updatelambdaenvironmentvariables = updatelambdaenvironmentvariables
 exports.getbuildstatus = getbuildstatus
 exports.walkfolders = walkfolders
 exports.TransformInputValues = TransformInputValues

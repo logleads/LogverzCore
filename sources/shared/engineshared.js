@@ -181,8 +181,44 @@ const SelectSQLTable = async (sequelize, Model, SelectedModel, QueryType, DBTabl
   // Todo: add here "raw" mode for regular sql queries
 }
 
-const InitiateSQLConnection = async (sequelize) => {
-  var result = sequelize.authenticate()
+const InitiateSQLConnection = async (sequelize, DBEngineType, connectionstring, DBName) => {
+
+  if (DBEngineType === 'mssql') {
+    // by default mssql does not have a Logverz database, so at first execution it needs to be created.
+
+    sequelize.options.validateBulkLoadParameters = true
+    sequelize.options.loginTimeout = 15
+
+    try {
+      await sequelize.authenticate()
+    } catch (err) {
+      if (err.name === 'SequelizeAccessDeniedError') {
+        await sequelize.close()
+        // At first execution Logverz DB is not present need to connect to a different db to verify credentials
+        // than create  Logverz DB and if successfull return authenticated true.
+        var sequelize = new Sequelize(connectionstring)
+        sequelize.connectionManager.config.database = 'master'
+        sequelize.options.logging = false
+
+        // trying to authenticate a 2nd time either works (case of 1st execution) or errors (wrong credential).
+        // This error is caught in the main try catch
+        await sequelize.authenticate()
+
+        // connection succeeded creating mssql database
+        await sequelize.query('CREATE DATABASE ' + DBName)
+        await sequelize.close()
+        // connectioning to newly created DB
+        var sequelize = new Sequelize(connectionstring)
+        var result = await sequelize.authenticate()
+      } else {
+        console.log(err)
+      }
+    }
+  } else {
+    // non mssql DB
+    var result = await sequelize.authenticate()
+  }
+
   return result
 }
 
@@ -246,6 +282,30 @@ const DBpropertylookup = (connectionstringsarray, LogverzDBFriendlyName) => {
   return result
 }
 
+const ConfigureSequalize= (DBEngineType)=>{
+  
+  var sequaliseconfig = {
+    pool: {
+      max: 10,
+      min: 0,
+      idle: 5000,
+      acquire: 120000
+    },
+    dialectOptions: {
+    }
+  }
+
+  if (DBEngineType ==='postgres'){
+    sequaliseconfig.dialectOptions= {
+      ssl: {
+        require: true,
+        rejectUnauthorized: false
+      }
+    }
+  }
+  return sequaliseconfig
+}
+
 exports.constructmodel = constructmodel
 exports.AddSqlEntry = AddSqlEntry
 exports.UpdateSqlEntry = UpdateSqlEntry
@@ -256,6 +316,7 @@ exports.DBpropertylookup = DBpropertylookup
 exports.InvocationsModel = InvocationsModel
 exports.ProcessingErrorsModel = ProcessingErrorsModel
 exports.convertschema = convertschema
+exports.ConfigureSequalize=ConfigureSequalize
 
 // syntax info:
 // https://stackoverflow.com/questions/16631064/declare-multiple-module-exports-in-node-js

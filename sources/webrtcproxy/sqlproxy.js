@@ -58,11 +58,14 @@ const query = async (clientrequest, Registry, commonshared, engineshared) => {
     var Mode = clientrequest.Mode // "findAll";
 
     const DBName = 'Logverz'
-    const sequelize = new Sequelize(`${dbp.DBEngineType}://${dbp.DBUserName}:${DBPassword}@${dbp.DBEndpointName}:${dbp.DBEndpointPort}/${DBName}`)
+    dbp.DBEngineType = (dbp.DBEngineType.match('sqlserver-') ? 'mssql' : dbp.DBEngineType)
+    const connectionstring = `${dbp.DBEngineType}://${dbp.DBUserName}:${DBPassword}@${dbp.DBEndpointName}:${dbp.DBEndpointPort}/${DBName}`
+    const sequaliseconfig =engineshared.ConfigureSequalize(dbp.DBEngineType)
+    const sequelize = new Sequelize(connectionstring, sequaliseconfig)
     sequelize.options.logging = false // Disable logging
-
+  
     try {
-      await engineshared.InitiateSQLConnection(sequelize)
+      await engineshared.InitiateSQLConnection(sequelize, dbp.DBEngineType, connectionstring, DBName)
       console.log('Connection has been established successfully.')
     } catch (e) {
       var message = 'Error establishing SQL connection. Further details: \n'

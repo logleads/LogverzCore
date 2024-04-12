@@ -47,7 +47,7 @@
 					"Environment": {
 						"Type": "LINUX_CONTAINER",
 						"ComputeType": "BUILD_GENERAL1_SMALL",
-						"Image": "aws/codebuild/standard:6.0",
+						"Image": "aws/codebuild/standard:7.0",
 						"EnvironmentVariables": [
 							{
 							  "Name": "MaximumCacheTime",
@@ -675,7 +675,7 @@
 				"Role": {
 					"Fn::GetAtt": ["LogverzWorkerRole", "Arn"]
 				},
-				"Runtime": "nodejs16.x",
+				"Runtime": "nodejs18.x",
 				"Timeout": "300",
 				"MemorySize":"1536",
 				"VpcConfig": {

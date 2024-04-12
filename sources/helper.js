@@ -9,8 +9,8 @@
 // const helper = require("./login/login");
 // const helper = require("./transform/transform");
 // const helper = require("./nosql/nosql");
-// const helper = require("./httprelay/httprelay");
+ const helper = require("./httprelay/httprelay");
 // const helper = require("./info/info");
 // const helper = require('./bootstrap/bootstrap')
- const helper = require("./scale/scale");
+// const helper = require("./scale/scale");
 helper.handler()

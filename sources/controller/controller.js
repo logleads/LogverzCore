@@ -150,9 +150,8 @@ async function main (ec2, s3, sqs, SSM, dynamodb, servicequotas, cloudwatch, Seq
 
   const z0 = performance.now()
   console.log('1.) Starting execution')
-  const DBName = 'Logverz'
-  const Model = Sequelize.Model
 
+  const Model = Sequelize.Model
   const DBAvalue = DatabaseParameters.split('<!!>')
   let DBEngineType = DBAvalue.filter(s => s.includes('LogverzEngineType'))[0].split('=')[1]
   const DBUserName = DBAvalue.filter(s => s.includes('LogverzDBUserName'))[0].split('=')[1]
@@ -171,20 +170,6 @@ async function main (ec2, s3, sqs, SSM, dynamodb, servicequotas, cloudwatch, Seq
     Name: DBSecretRef,
     WithDecryption: true
   }, dynamodb, details)
-
-  DBPassword = DBPassword.Parameter.Value
-  DBEngineType = (DBEngineType.match('sqlserver-') ? 'mssql' : DBEngineType)
-  Schema = engineshared.convertschema(Schema, DBEngineType)
-  await fsPromises.writeFile(SelectedModelPath, engineshared.constructmodel(Schema, 'controller'))
-  const connectionstring = `${DBEngineType}://${DBUserName}:${DBPassword}@${DBEndpointName}:${DBEndpointPort}/${DBName}`
-  const sequaliseconfig = {
-    pool: {
-      max: 10,
-      min: 0,
-      idle: 5000,
-      acquire: 120000
-    }
-  }
 
   // get who/what initated the codebuild run
   const buildstatus = await commonshared.getbuildstatus(codebuild, [cbbuildid])
@@ -224,11 +209,18 @@ async function main (ec2, s3, sqs, SSM, dynamodb, servicequotas, cloudwatch, Seq
     Schema = ''
   }
 
+  DBPassword = DBPassword.Parameter.Value
+  DBEngineType = (DBEngineType.match('sqlserver-') ? 'mssql' : DBEngineType)
+  Schema = engineshared.convertschema(Schema, DBEngineType)
+  await fsPromises.writeFile(SelectedModelPath, engineshared.constructmodel(Schema, 'controller'))
+  const DBName = 'Logverz'
+  const connectionstring = `${DBEngineType}://${DBUserName}:${DBPassword}@${DBEndpointName}:${DBEndpointPort}/${DBName}`
+  const sequaliseconfig =engineshared.ConfigureSequalize(DBEngineType)
   const sequelize = new Sequelize(connectionstring, sequaliseconfig)
   sequelize.options.logging = false // Disable logging
 
   try {
-    await InitiateSQLConnection(sequelize, DBEngineType, connectionstring, DBName)
+    await engineshared.InitiateSQLConnection(sequelize, DBEngineType, connectionstring, DBName)
     console.log('Connection has been established successfully.\n')
   } catch (e) {
     const message = 'Error establishing SQL connection. Further details: \n'
@@ -631,46 +623,6 @@ async function CreateSQLTable (sequelize, Model, SelectedModel, QueryType, DBTab
       reject(err)
     })
   })
-}
-
-async function InitiateSQLConnection (sequelize, DBEngineType, connectionstring, DBName) {
-  if (DBEngineType === 'mssql') {
-    // by default mssql does not have a Logverz database, so at first execution it needs to be created.
-
-    sequelize.options.validateBulkLoadParameters = true
-    sequelize.options.loginTimeout = 15
-
-    try {
-      await sequelize.authenticate()
-    } catch (err) {
-      if (err.name === 'SequelizeAccessDeniedError') {
-        await sequelize.close()
-        // At first execution Logverz DB is not present need to connect to a different db to verify credentials
-        // than create  Logverz DB and if successfull return authenticated true.
-        var sequelize = new Sequelize(connectionstring)
-        sequelize.connectionManager.config.database = 'master'
-        sequelize.options.logging = false
-
-        // trying to authenticate a 2nd time either works (case of 1st execution) or errors (wrong credential).
-        // This error is caught in the main try catch
-        await sequelize.authenticate()
-
-        // connection succeeded creating mssql database
-        await sequelize.query('CREATE DATABASE ' + DBName)
-        await sequelize.close()
-        // connectioning to newly created DB
-        var sequelize = new Sequelize(connectionstring)
-        var result = await sequelize.authenticate()
-      } else {
-        console.log(err)
-      }
-    }
-  } else {
-    // non mssql DB
-    var result = await sequelize.authenticate()
-  }
-
-  return result
 }
 
 async function populatesqs (sqs, sqslimiter, allKeys, QueueURL) {

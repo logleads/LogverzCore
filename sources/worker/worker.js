@@ -408,7 +408,27 @@ async function InitiateConnection (DBEngineType, connectionstring) { // sequeliz
       }
     }
     var sequelize = new Sequelize(connectionstring, config)
-  } else {
+  } 
+  else if(DBEngineType === 'postgres'){
+    var config = {
+      dialectOptions: {
+        ssl: {
+          require: true,
+          rejectUnauthorized: false
+        }
+      },
+      pool: {
+        max: 1,
+        min: 0,
+        idle: 5000,
+        acquire: 30000
+      }
+    }
+    var sequelize = new Sequelize(connectionstring, config)
+    sequelize.options.logging = false // Disable logging
+
+  }
+  else {
     var config = {
       pool: {
         max: 1,

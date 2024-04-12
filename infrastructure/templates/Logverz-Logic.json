@@ -79,9 +79,14 @@
 								"dynamodb:DescribeTimeToLive",
 								"ssm:DescribeParameters",
 								"ec2:DescribeRegions",
+								"ec2:DescribeInstances",
+								"ec2:DescribeAccountAttributes",
+								"ec2:DescribeLaunchTemplateVersions",
 								"s3:ListAllMyBuckets",
+								"cloudwatch:GetMetricData",
 								"autoscaling:DescribeAutoScalingGroups",
-								"autoscaling:DescribeInstanceRefreshes"
+								"autoscaling:DescribeInstanceRefreshes",
+								"autoscaling:DescribePolicies"
 							],
 							"Resource": "*"
 						},
@@ -218,6 +223,7 @@
 							"Action":[
 								"codebuild:BatchGetProjects",
 								"codebuild:ListBuildsForProject",
+								"codebuild:ListBuildBatchesForProject", 
 								"codebuild:BatchGetBuilds"
 							],
 							"Effect": "Allow",
@@ -314,7 +320,7 @@
 							"Resource": "*"
 						},
 						{
-							"Sid": "ViewComputeResources2",
+							"Sid": "ViewComputeBuildMetrics",
 							"Effect": "Allow",
 							"Action": [
 								"cloudwatch:DescribeAlarms"
@@ -2220,7 +2226,7 @@
 				"Role": {
 					"Fn::GetAtt": ["LogverzLoginRole", "Arn"]
 				},
-				"Runtime": "nodejs16.x",
+				"Runtime": "nodejs18.x",
 				"Timeout": "10",
 				"MemorySize":"256"
 			}

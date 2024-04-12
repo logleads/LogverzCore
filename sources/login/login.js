@@ -243,7 +243,7 @@ async function CognitoAuth (event, jwt, lambda, cognitoidentityserviceprovider, 
   if (params.UserPoolId === params.UserPoolPubKey) {
     // the JSON webkey has not been retrieved yet, downloading now
     // https://docs.aws.amazon.com/cognito/latest/developerguide/amazon-cognito-user-pools-using-tokens-verifying-a-jwt.html
-    params.UserPoolPubKey = await SaveUserPoolPubKey(commonshared, lambda, params)
+    params.UserPoolPubKey = await SaveUserPoolPubKey(lambda, params)
   }
 
   var details = {
@@ -347,7 +347,7 @@ async function SaveAppclientSecret (cognitoidentityserviceprovider, SSM, params)
   return client_secret
 }
 
-async function SaveUserPoolPubKey (commonshared, lambda, params) {
+async function SaveUserPoolPubKey (lambda, params) {
   var jwksurl = `https://cognito-idp.${params.region}.amazonaws.com/${params.UserPoolId}/.well-known/jwks.json`
   // params.UserPoolId.split('_')[0]
 
@@ -362,7 +362,7 @@ async function SaveUserPoolPubKey (commonshared, lambda, params) {
     AttributeValue: UserPoolPubKey
   }
 
-  await commonshared.updatelambdaenvironmentvariables(lambda, functionname, data)
+  await updatelambdaenvironmentvariables(lambda, functionname, data)
   return UserPoolPubKey
 }
 
@@ -739,6 +739,38 @@ function cognitosuccess (token, params, username, result) {
   `
   }
   return json
+}
+
+async function updatelambdaenvironmentvariables (lambda, functionname, data){
+ 
+  var configparams = {
+    FunctionName: functionname
+  }
+
+  var configpromise = new Promise((resolve, reject) => {
+    lambda.getFunctionConfiguration(configparams, function (err, data) {
+      if (err) reject(err) // console.log(err, err.stack); // an error occurred
+      else resolve(data) // console.log(data);           // successful response
+    })
+  })
+  var lambdaconfig = await configpromise
+  var environmentvariables = lambdaconfig.Environment.Variables
+  environmentvariables[data.AttributeName] = data.AttributeValue
+
+  var updateparams = {
+    FunctionName: functionname,
+    Environment: {
+      Variables: environmentvariables
+    }
+  }
+  var updatepromise = new Promise((resolve, reject) => {
+    lambda.updateFunctionConfiguration(updateparams, function (err, data) {
+      if (err) reject(err) // console.log(err, err.stack); // an error occurred
+      else resolve(data) // console.log(data);           // successful response
+    })
+  })
+  var updateresult = await updatepromise
+  console.log(updateresult)
 }
 
 var errorresponse = {
