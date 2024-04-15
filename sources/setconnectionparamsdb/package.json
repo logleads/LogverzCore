@@ -13,10 +13,10 @@
   "author": "platformlead",
   "license": "LogLeads License 1.0",
   "dependencies": {
-    "aws-sdk": "^2.726.0",
-    "axios": "^1.2.2",
+    "aws-sdk": "^2.1599.0",
+    "axios": "^1.6.8",
     "cfn-response": "^1.0.1",
-    "generate-password": "^1.5.1",
-    "lodash": "^4.17.19"
+    "generate-password": "^1.7.1",
+    "lodash": "^4.17.21"
   }
 }

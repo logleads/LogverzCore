@@ -613,7 +613,7 @@
 				"Role": {
 					"Fn::GetAtt": ["WebRTCSignalRole", "Arn"]
 				},
-				"Runtime": "nodejs16.x",
+				"Runtime": "nodejs18.x",
 				"Timeout": "300",
 				"MemorySize":"256",
 				"VpcConfig": {

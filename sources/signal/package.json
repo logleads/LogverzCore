@@ -13,11 +13,11 @@
   "author": "platformlead",
   "license": "LogLeads License 1.0",
   "dependencies": {
-    "aws-sdk": "^2.969.0",
-    "axios": "^0.21.1",
-    "crypto-js": "^4.1.1",
-    "jsonwebtoken": "^9.0.0",
+    "aws-sdk": "^2.1599.0",
+    "axios": "^1.6.8",
+    "crypto-js": "^4.2.0",
+    "jsonwebtoken": "^9.0.2",
     "lodash": "^4.17.21",
-    "qs": "^6.10.1"
+    "qs": "^6.12.1"
   }
 }

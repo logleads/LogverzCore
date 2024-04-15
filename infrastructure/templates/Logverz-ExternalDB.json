@@ -421,6 +421,7 @@
 	},
 	"Outputs": {
 		"LogverzDBClusterID": {
+			"Condition" : "isServerless",
 			"Description": "The DBclusterID",
 			"Value":  {
 				"Fn::Select" : [6,

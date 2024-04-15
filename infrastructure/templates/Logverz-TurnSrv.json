@@ -121,6 +121,7 @@
 										"ssm:DescribeParameters",
 										"autoscaling:DescribeAutoScalingGroups",
 										"autoscaling:DescribeAutoScalingInstances",
+										"autoscaling:DescribeLifecycleHooks",
 										"ec2:DescribeInstances"
 									],
 									"Resource": "*"
@@ -491,7 +492,7 @@
 				"Role": {
 					"Fn::GetAtt": ["SetConnectionParamsDNSRole", "Arn"]
 				},
-				"Runtime": "nodejs16.x",
+				"Runtime": "nodejs18.x",
 				"MemorySize":"192",
 				"Timeout": "10"
 			}

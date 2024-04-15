@@ -209,6 +209,11 @@ function Create-ConnectionString{
    )
 
     $instancenames=$(invoke-expression "aws ec2 describe-instances --instance-ids $instanceids --region $region"|ConvertFrom-Json).Reservations.Instances.PublicDnsName
+    
+    if ($instancenames -eq "") {
+      write-host "`n`nERROR the VPC does not have Enable DNS hostnames enabled, this does not enable Turnserver DNS lookup for connectivity. In your VPC console select Actions => Edit DNS Hostnames ---> Change DNS hostnames: to YES"   
+    }
+
     $iceServers=""
     #TODO change order of servers based on performance data:
     # if overal usage is low put it in the second lowest used server.
@@ -310,6 +315,7 @@ $cpucreditmetricqueryfilepath=$($environmentpath+"environment/cpucreditmetric-da
 $turntrafficmetricqueryfilepath=$($environmentpath+"environment/turntrafficmetric-data-queries.json");
 $coturnconfigpath=$($environmentpath+"coturnconfig/turnserver.conf");
 $ASGNamePath=$($environmentpath+"environment/ASGsList.setting");
+$ASGLifecyclePath=$($environmentpath+"environment/ASGlifecycleconfig.setting");
 $TurnSrvUserPath=$($environmentpath+"environment/TurnSrvUserPath.setting");
 $ASGinstancesPath=$($environmentpath+"environment/AutoScalingGroupInstanceIds");
 $appconnectionstring=$($environmentpath+"webrtc.config");
@@ -344,7 +350,9 @@ if (!( test-path -Path $firstrunpath)) {
     #Create ASGsList.setting local file.
     $ASGsList= $($(invoke-expression "aws ssm get-parameter --name '/Logverz/Engine/AutoScalingGroupList'  --region $region") |ConvertFrom-Json).Parameter.Value
     New-Item -Path $ASGNamePath -Value $ASGsList -Force
-    
+
+    $ASGlifecycleconfig=$(invoke-expression "aws autoscaling  describe-lifecycle-hooks --auto-scaling-group-name $($($ASGsList |ConvertFrom-Json).TurnServerASG) --region $region")
+    New-Item -Path $ASGLifecyclePath -Value $ASGlifecycleconfig -Force
 
     #create query file to retrieve "AWS/EC2:CPUCreditBalance" CW metric and Logverz/TurnServer Network traffic counters.
     Create-metricdataquery-Config -cpucreditmetricqueryfilepath $cpucreditmetricqueryfilepath -turntrafficmetricqueryfilepath $turntrafficmetricqueryfilepath `

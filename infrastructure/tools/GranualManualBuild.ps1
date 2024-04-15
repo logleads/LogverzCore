@@ -109,8 +109,8 @@ $buildrelativepath="sources/init"
 $buildfullpath="$projectpath/$buildrelativepath/build"
 $repobaseurl="https://logleads@dev.azure.com/logleads/LogverzPortal/_git/"
 
-build-webapp-source -builddirectory $buildfullpath -repo $($repobaseurl+"Portal") -appname "Portal" -branchname "dev" -OSType $OSType
-build-webapp-source -builddirectory $buildfullpath -repo $($repobaseurl+"PortalAccess") -appname "PortalAccess" -branchname "dev" -OSType $OSType
+build-webapp-source -builddirectory $buildfullpath -repo $($repobaseurl+"Portal") -appname "Portal" -branchname "internal" -OSType $OSType
+build-webapp-source -builddirectory $buildfullpath -repo $($repobaseurl+"PortalAccess") -appname "PortalAccess" -branchname "main" -OSType $OSType
 
 
 $extrafiles= get-extrafiles -filepath $($projectpath+"/infrastructure/tools/buildextrafiles.csv")

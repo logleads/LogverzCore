@@ -2637,7 +2637,7 @@
 				"Role": {
 					"Fn::GetAtt": ["LogverzNOSQLRole", "Arn"]
 				},
-				"Runtime": "nodejs16.x",
+				"Runtime": "nodejs18.x",
 				"Timeout": "5",
 				"MemorySize":"192"
 			}

@@ -1122,7 +1122,7 @@
 				"Role": {
 					"Fn::GetAtt": ["SetConnectionParamsDBRole", "Arn"]
 				},
-				"Runtime": "nodejs16.x",
+				"Runtime": "nodejs18.x",
 				"MemorySize":"320",
 				"Timeout": "60"
 			}
