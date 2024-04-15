@@ -1,15 +1,11 @@
 package main
 
-//go get -v github.com/pingcap/tidb/types/parser_driver@3a18f1e
-
 import (
 	"fmt"
-	"os"
-
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-
-	_ "github.com/pingcap/tidb/types/parser_driver"
+    "os"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	_ "github.com/pingcap/tidb/pkg/parser/test_driver"
 )
 
 func parse(sql string) (*ast.StmtNode, error) {

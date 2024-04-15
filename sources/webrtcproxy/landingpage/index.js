@@ -1,4 +1,3 @@
-  const axios = require('../node_modules/axios');
   var Peer = require('../node_modules/simple-peer');
   const qs = require('../node_modules/qs');
   var CryptoJS = require("crypto-js");
@@ -55,27 +54,31 @@
           console.log("The signal:")
           console.log(data2)
           if(data2.type=="offer"){
-            var answer= await axios({
-                headers: { 'content-type': 'application/x-www-form-urlencoded',
-                            Authorization: "Bearer "+document.cookie.split(";").filter(s=>s.includes('LogverzAuthToken'))[0].split("=")[1]
+
+              await fetch(host+urlpath, {
+                method: "POST", // *GET, POST, PUT, DELETE, etc.
+                credentials: "include", // include, *same-origin, omit
+                headers: {
+                  'content-Type': 'application/x-www-form-urlencoded',
+                  Authorization: "Bearer "+document.cookie.split(";").filter(s=>s.includes('LogverzAuthToken'))[0].split("=")[1],
+                  Accept: 'application/json, text/plain, */*'
+
                 },
-                method: 'POST',
-                port:443,
-                withCredentials: true,
-                url: host+urlpath,    // '/'
-                data:payload
+                body: payload // body data type must match "Content-Type" header
               })
-
-            //we need this if we directly communicate with the proxy server, 
-            //if its going through the api gateway its https so no need for encryption.
-            if (host.includes("http://")){
-            var bytes  = CryptoJS.AES.decrypt(answer.data,key);
-              answer.data = bytes.toString(CryptoJS.enc.Utf8);
-            }
-
-            document.getElementById('yourId').value =  JSON.stringify(data2);
-            document.getElementById('otherId').value =  JSON.stringify(answer.data);
-            peer.signal(answer.data)
+              .then((result) => result.text())
+              .then((data) => {                  
+                  //we need this if we directly communicate with the proxy server, 
+                  //if its going through the api gateway its https so no need for encryption.
+                  if (host.includes("http://")){
+                    var bytes  = CryptoJS.AES.decrypt(data,key);
+                        response= bytes.toString(CryptoJS.enc.Utf8);
+                  }
+        
+                  document.getElementById('yourId').value =  JSON.stringify(data2);
+                  document.getElementById('otherId').value =  JSON.stringify(response);
+                  peer.signal(response)
+                  })
           }
       })
 
@@ -139,7 +142,6 @@
   });
   //browserify index.js -o bundle.js
   //terser bundle.js >bundle.min.js
-  //TODO add package json with babel to transpile ES6 (import) to ES5 require. As Axios 1.0.0 uses import which needs to be transpiled down.  
-  // look at thread https://stackoverflow.com/questions/40029113/syntaxerror-import-and-export-may-appear-only-with-sourcetype-module-g
+  //rollup --config ./rollup.config.js --bundleConfigAsCjs
   global.END_OF_FILE_MESSAGE=END_OF_FILE_MESSAGE
   //global.config=config;

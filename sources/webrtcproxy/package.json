@@ -34,5 +34,11 @@
     "tedious": "^16.7.1",
     "uuid": "^9.0.1",
     "wrtc": "^0.4.7"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^25.0.7",
+    "@rollup/plugin-json": "^6.1.0",
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "rollup-plugin-polyfill-node": "^0.13.0"
   }
 }

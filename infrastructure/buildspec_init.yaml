@@ -1,11 +1,11 @@
 version: 0.2
 env:
   variables:
-    NODE_VERSION: "16.18.0"
+    NODE_VERSION: "18.20.2"
 phases:
   install:
     runtime-versions:
-      nodejs: 16
+      nodejs: 18
     commands:
       - echo Installing build dependencies...
       - curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add -
@@ -45,8 +45,8 @@ phases:
     commands:
        - echo "Installing Golang framework, adding dependencies"
        - cd $initialpath && pwd && ls -la && cd sources/webrtcproxy
-       - curl https://dl.google.com/go/go1.17.6.linux-amd64.tar.gz --output go1.17.6.linux-amd64.tar.gz
-       - rm -rf /usr/local/go && tar -C /usr/local -xzf go1.17.6.linux-amd64.tar.gz &&  rm -rf ./go1.17.6.linux-amd64.tar.gz
+       - curl https://dl.google.com/go/go1.21.9.linux-amd64.tar.gz --output go1.21.9.linux-amd64.tar.gz
+       - rm -rf /usr/local/go && tar -C /usr/local -xzf go1.21.9.linux-amd64.tar.gz &&  rm -rf ./go1.21.9.linux-amd64.tar.gz && export PATH=$PATH:/usr/local/go/bin
        - npm install -g browserify
        - echo "Building 'gotable' app for MySQL table validation."
        - /usr/local/go/bin/go mod tidy
