@@ -139,6 +139,12 @@ function Create-CloudWatchAgent-Config{
 						"log_group_name": "/Logverz/TurnService",
 						"log_stream_name": "{hostname}/turnserverlog",
 						"timestamp_format" :"%b %d %H:%M:%S"
+					},
+          {
+						"file_path": "/var/log/coturncontrol/errorlogs.log",
+						"log_group_name": "/Logverz/TurnServerErrors",
+						"log_stream_name": "{hostname}/turnservererrorlog",
+						"timestamp_format" :"%b %d %H:%M:%S"
 					}
                                 ]
                         }

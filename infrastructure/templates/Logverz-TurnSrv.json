@@ -74,7 +74,14 @@
 			"Type" : "AWS::Logs::LogGroup",
 			"Properties" : {
 				"LogGroupName" : "/Logverz/TurnService",
-				"RetentionInDays" : 14
+				"RetentionInDays" : 30
+			}
+		},
+		"LogverzTurnServerErrors":{
+			"Type" : "AWS::Logs::LogGroup",
+			"Properties" : {
+				"LogGroupName" : "/Logverz/TurnServerErrors",
+				"RetentionInDays" : 30
 			}
 		},
 		"LogverzTurnServerProfile":{
@@ -204,7 +211,7 @@
 									]
 								},
 								{
-									"Sid": "CloudWatchLogAgentPutForTurnServerLogGroup",
+									"Sid": "CloudWatchLogAgentPutForTurnServerLogGroups",
 									"Effect": "Allow",
 									"Action": [
 										"logs:CreateLogStream",
@@ -217,6 +224,12 @@
 										},
 										{
 											"Fn::Sub": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/Logverz/TurnService:*:*"
+										},
+										{
+											"Fn::Sub": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/Logverz/TurnServerErrors"
+										},
+										{
+											"Fn::Sub": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/Logverz/TurnServerErrors:*:*"
 										}
 									]
 								},
@@ -270,7 +283,7 @@
 					],
 					"UserData":{"Fn::Base64" :
 
-						{ "Fn::Sub": [ "#!/bin/bash\nmkdir /home/ubuntu/environment\nmkdir /home/ubuntu/coturnconfig\nwget -O /home/ubuntu/environment/identitydocument http://169.254.169.254:80/latest/dynamic/instance-identity/document\necho ${webrtcbucket} > /home/ubuntu/environment/webrtcbucket\n\necho $(date +%s) >/home/ubuntu/environment/serverstarttime\nsnap start amazon-ssm-agent\n\nsudo apt-get update\nsudo apt-get upgrade -y\nsudo add-apt-repository universe\nsudo apt-get install coturn awscli -y\nsudo systemctl stop coturn\n\n#Grabbing PS installer from local storage because of MS outage @18.06.21\npsversion=$(aws s3 ls ${bucketname}/bin/ |grep powershell|grep deb| head -n 1 | awk '{print $4}')\naws s3 cp s3://${bucketname}/bin/$psversion /home/ubuntu/bin/$psversion\nsudo dpkg -i /home/ubuntu/bin/$psversion\n\naws s3 cp s3://${bucketname}/bin/coturncontrol.zip /home/ubuntu/bin/coturncontrol.zip \nsudo pwsh -Command \"Expand-Archive -Path /home/ubuntu/bin/coturncontrol.zip -DestinationPath /home/ubuntu/coturnconfig &&Copy-Item /home/ubuntu/coturnconfig/coturncontrol.service,/home/ubuntu/coturnconfig/coturncontrol.timer -Destination /etc/systemd/system/\"\ntouch /var/log/turnserver.log\nchown turnserver:turnserver /var/log/turnserver.log\n\necho \"TURNSERVER_ENABLED=1\" >> /etc/default/coturn\nsystemctl restart coturn\nsystemctl start coturncontrol", { "bucketname": {"Ref" : "InitBucket" }, "webrtcbucket":{"Ref":"WebRTCBucket"}} ]}
+						{ "Fn::Sub": [ "#!/bin/bash\nmkdir /home/ubuntu/environment\nmkdir /var/log/coturncontrol\nmkdir /home/ubuntu/coturnconfig\nwget -O /home/ubuntu/environment/identitydocument http://169.254.169.254:80/latest/dynamic/instance-identity/document\necho ${webrtcbucket} > /home/ubuntu/environment/webrtcbucket\n\necho $(date +%s) >/home/ubuntu/environment/serverstarttime\nsnap start amazon-ssm-agent\n\nsudo apt-get update\nsudo apt-get upgrade -y\nsudo add-apt-repository universe\nsudo apt-get install coturn awscli -y\nsudo systemctl stop coturn\n\n#Grabbing PS installer from local storage because of MS outage @18.06.21\npsversion=$(aws s3 ls ${bucketname}/bin/ |grep powershell|grep deb| head -n 1 | awk '{print $4}')\naws s3 cp s3://${bucketname}/bin/$psversion /home/ubuntu/bin/$psversion\nsudo dpkg -i /home/ubuntu/bin/$psversion\n\naws s3 cp s3://${bucketname}/bin/coturncontrol.zip /home/ubuntu/bin/coturncontrol.zip \nsudo pwsh -Command \"Expand-Archive -Path /home/ubuntu/bin/coturncontrol.zip -DestinationPath /home/ubuntu/coturnconfig &&Copy-Item /home/ubuntu/coturnconfig/coturncontrol.service,/home/ubuntu/coturnconfig/coturncontrol.timer -Destination /etc/systemd/system/\"\ntouch /var/log/turnserver.log\nchown turnserver:turnserver /var/log/turnserver.log\n\necho \"TURNSERVER_ENABLED=1\" >> /etc/default/coturn\nsystemctl restart coturn\nsystemctl start coturncontrol", { "bucketname": {"Ref" : "InitBucket" }, "webrtcbucket":{"Ref":"WebRTCBucket"}} ]}
 					},
 					"TagSpecifications":[{
 						"ResourceType": "instance",

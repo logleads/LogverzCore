@@ -81,7 +81,7 @@
 				"AllocatedStorage": {
 					"Ref": "DBAllocatedStorage"
 				},
-				"StorageType": "gp2",
+				"StorageType": "gp3",
 				"DBInstanceClass": {
 					"Ref": "DBInstanceClass"
 				},

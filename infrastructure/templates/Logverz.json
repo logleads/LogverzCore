@@ -81,7 +81,7 @@
 		},
 		"DBAllocatedStorage": {
 			"Type": "Number",
-			"Default": "10",
+			"Default": "20",
 			"Description": "Number of Gigabytes the database partition has.You can't decrease disk space after its set, only increase it."
 		},
 		"DBInstanceClass": {
@@ -150,7 +150,7 @@
 		},
 		"WebRTCProxyASGConfig":{
 			"Description":"The minimum, desired and maximum number of instances",
-			"Default": "0,0,3",
+			"Default": "0,0,2",
 			"Type": "String"
 		},
 		"TurnSrvASGConfig":{

@@ -8,7 +8,7 @@
 	"Parameters": {
 		"DBAllocatedStorage": {
 			"Type": "Number",
-			"Default": "10",
+			"Default": "20",
 			"Description": "Number of Gigabytes the database partition has.You can't decrease disk space after its set, only increase it."
 		},
 		"DBInstanceClass": {
@@ -101,7 +101,7 @@
 				"AllocatedStorage": {
 					"Ref": "DBAllocatedStorage"
 				},
-				"StorageType": "gp2",
+				"StorageType": "gp3",
 				"DBInstanceClass": {
 					"Ref": "DBInstanceClass"
 				},

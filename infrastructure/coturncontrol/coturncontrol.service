@@ -8,6 +8,8 @@ Wants=coturncontrol.timer
 [Service]
 ExecStart=/usr/bin/pwsh -F /home/ubuntu/coturnconfig/coturncontrol.ps1
 WorkingDirectory=/home/ubuntu/coturnconfig
+#StandardOutput=file:/var/log/coturncontrol/standardlogs.log
+StandardError=file:/var/log/coturncontrol/errorlogs.log
 User=ubuntu
 Group=ubuntu
 
