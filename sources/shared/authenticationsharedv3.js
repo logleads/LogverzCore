@@ -15,7 +15,7 @@ const allowdenyaction = (_, statements, userrequest) => {
       denystatments.push(denystatement)
     }
   })
-  //
+  
   const matchingdenyaction = getmatchingaction(_, denystatments, userrequest)
 
   if (matchingdenyaction.length !== 0) {
@@ -854,17 +854,10 @@ const setIAMresource = (apicall, parameters, region, accountnumber) => {
   return resource
 }
 
-exports.getidentityattributes = getidentityattributes
-exports.authorize = authorize
-exports.AssociateUserPolicies = AssociateUserPolicies
-exports.UptadeAssociatedUserPolicy = UptadeAssociatedUserPolicy
-exports.getuserstatements = getuserstatements // refactor httprelay to remove
-exports.allowdenyaction = allowdenyaction // refactor httprelay to remove
-exports.retriveIAMidentities = retriveIAMidentities
-exports.retrieveresourcepolicy = retrieveresourcepolicy
-exports.authorizeS3access = authorizeS3access
-exports.resourceaccessauthorization = resourceaccessauthorization
-exports.admincheck = admincheck
-exports.powerusercheck = powerusercheck
-exports.usercheck = usercheck
-exports.setIAMresource = setIAMresource
+export { 
+  getidentityattributes, authorize, AssociateUserPolicies, UptadeAssociatedUserPolicy, getuserstatements, allowdenyaction,
+  retriveIAMidentities, retrieveresourcepolicy, authorizeS3access, resourceaccessauthorization, admincheck, powerusercheck,
+  usercheck, setIAMresource
+}
+  // refactor httprelay to remove getuserstatements
+ // refactor httprelay to remove allowdenyaction

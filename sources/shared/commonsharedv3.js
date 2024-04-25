@@ -331,51 +331,39 @@ const apigatewayresponse = (input, headers, AllowedOrigins) => {
 }
 
 const newcfnresponse= async (event, context, responseStatus, responseData) => {
+  
+  var responseBody = JSON.stringify({
+    Status: responseStatus,
+    Reason: "See the details in CloudWatch Log Stream: " + context.logStreamName,
+    PhysicalResourceId: context.logStreamName,
+    StackId: event.StackId,
+    RequestId: event.RequestId,
+    LogicalResourceId: event.LogicalResourceId,
+    NoEcho: false,
+    Data: responseData
+  });
 
-  return new Promise((resolve, reject) => {
-      var responseBody = JSON.stringify({
-          Status: responseStatus,
-          Reason: "See the details in CloudWatch Log Stream: " + context.logStreamName,
-          PhysicalResourceId: context.logStreamName,
-          StackId: event.StackId,
-          RequestId: event.RequestId,
-          LogicalResourceId: event.LogicalResourceId,
-          NoEcho: false,
-          Data: responseData
-      });
+  console.log("Response body:\n", responseBody);
 
-      console.log("Response body:\n", responseBody);
-
-      var https = require("https");
-      var url = require("url");
-
-      var parsedUrl = url.parse(event.ResponseURL);
-      var options = {
-          hostname: parsedUrl.hostname,
-          port: 443,
-          path: parsedUrl.path,
-          method: "PUT",
-          headers: {
-              "content-type": "application/json",
-              "content-length": responseBody.length
-          }
-      };
-
-      var request = https.request(options, function(response) {
-          console.log("Status code: " + response.statusCode);
-          console.log("Status message: " + response.statusMessage);
-          resolve(context.done());
-      });
-
-      request.on("error", function(error) {
-          console.log("send(..) failed executing https.request(..): " + error);
-          reject(context.done(error));
-      });
-
-      request.write(responseBody);
-      request.end();
+  var response = await fetch(event.ResponseURL, {
+    headers: { 
+      "Content-Type": "application/json",
+      'Content-Length': responseBody.length
+   },
+    method: 'PUT',
+    body: responseBody
   })
 
+  try {  
+    const result = await response.text()
+    console.log("Result: \n\n"+result)
+    //return context.done()
+    return result
+  } catch (error) {
+    console.error('Error:', error);
+    //return context.done(error)
+    return error
+  }
 }
 
 const getquerystringparameter = (parameter) => {
@@ -480,6 +468,69 @@ const S3PUT = async (s3, destinationbucket, destinationkey, data) => {
   return data
 
   // s3.upload... in s3copytet.js
+}
+
+const s3putdependencies = async (LocalPath, DstBucket, s3client, PutObjectCommand, fs, fileURLToPath, FileName) =>{
+
+  var content = fs.readFileSync(fileURLToPath(LocalPath), 'utf-8')
+
+  const uploadParams = {
+    Bucket: DstBucket,
+    Key: FileName,
+    Body: content
+  }
+
+  const command = new PutObjectCommand(uploadParams)
+
+  try {
+    const s3result = await s3client.send(command)
+    console.log('Successfully put file ' + FileName + ' to: ' + DstBucket + ' bucket.')
+    return await s3result.ETag
+  }
+  catch (error) {
+      //console.error(error) // from creation or business logic
+      return await error
+  }
+  
+}
+
+const emptybucket= async  (s3client, ListObjectVersionsCommand, DeleteObjectCommand, bucket) =>{
+  const params = {
+    Bucket: bucket
+    //, MaxKeys: "10"
+  }
+  var allversions
+  await getallversions(s3client, ListObjectVersionsCommand, params, allversions = [])
+  console.log("In bucket '" + bucket + "' the total number of files are " + allversions.length)
+
+  const promises = allversions.map(onefile => {
+    const deleteParam = {
+      Bucket: onefile[0],
+      Key: onefile[1],
+      VersionId: onefile[2]
+    }
+
+    const command = new DeleteObjectCommand(deleteParam)
+    const response = s3client.send(command)
+    return response
+  })
+
+  const resolved = await Promise.all(promises)
+  console.log('finished emptying ' + bucket)
+  return resolved
+}
+
+const  getallversions = async (s3client, ListObjectVersionsCommand,  params, allversions = []) => {
+  const command = new ListObjectVersionsCommand(params)
+  const response = await s3client.send(command)
+  response.Versions.forEach(obj => allversions.push([params.Bucket, obj.Key, obj.VersionId]))
+
+  if (response.NextVersionIdMarker) {
+    params.VersionIdMarker = response.NextVersionIdMarker
+    params.KeyMarker = response.NextKeyMarker
+    await getallversions(s3client, params, allversions) // RECURSIVE CALL
+  }
+  return allversions
 }
 
 const GetAsgSettings = async (autoscaling, params) => {
@@ -638,20 +689,14 @@ const average = (nums) => {
   }
 }
 
-const getbuildstatus = async (codebuild, buildid) => {
+const getbuildstatus = async (cbclient, BatchGetBuildsCommand, buildid) => {
   var params = {
     ids: buildid
   }
-  return new Promise((resolve, reject) => {
-    codebuild.batchGetBuilds(params, function (err, data) {
-      if (err) {
-        console.log(err, err.stack)
-        reject(err)
-      } // an error occurred
-      // else     console.log(data);           // successful response
-      resolve(data)
-    })
-  })
+
+  const command = new BatchGetBuildsCommand(params);
+  const buildresult = await cbclient.send(command);
+  return buildresult
 }
 
 const walkfolders = async (_, s3, dynamodb, commonshared, tobeprocessed, subfolderlist, getCommonPrefixes) => {
@@ -813,38 +858,64 @@ const masktoken = (maskedevent) => {
   return maskedevent
 }
 
-exports.getssmparameter = getssmparameter
-exports.setssmparameter = setssmparameter
-exports.receiveSQSMessage = receiveSQSMessage
-exports.makeid = makeid
-exports.timeConverter = timeConverter
-exports.AddDDBEntry = AddDDBEntry
-exports.deleteDDB = deleteDDB
-exports.putDDB = putDDB
-exports.putJSONDDB = putJSONDDB
-exports.queryDDB = queryDDB
-exports.UpdateDDB = UpdateDDB
-exports.SelectDBfromRegistry = SelectDBfromRegistry
-exports.ValidateToken = ValidateToken
-exports.apigatewayresponse = apigatewayresponse
-exports.newcfnresponse = newcfnresponse
-exports.getquerystringparameter = getquerystringparameter
-exports.eventpropertylookup = eventpropertylookup
-exports.propertyvaluelookup = propertyvaluelookup
-exports.getcookies = getcookies
-exports.S3GET = S3GET
-exports.S3PUT = S3PUT
-exports.GetAsgSettings = GetAsgSettings
-exports.GroupAsgInstances = GroupAsgInstances
-exports.GetEC2InstancesMetrics = GetEC2InstancesMetrics
-exports.GetRDSInstancesMetrics = GetRDSInstancesMetrics
-exports.GetCWmetrics = GetCWmetrics
-exports.CreatePeriod = CreatePeriod
-exports.average = average
-exports.getbuildstatus = getbuildstatus
-exports.walkfolders = walkfolders
-exports.TransformInputValues = TransformInputValues
-exports.GetRDSSettings = GetRDSSettings
-exports.ASGstatus = ASGstatus
-exports.deactivatequery = deactivatequery
-exports.masktoken = masktoken
+const  maskcredentials = (mevent) => {
+
+  if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.TokenSigningPassphrase !== undefined) {
+    mevent.ResourceProperties.TokenSigningPassphrase = '****'
+    mevent.OldResourceProperties.TokenSigningPassphrase = '****'
+  } 
+  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "TokenSigningPassphrase")){
+      mevent.Parameters.filter(k=> k.ParameterKey === "TokenSigningPassphrase")[0].ParameterValue ='****'
+  }  
+  else if(mevent.ResourceProperties.TokenSigningPassphrase !== undefined) {
+    // at first deployment time no OldResourceProperties exists
+    mevent.ResourceProperties.TokenSigningPassphrase = '****'
+  }
+
+  if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.TurnSrvPassword !== undefined) {
+    mevent.ResourceProperties.TurnSrvPassword = '****'
+    mevent.OldResourceProperties.TurnSrvPassword = '****'
+  } 
+  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "TurnSrvPassword")){
+    mevent.Parameters.filter(k=> k.ParameterKey === "TurnSrvPassword")[0].ParameterValue ='****'
+  }  
+  else if (mevent.ResourceProperties.TurnSrvPassword !== undefined) {
+    // at first deployment time no OldResourceProperties exists
+    mevent.ResourceProperties.TurnSrvPassword = '****'
+  }
+
+  if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.WebRTCProxyKey !== undefined) {
+    mevent.ResourceProperties.WebRTCProxyKey = '****'
+    mevent.OldResourceProperties.WebRTCProxyKey = '****'
+  }
+  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "WebRTCProxyKey")){
+    mevent.Parameters.filter(k=> k.ParameterKey === "WebRTCProxyKey")[0].ParameterValue ='****'
+  }  
+  else if (mevent.ResourceProperties.WebRTCProxyKey !== undefined) {
+    // at first deployment time no OldResourceProperties exists
+    mevent.ResourceProperties.WebRTCProxyKey = '****'
+  }
+
+  if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.DBpassword !== undefined) {
+    mevent.ResourceProperties.DBpassword = '****'
+    mevent.OldResourceProperties.DBpassword = '****'
+  }
+  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "DBUserPasswd")){
+    mevent.Parameters.filter(k=> k.ParameterKey === "DBUserPasswd")[0].ParameterValue ='****'
+  }  
+  else if (mevent.ResourceProperties.DBpassword !== undefined) {
+    // at first deployment time no OldResourceProperties exists
+    mevent.ResourceProperties.DBpassword = '****'
+  }
+
+  return mevent
+}
+
+
+export { 
+  getssmparameter, setssmparameter, receiveSQSMessage, makeid, timeConverter, AddDDBEntry, deleteDDB, putDDB, putJSONDDB, 
+  queryDDB, UpdateDDB, SelectDBfromRegistry, ValidateToken, apigatewayresponse, newcfnresponse, getquerystringparameter,
+  eventpropertylookup, propertyvaluelookup, getcookies, S3GET, S3PUT, s3putdependencies, emptybucket,
+  GetAsgSettings, GroupAsgInstances, GetEC2InstancesMetrics, GetRDSInstancesMetrics, GetCWmetrics, CreatePeriod, average, 
+  getbuildstatus, walkfolders, TransformInputValues, GetRDSSettings, ASGstatus, deactivatequery, masktoken, maskcredentials
+};

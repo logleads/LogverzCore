@@ -2,16 +2,28 @@
 /* eslint-disable no-redeclare */
 /* eslint-disable no-var */
 /* eslint brace-style: ["error", "stroustrup"] */
-const AWS = require('aws-sdk')
+
 // const fs = require('fs');
-const path = require('path')
-const fsPromises = require('fs').promises
+//const path = require('path')
+//const fsPromises = require('fs').promises
+import { fileURLToPath } from 'url'
+import path from 'path'
+import fs from 'fs'
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+
+import { CloudFormationClient, CreateStackCommand, UpdateStackCommand } from "@aws-sdk/client-cloudformation"
+import { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectVersionsCommand } from '@aws-sdk/client-s3'
+
 const params = {}
 const environment = {}
 
-module.exports.handler = async function (event, context) {
+export const handler = async (event, context) => {
+
   if (process.env.Environment !== 'LocalDev') {
     // Prod lambda function settings
+    var commonsharedpath=('file:///'+path.join(__dirname, 'commonsharedv3.js').replace(/\\/g, "/"))
+    var commonshared=await GetConfiguration(commonsharedpath,'*')
     const arnList = (context.invokedFunctionArn).split(':')
     var region = arnList[3]
     params.VPCID = event.ResourceProperties.VPCID
@@ -38,6 +50,7 @@ module.exports.handler = async function (event, context) {
     params.SourcesVersion = event.ResourceProperties.SourcesVersion
     params.Mode = event.ResourceProperties.Mode
     params.Tags = event.ResourceProperties.Tags
+     //TODO consider using the pasted over version from the event source
     params.PublicKeyVersion = '/Logverz/Logic/PublicKey:1'
     params.MaximumCacheTime = '20'
     params.EnableSocialIdenties = 'false'
@@ -52,7 +65,9 @@ module.exports.handler = async function (event, context) {
   }
   else {
     // Dev environment settings
-    const mydev = require(path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'bootstrap', 'mydev.js'))
+    var directory = path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'bootstrap', 'mydev.mjs')
+    const mydev = await import('file:///' + directory.replace(/\\/g, '/'))
+    var commonshared = mydev.commonshared
     var region = mydev.region
     var event = mydev.event
     var context = mydev.context
@@ -94,34 +109,33 @@ module.exports.handler = async function (event, context) {
   params.SourcesBucket = environment.BootStrapBucket
   params.ChildStackName= event.StackId.split("/")[1].replace("serverlessrepo-","")
   
-  AWS.config.update({
-    region
-  })
-  const s3 = new AWS.S3({
-    apiVersion: '2006-03-01'
-  })
-  const cloudformation = new AWS.CloudFormation()
-  const result = await main(event, cloudformation, s3, params, region)
+  const s3client = new S3Client({})
+  const cfnclient = new CloudFormationClient({});
+
+  const result = await main(event, cfnclient, s3client, commonshared, params, region)
   console.log(result)
   // return result
-  return newcfnresponse(event, context, 'SUCCESS', {})
+  return commonshared.newcfnresponse(event, context, 'SUCCESS', {})
 }
 
-async function main (event, cloudformation, s3, params, region) {
+async function main (event, cfnclient, s3client, commonshared, params, region) {
   console.log('main')
 
   var initzipversion = 'init_v' + params.SourcesVersion + '.zip'
   params.SourcesPath=initzipversion
 
   //upload template and initv_x.y.z.zip to serverless bucket
-  await s3putdependencies(environment.localpath + environment.templatename, environment.BootStrapBucket, s3, environment.templatename)
-  await s3putdependencies(path.join(environment.localpath + params.LocalBundle), environment.BootStrapBucket, s3, params.SourcesPath)
-  
-  const cfnresult = await cfnoperation(event, cloudformation, s3, params, environment, region)
+  await Promise.all([
+  commonshared.s3putdependencies(environment.localpath + environment.templatename, environment.BootStrapBucket, s3client, PutObjectCommand, fs, fileURLToPath, environment.templatename),
+  commonshared.s3putdependencies(path.join(environment.localpath + params.LocalBundle), environment.BootStrapBucket, s3client, PutObjectCommand, fs, fileURLToPath, params.SourcesPath)
+  ])
+
+  const cfnresult = await cfnoperation(event, cfnclient, s3client, ListObjectVersionsCommand, DeleteObjectCommand, commonshared, params, environment, region)
   return cfnresult
+
 }
 
-async function cfnoperation (event, cloudformation, s3, params, environment, region) {
+async function cfnoperation (event, cfnclient, s3client, ListObjectVersionsCommand, DeleteObjectCommand, commonshared, params, environment, region) {
 
   const stackparameters = []
 
@@ -130,7 +144,7 @@ async function cfnoperation (event, cloudformation, s3, params, environment, reg
   }
   else if (params.Mode === 'StackDelete' && event.RequestType === 'Delete') {
     console.log('Starting delete')
-    const result = await emptybucket(s3, params.SourcesBucket)
+    const result = await commonshared.emptybucket(s3client, ListObjectVersionsCommand, DeleteObjectCommand, params.SourcesBucket)
     console.log('Finished all delete')
     return result
   }
@@ -163,7 +177,10 @@ async function cfnoperation (event, cloudformation, s3, params, environment, reg
     }
     var maskedcfn = maskcredentials(JSON.parse(JSON.stringify(cfnparams)))
     console.log('THE  CFN params: \n' + JSON.stringify(maskedcfn) + '\n\n')
-    return await cfncreate(cloudformation, cfnparams)
+
+    const command = new CreateStackCommand(cfnparams);
+    const response = await cfnclient.send(command);
+    return response.StackId
   }
   else if (event.RequestType === 'Update') {
 
@@ -191,197 +208,14 @@ async function cfnoperation (event, cloudformation, s3, params, environment, reg
       Tags: [JSON.parse(params.Tags)],
       TemplateURL: 'https://' + environment.BootStrapBucket + '.s3.' + region + '.amazonaws.com/' + environment.templatename
     }
-    return await cfnupdate(cloudformation, cfnparams)
+
+    const command = new UpdateStackCommand(cfnparams);
+    const response = await cfnclient.send(command);
+    return response.StackId
   }
   else {
     console.log('Some other operation.')
   }
-}
-
-// async function cfnlistexports (cloudformation, cfnparams, allexports = []) {
-
-//   const response = await cloudformation.listExports(cfnparams).promise()
-//   response.Exports.forEach(obj => allexports.push({
-//     Name: obj.Name,
-//     Value: obj.Value
-//   }))
-
-//   if (response.NextToken) {
-//     cfnparams.NextToken = response.NextToken
-//     await cfnlistexports(cloudformation, cfnparams, allexports) // RECURSIVE CALL
-//   }
-
-//   return allexports
-// }
-
-async function cfncreate (cloudformation, cfnparams) {
-  const promisedcfnresult = new Promise((resolve, reject) => {
-    cloudformation.createStack(cfnparams, function (err, data) {
-      if (err) {
-        console.error(JSON.stringify(err, null, 2))
-        reject(err)
-      }
-      else {
-        // console.log("Query succeeded.");
-        resolve(data)
-      }
-    })
-  })
-  const cfnresult = await promisedcfnresult
-  return cfnresult.StackId
-}
-
-async function cfnupdate (cloudformation, cfnparams) {
-
-  const promisedcfnresult = new Promise((resolve, reject) => {
-    cloudformation.updateStack(cfnparams, function (err, data) {
-      if (err) {
-        console.error(JSON.stringify(err, null, 2))
-        reject(err)
-      }
-      else {
-        // console.log("Query succeeded.");
-        resolve(data)
-      }
-    })
-  })
-  const cfnresult = await promisedcfnresult
-  return cfnresult.StackId
-}
-
-// async function cfndelete (cloudformation, cfnparams) {
-//   const promisedcfnresult = new Promise((resolve, reject) => {
-//     cloudformation.deleteStack(cfnparams, function (err, data) {
-//       if (err) {
-//         console.error(JSON.stringify(err, null, 2))
-//         reject(err)
-//       } else {
-//         // console.log("Query succeeded.");
-//         resolve(data)
-//       }
-//     })
-//   })
-//   const cfnresult = await promisedcfnresult
-//   return cfnresult.StackId
-// }
-
-async function s3putdependencies (FileNameandPath, Bucket, s3, FileName) {
-  const content = await fsPromises.readFile(FileNameandPath)
-  const uploadParams = {
-    Bucket,
-    Key: FileName,
-    Body: content
-  }
-  const promiseduploadresult = new Promise((resolve, reject) => {
-    s3.putObject(uploadParams, function (err, data) {
-      if (err) {
-        console.error(err)
-        reject(err)
-      }
-      else {
-        console.log('Successfully put dependency ' + FileName + ' to: ' + Bucket + ' bucket.')
-        resolve(data)
-      }
-    })
-  })
-
-  const s3result = await promiseduploadresult
-  return s3result.ETag
-}
-
-async function emptybucket (s3, bucket) {
-  const params = {
-    Bucket: bucket
-    //, MaxKeys: "10"
-  }
-  var allversions = []
-  await getallversions(s3, params, allversions)
-  console.log("In bucket '" + bucket + "' the total number of files are " + allversions.length)
-
-  const promises = allversions.map(onefile => {
-    const deleteParam = {
-      Bucket: onefile[0],
-      Key: onefile[1],
-      VersionId: onefile[2]
-    }
-    const removefilepromise = new Promise((resolve, reject) => {
-      s3.deleteObject(deleteParam, function (err, data) {
-        if (err) {
-          console.log(err.code, err.message)
-          reject(err)
-          // an error occurred
-        } else resolve(data) // console.log(data);// successful response
-      })
-    })
-
-    return removefilepromise
-  })
-
-  const resolved = await Promise.all(promises)
-  console.log('finished emptying ' + bucket)
-  return resolved
-}
-
-async function getallversions (s3, params, allversions = []) {
-
-  const response = await s3.listObjectVersions(params).promise()
-  response.Versions.forEach(obj => allversions.push([params.Bucket, obj.Key, obj.VersionId]))
-
-  if (response.NextVersionIdMarker) {
-    params.VersionIdMarker = response.NextVersionIdMarker
-    params.KeyMarker = response.NextKeyMarker
-
-    await getallversions(s3, params, allversions) // RECURSIVE CALL
-  }
-  return allversions
-}
-
-async function newcfnresponse(event, context, responseStatus, responseData){
-
-  return new Promise((resolve, reject) => {
-      var responseBody = JSON.stringify({
-          Status: responseStatus,
-          Reason: "See the details in CloudWatch Log Stream: " + context.logStreamName,
-          PhysicalResourceId: context.logStreamName,
-          StackId: event.StackId,
-          RequestId: event.RequestId,
-          LogicalResourceId: event.LogicalResourceId,
-          NoEcho: false,
-          Data: responseData
-      });
-
-      console.log("Response body:\n", responseBody);
-
-      var https = require("https");
-      var url = require("url");
-
-      var parsedUrl = url.parse(event.ResponseURL);
-      var options = {
-          hostname: parsedUrl.hostname,
-          port: 443,
-          path: parsedUrl.path,
-          method: "PUT",
-          headers: {
-              "content-type": "application/json",
-              "content-length": responseBody.length
-          }
-      };
-
-      var request = https.request(options, function(response) {
-          console.log("Status code: " + response.statusCode);
-          console.log("Status message: " + response.statusMessage);
-          resolve(context.done());
-      });
-
-      request.on("error", function(error) {
-          console.log("send(..) failed executing https.request(..): " + error);
-          reject(context.done(error));
-      });
-
-      request.write(responseBody);
-      request.end();
-  })
-
 }
 
 function convertparamtostring (params, p) {
@@ -399,55 +233,17 @@ function convertparamtostring (params, p) {
   return parametervalue
 }
 
-function maskcredentials (mevent) {
-
-  if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.TokenSigningPassphrase !== undefined) {
-    mevent.ResourceProperties.TokenSigningPassphrase = '****'
-    mevent.OldResourceProperties.TokenSigningPassphrase = '****'
-  } 
-  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "TokenSigningPassphrase")){
-      mevent.Parameters.filter(k=> k.ParameterKey === "TokenSigningPassphrase")[0].ParameterValue ='****'
-  }  
-  else if(mevent.ResourceProperties.TokenSigningPassphrase !== undefined) {
-    // at first deployment time no OldResourceProperties exists
-    mevent.ResourceProperties.TokenSigningPassphrase = '****'
+async function GetConfiguration (directory, value) {
+  
+  //Kudos: https://stackoverflow.com/questions/71432755/how-to-use-dynamic-import-from-a-dependency-in-node-js
+  const moduleText = fs.readFileSync(fileURLToPath(directory), 'utf-8').toString();
+  const moduleBase64 = Buffer.from(moduleText).toString('base64');
+  const moduleDataURL = `data:text/javascript;base64,${moduleBase64}`;
+  if (value !=="*"){
+      var data = (await import(moduleDataURL))[value];
   }
-
-  if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.TurnSrvPassword !== undefined) {
-    mevent.ResourceProperties.TurnSrvPassword = '****'
-    mevent.OldResourceProperties.TurnSrvPassword = '****'
-  } 
-  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "TurnSrvPassword")){
-    mevent.Parameters.filter(k=> k.ParameterKey === "TurnSrvPassword")[0].ParameterValue ='****'
-  }  
-  else if (mevent.ResourceProperties.TurnSrvPassword !== undefined) {
-    // at first deployment time no OldResourceProperties exists
-    mevent.ResourceProperties.TurnSrvPassword = '****'
+  else{
+      var data = (await import(moduleDataURL));
   }
-
-  if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.WebRTCProxyKey !== undefined) {
-    mevent.ResourceProperties.WebRTCProxyKey = '****'
-    mevent.OldResourceProperties.WebRTCProxyKey = '****'
-  }
-  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "WebRTCProxyKey")){
-    mevent.Parameters.filter(k=> k.ParameterKey === "WebRTCProxyKey")[0].ParameterValue ='****'
-  }  
-  else if (mevent.ResourceProperties.WebRTCProxyKey !== undefined) {
-    // at first deployment time no OldResourceProperties exists
-    mevent.ResourceProperties.WebRTCProxyKey = '****'
-  }
-
-  if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.DBpassword !== undefined) {
-    mevent.ResourceProperties.DBpassword = '****'
-    mevent.OldResourceProperties.DBpassword = '****'
-  }
-  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "DBUserPasswd")){
-    mevent.Parameters.filter(k=> k.ParameterKey === "DBUserPasswd")[0].ParameterValue ='****'
-  }  
-  else if (mevent.ResourceProperties.DBpassword !== undefined) {
-    // at first deployment time no OldResourceProperties exists
-    mevent.ResourceProperties.DBpassword = '****'
-  }
-
-  return mevent
+  return data
 }

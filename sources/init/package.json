@@ -10,9 +10,16 @@
     "type": "git",
     "url": "https://logleads@dev.azure.com/logleads/Logverz/_git/Logverz"
   },
+  "type": "module",
   "author": "platformlead",
   "license": "LogLeads License 1.0",
   "dependencies": {
-    "aws-sdk": "^2.1333.0"
+    "@aws-sdk/client-api-gateway": "^3.556.0",
+    "@aws-sdk/client-codebuild": "^3.556.0",
+    "@aws-sdk/client-ecr": "^3.556.0",
+    "@aws-sdk/client-iam": "^3.556.0",
+    "@aws-sdk/client-lambda": "^3.556.0",
+    "@aws-sdk/client-s3": "^3.556.0",
+    "@aws-sdk/client-ssm": "^3.556.0"
   }
 }

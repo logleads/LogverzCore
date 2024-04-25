@@ -1,16 +1,17 @@
-// const helper = require("./worker/worker");;
-// const helper = require("./jobproducer/jobproducer");
+// const helper = require("./worker/worker");
+ import * as helper from './jobproducer/jobproducer.js'
 // const helper = require("./mastercontroller/mastercontroller");
-// const helper = require("./init/initiate");
+// import * as helper from './init/initiate.js';
 // const helper = require("./setconnectionparamsdb/setconnectionparamsdb");
-// const helper = require("./setconnectionparamsdns/setconnectionparamsdns");
+// import * as helper from './setconnectionparamsdns/setconnectionparamsdns.js';
 // const helper = require("./signal/signal");
 // const helper = require("./identitysync/identitysync");
 // const helper = require("./login/login");
 // const helper = require("./transform/transform");
 // const helper = require("./nosql/nosql");
- const helper = require("./httprelay/httprelay");
+// const helper = require("./httprelay/httprelay");
 // const helper = require("./info/info");
-// const helper = require('./bootstrap/bootstrap')
+
+//import * as helper from './bootstrap/bootstrap.js'
 // const helper = require("./scale/scale");
 helper.handler()

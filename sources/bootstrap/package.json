@@ -4,9 +4,11 @@
   "version": "0.7.00",
   "main": "bootstrap.js",
   "keywords": [],
+  "type": "module",
   "author": "platformlead",
   "license": "LogLeads License 1.0",
   "dependencies": {
-    "aws-sdk": "^2.762.0"
+    "@aws-sdk/client-cloudformation": "^3.556.0",
+    "@aws-sdk/client-s3": "^3.556.0"
   }
 }
