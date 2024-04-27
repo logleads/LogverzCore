@@ -505,7 +505,7 @@
 				"Role": {
 					"Fn::GetAtt": ["SetConnectionParamsDNSRole", "Arn"]
 				},
-				"Runtime": "nodejs18.x",
+				"Runtime": "nodejs20.x",
 				"MemorySize":"192",
 				"Timeout": "10"
 			}

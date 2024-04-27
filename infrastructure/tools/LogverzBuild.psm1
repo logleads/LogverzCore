@@ -292,7 +292,7 @@ function set-init-sources{
     Copy-Item -Path $($componentpath+"/infrastructure/buildspec_init.yaml") -Destination $($projectpath+"/$builddirectory/build/buildspec_init.yaml")  -force
     Copy-Item -Path $($componentpath+"/sources/init/initiate.js") -Destination $($projectpath+"/$builddirectory/build/initiate.js")  -force
     Copy-Item -Path $($componentpath+"/sources/init/package.json") -Destination $($projectpath+"/$builddirectory/build/package.json")  -force
-    Copy-Item -Path $($componentpath+"/sources/shared/commonshared.js") -Destination $($projectpath+"/$builddirectory/build/commonshared.js")  -force
+    Copy-Item -Path $($componentpath+"/sources/shared/commonsharedv3.js") -Destination $($projectpath+"/$builddirectory/build/commonsharedv3.js")  -force
 
     #NOTE: using io.compress.zipfile results in error "warning:  sources.zip appears to use backslashes as path separators" in codebuild execution.
     #https://thedeveloperblog.com/7-zip-examples   

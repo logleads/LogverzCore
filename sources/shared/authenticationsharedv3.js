@@ -268,7 +268,8 @@ function checkmatch (action, one, sid, PolicyName, requestedservice, requestedac
   return result
 }
 
-const getidentityattributes = async (commonshared, docClient, identityname, identitytype) => {
+const getidentityattributes = async (docClient, QueryCommand, identityname, identitytype) => {
+
   if ((identityname === 'root') && (identitytype === 'UserAWS')) {
     var data = {}
     data.Count = 1
@@ -280,6 +281,7 @@ const getidentityattributes = async (commonshared, docClient, identityname, iden
         GroupAttached: []
       }
     }]
+    return data
   }
   else {
     const params = {
@@ -294,21 +296,21 @@ const getidentityattributes = async (commonshared, docClient, identityname, iden
         ':type': identitytype
       }
     }
+    const command = new QueryCommand(params);
+    //var data = (await docClient.send(command)).Items[0];
+    var data = await docClient.send(command)
 
-    var data = await commonshared.queryDDB(docClient, params)
-  }
-
-  if (data.Count === 0) {
-    const message = 'There is no identity ' + identityname + ':' + identitytype + " can't retrieve its permissions."
-    console.log(message)
-    var data = {
-      status: 'Deny',
-      Reason: message,
-      Items: data.Items
+    if (data.Count === 0) {
+      const message = 'There is no identity ' + identityname + ':' + identitytype + " can't retrieve its permissions."
+      console.log(message)
+      var data = {
+        status: 'Deny',
+        Reason: message,
+        Items: data.Items
+      }
     }
+    return data
   }
-
-  return data
 }
 
 const authorize = (_, commonshared, queryStringParameters, userattributes) => {
@@ -859,5 +861,10 @@ export {
   retriveIAMidentities, retrieveresourcepolicy, authorizeS3access, resourceaccessauthorization, admincheck, powerusercheck,
   usercheck, setIAMresource
 }
+
+
+// export { 
+//   getidentityattributes
+// }
   // refactor httprelay to remove getuserstatements
  // refactor httprelay to remove allowdenyaction

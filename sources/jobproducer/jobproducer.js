@@ -1,12 +1,29 @@
 /* eslint-disable no-redeclare */
 /* eslint-disable no-var */
 /* eslint brace-style: ["error", "stroustrup"] */
-var AWS = require('aws-sdk')
-var _ = require('lodash')
-var path = require('path')
-var jwt = require('jsonwebtoken')
-var db = require('./db').db
+import { fileURLToPath } from 'url'
+import path from 'path'
+import fs from 'fs'
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+import _ from 'lodash';
+import jwt from 'jsonwebtoken';
+import loki from 'lokijs';
+
+import { SSMClient, GetParameterHistoryCommand, GetParameterCommand } from '@aws-sdk/client-ssm'
+import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
+import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+//https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/dynamodb-example-dynamodb-utilities.html
+
+
 var MaximumCacheTime=process.env.MaximumCacheTime
+if (typeof db === 'undefined') {
+  // the variable is defined
+  var db = new loki('db.json', {
+    autoupdate: true
+});
+}
 
 if (db.collections.length === 0) {
 
@@ -20,12 +37,14 @@ if (db.collections.length === 0) {
   // identity.insert({"Path":"/","Arn":"arn:aws:iam::accountnumber:user/bob","Type":"UserAWS","Policies":{"UserInline":[],"GroupInline":["{\"PolicyDocument\":\"{'Version':'2012-10-17','Statement':[{'Action':['dynamodb:ListTables','dynamodb:DescribeTimeToLive'],'Resource':'*','Effect':'Allow','Sid':'ListAndDescribe'},{'Action':['dynamodb:DescribeTable','dynamodb:Get*','dynamodb:BatchGet*','dynamodb:Query','dynamodb:Scan'],'Resource':'arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz*','Effect':'Allow','Sid':'SpecificTable'}]}\",\"PolicyName\":\"Logverz_Users_Minimum_policy\"}"],"UserAttached":["{\"PolicyName\":\"AmazonS3FullAccess\",\"PolicyDocument\":\"{'Version':'2012-10-17','Statement':[{'Effect':'Allow','Action':'s3:*','Resource':'*'}]}\"}"],"GroupAttached":["{\"PolicyName\":\"shinynew2\",\"PolicyDocument\":\"{'Version':'2012-10-17','Statement':[{'Sid':'VisualEditor0','Effect':'Allow','Action':'license-manager:*','Resource':'*'}]}\"}"]},"Inherited":true,"Name":"bob"});
 }
 
-module.exports.handler = async function (event, context) {
+export const handler = async (event, context) => {
 
   if (process.env.Environment !== 'LocalDev' && event.hasOwnProperty('requestContext')) {
     // Prod lambda function - APiGW invocation
-    var commonshared = require('./shared/commonshared')
-    var authenticationshared = require('./shared/authenticationshared')
+    var commonsharedpath=('file:///'+path.join(__dirname, './shared/commonsharedv3.js').replace(/\\/g, "/"))
+    var commonshared=await GetConfiguration(commonsharedpath,'*')
+    var authenticationsharedpath=('file:///'+path.join(__dirname, './shared/authenticationsharedv3.js').replace(/\\/g, "/"))
+    var authenticationshared=await GetConfiguration(authenticationsharedpath,'*')
     var arnList = (context.invokedFunctionArn).split(':')
     var region = arnList[3]
     var request = JSON.parse(event.body)
@@ -51,8 +70,10 @@ module.exports.handler = async function (event, context) {
   }
   else if (process.env.Environment !== 'LocalDev') {
     // Prod lambda function - CFN invocation
-    var commonshared = require('./shared/commonshared')
-    var authenticationshared = require('./shared/authenticationshared')
+    var commonsharedpath=('file:///'+path.join(__dirname, './shared/commonsharedv3.js').replace(/\\/g, "/"))
+    var commonshared=await GetConfiguration(commonsharedpath,'*')
+    var authenticationsharedpath=('file:///'+path.join(__dirname, './shared/authenticationsharedv3.js').replace(/\\/g, "/"))
+    var authenticationshared=await GetConfiguration(authenticationsharedpath,'*')
     var arnList = (context.invokedFunctionArn).split(':')
     var region = arnList[3]
     var JOBQueueURL = event.ResourceProperties.JOBQueueURL
@@ -74,7 +95,8 @@ module.exports.handler = async function (event, context) {
   }
   else {
     // Dev environment settings
-    const mydev = require(path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'jobproducer', 'mydev.js'))
+    var directory = path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'jobproducer', 'mydev.mjs')
+    const mydev = await import('file:///' + directory.replace(/\\/g, '/'))
     var commonshared = mydev.commonshared
     var authenticationshared = mydev.authenticationshared
     var region = mydev.region
@@ -97,17 +119,13 @@ module.exports.handler = async function (event, context) {
     var TableParameters = mydev.TableParameters
     var apigateway = mydev.apigateway
   }
-  // console.log("Debug: At AWS Config");
-  AWS.config.update({
-    region
-  })
 
-  var sqs = new AWS.SQS({
-    apiVersion: '2012-11-05'
-  })
-  var SSM = new AWS.SSM()
-  const dynamodb = new AWS.DynamoDB()
-  var docClient = new AWS.DynamoDB.DocumentClient()
+  const sqsclient = new SQSClient({});
+  const ddclient = new DynamoDBClient({
+    region
+  });
+  const docClient = DynamoDBDocumentClient.from(ddclient);
+  const ssmclient = new SSMClient({});
 
   if (DataType !== '') {
     var message = 'ok' // regular or custom query types
@@ -131,11 +149,10 @@ module.exports.handler = async function (event, context) {
       }).collection.data[0] // ?.data()
 
       if (userattributes === undefined) {
-        var userattributes = await authenticationshared.getidentityattributes(commonshared, docClient, username, usertype)
+        var userattributes = await authenticationshared.getidentityattributes(docClient, QueryCommand, username, usertype)
         userattributes = userattributes.Items[0]
         identity.insert(userattributes)
       }
-
       var Resource = 'undefined'
       if (event.requestContext.resourcePath === '/Start/Job') {
         Resource = 'arn:aws:apigateway:' + region + '::/restapis/' + RestApiId + '/resources/' + StartJob + '/methods/POST'
@@ -167,7 +184,8 @@ module.exports.handler = async function (event, context) {
       // user name who invoked the job is retrieved from Execution history
       console.log('Attempt ' + attempt + ' of retriving the user from execution history')
       // do try catch here
-      var executionhistory = await getallssmparameterhistory(SSM, '/Logverz/Engine/ExecutionHistory', dynamodb, commonshared)
+    
+      var executionhistory = await getallssmparameterhistory(commonshared, ssmclient, GetParameterHistoryCommand, ddclient, PutItemCommand, '/Logverz/Engine/ExecutionHistory')
 
       // result may not be the last item in case of frequent invocations hence the matching
       var match = matchexecutionwithparameterhistory(executionhistory, S3Folders, TableParameters)
@@ -203,9 +221,9 @@ module.exports.handler = async function (event, context) {
       Name: username
     }).collection.data[0] // ?.data()
     if (userattributes === undefined) {
-      userattributes = await authenticationshared.getidentityattributes(commonshared, docClient, username, usertype)
+      userattributes = await authenticationshared.getidentityattributes(docClient, QueryCommand, username, usertype)
       userattributes = userattributes.Items[0]
-      // TODO Roles are not supported ADD roles support to the backend
+
       if (userattributes !== undefined) {
         identity.insert(userattributes)
       }
@@ -213,7 +231,6 @@ module.exports.handler = async function (event, context) {
 
     if (userattributes !== undefined) {
       // Doing S3 authorization here.
-      // var S3Folders="S3Folders:s3://lltestdata/vpcflowlogs/ap-southeast-2/2020/09/27/;s3://blablabla;s3://lltestdata/ctrail/06/";
       var S3Folders = S3Folders.replace('S3Folders:', '')
       var S3Foldersarray = _.compact(S3Folders.split(';'))
       var message = authenticationshared.authorizeS3access(_, commonshared, userattributes, S3Foldersarray)
@@ -233,13 +250,14 @@ module.exports.handler = async function (event, context) {
         source: 'jobproducer.js:handler',
         message: ''
       }
+
       var [SchemaObject, Registry] = await Promise.all([
-        commonshared.getssmparameter(SSM, {
+        commonshared.getssmparameter(ssmclient, GetParameterCommand, {
           Name: ('/Logverz/Engine/Schemas/' + DataType)
-        }, dynamodb, details),
-        commonshared.getssmparameter(SSM, {
+        }, ddclient, PutItemCommand, details),
+        commonshared.getssmparameter(ssmclient, GetParameterCommand, {
           Name: '/Logverz/Database/Registry'
-        }, dynamodb, details)
+        }, ddclient, PutItemCommand, details)
       ])
 
       var SchemaParameterObject = JSON.parse(SchemaObject.Parameter.Value)
@@ -284,7 +302,7 @@ module.exports.handler = async function (event, context) {
     }
 
     var reply
-    var message = await sendSQSMessage(sqs, JOBQueueURL, MessageAttributes)
+    var message = await sendSQSMessage(sqsclient, SendMessageCommand,JOBQueueURL, MessageAttributes)
     if (apigateway === false) {
       console.log("CFN message1:")
       console.log(message)
@@ -320,11 +338,11 @@ module.exports.handler = async function (event, context) {
       return commonshared.apigatewayresponse(reply, event.headers, AllowedOrigins)
     }
   }
+
 }
 
-async function sendSQSMessage (sqs, JOBQueueURL, MessageAttributes) {
+async function sendSQSMessage (sqsclient, SendMessageCommand, JOBQueueURL, MessageAttributes) {
   // https://github.com/aws/aws-sdk-js/issues/745
-
   var params = {
     MessageAttributes: {
       S3Properties: {
@@ -367,32 +385,29 @@ async function sendSQSMessage (sqs, JOBQueueURL, MessageAttributes) {
   params.MessageBody = JSON.stringify({
     requesttime: Date.now()
   })
-  var promisedsendmessage = new Promise((resolve, reject) => {
-    sqs.sendMessage(params, function (err, data) {
-      if (err) {
-        console.log('Error', JSON.stringify(err))
-        reject(JSON.stringify(err))
-      }
-      else {
-        var today = new Date()
-        var date = today.getFullYear() + '-' + (today.getMonth() + 1) + '-' + today.getDate()
-        var time = today.getHours() + ':' + today.getMinutes() + ':' + today.getSeconds()
-        var dateTime = date + ' ' + time
-        console.log('Sent SQS message ' + dateTime + ' ' + data.MessageId)
-        resolve(data.MessageId)
-      }
-    })
-  })
-  var result = await promisedsendmessage
 
-  return result
+  const command = new SendMessageCommand(params);
+  try{
+    const response = await sqsclient.send(command);
+    var today = new Date()
+    var date = today.getFullYear() + '-' + (today.getMonth() + 1) + '-' + today.getDate()
+    var time = today.getHours() + ':' + today.getMinutes() + ':' + today.getSeconds()
+    var dateTime = date + ' ' + time
+    console.log('Sent SQS message ' + dateTime + ' ' + response.MessageId)
+    return response
+  }
+  catch (err) {
+    console.log('Error', err)
+    return err
+  }
+
 }
 
-async function getbatchofparametersHistory (SSM, parametername, NextToken) {
+async function getbatchofparametersHistory (ssmclient, GetParameterHistoryCommand, parametername, NextToken) {
   if (NextToken) {
     var params = {
       Name: parametername,
-      /* required */
+      // required 
       NextToken,
       MaxResults: 50,
       WithDecryption: false
@@ -401,37 +416,37 @@ async function getbatchofparametersHistory (SSM, parametername, NextToken) {
   else {
     var params = {
       Name: parametername,
-      /* required */
+      // required
       MaxResults: 50,
       WithDecryption: false
     }
   }
 
-  return new Promise((resolve, reject) => {
-    SSM.getParameterHistory(params, function (err, data) {
-      if (err) {
-        // eslint-disable-next-line prefer-promise-reject-errors
-        reject({
-          Result: 'Fail',
-          Data: err
-        })// console.log(err, err.stack); // an error occurred
-      }
-      else {
-        resolve({
-          Result: 'PASS',
-          Data: data
-        })
-      } // console.log(data);           // successful response
-    })
-  })
+
+  const command = new GetParameterHistoryCommand(params);
+  try{
+    const data = await ssmclient.send(command);
+    var result={
+      Result: 'PASS',
+      Data: data
+    }
+    return result
+  }
+  catch(err) {
+    var result={
+      Result: 'Fail',
+      Data: err
+    }
+    return result
+  }
 }
 
-async function getallssmparameterhistory (SSM, parametername, dynamodb, commonshared) {
+async function getallssmparameterhistory (commonshared, ssmclient, GetParameterHistoryCommand, ddclient, PutItemCommand, parametername) {
   var parametersarray = []
   var NextToken
 
   do {
-    var batchofparameters = await getbatchofparametersHistory(SSM, parametername, NextToken)
+    var batchofparameters = await getbatchofparametersHistory(ssmclient, GetParameterHistoryCommand, parametername, NextToken)
 
     if (batchofparameters.Result === 'PASS') {
       if (batchofparameters.Data.NextToken !== undefined) {
@@ -444,7 +459,7 @@ async function getallssmparameterhistory (SSM, parametername, dynamodb, commonsh
         source: 'jobproducer.js:getallssmparameterhistory',
         message: ssmallparamhistoryresult
       }
-      await commonshared.AddDDBEntry(dynamodb, 'Logverz-Invocations', 'GetParameter', 'Error', 'Infra', details, 'API')
+      await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'GetParameter', 'Error', 'Infra', details, 'API')
     }
 
     parametersarray = parametersarray.concat(batchofparameters.Data.Parameters)
@@ -462,7 +477,7 @@ function matchexecutionwithparameterhistory (executionhistory, S3Folders, TableP
 
     var EHTableParameters = oneexecutionarray.Value.split('\n').filter(s => s.includes('TableParameters'))[0].replace('TableParameters:', '').replace(';', '')
     var EHS3Folders = oneexecutionarray.Value.split('\n').filter(s => s.includes('S3Folders'))[0].replace('S3Folders:', '').replace(';', '')
-    if (EHTableParameters === TableParameters && EHS3Folders === S3Folders) { // && (oneexecutionarray.LastModifiedUser.match("demouser")!== null)
+    if (EHTableParameters === TableParameters && EHS3Folders === S3Folders) {
       match = oneexecutionarray
       console.log('match found')
       break
@@ -477,4 +492,19 @@ function matchexecutionwithparameterhistory (executionhistory, S3Folders, TableP
 
 function timeout (ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+async function GetConfiguration (directory, value) {
+  
+  //Kudos: https://stackoverflow.com/questions/71432755/how-to-use-dynamic-import-from-a-dependency-in-node-js
+  const moduleText = fs.readFileSync(fileURLToPath(directory), 'utf-8').toString();
+  const moduleBase64 = Buffer.from(moduleText).toString('base64');
+  const moduleDataURL = `data:text/javascript;base64,${moduleBase64}`;
+  if (value !=="*"){
+      var data = (await import(moduleDataURL))[value];
+  }
+  else{
+      var data = (await import(moduleDataURL));
+  }
+  return data
 }

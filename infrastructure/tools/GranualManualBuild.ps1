@@ -72,7 +72,7 @@ create-Bundle -zipfilename "setconnectionparamsdns.zip" `
               -projectpath $projectpath `
               -componentpath "\sources\setconnectionparamsdns"`
               -files "setconnectionparamsdns.js","package.json","package-lock.json"`
-              -extrafiles "\sources\shared\commonshared.js","\sources\shared\package.json"
+              -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\package.json"
                    
 update-lambda -lambdafunctionname "Logverz-SetConnectionParamsDNS"`
               -projectpath $projectpath `
@@ -119,7 +119,7 @@ set-init-sources -projectpath $projectpath -extrafiles $extrafiles -builddirecto
 
 update-lambda -lambdafunctionname "Logverz-Initiate"`
               -projectpath $projectpath `
-              -lambdafunctionbundle "\sources\init\init.zip"
+              -lambdafunctionbundle "\sources\init\init_new.zip"
 
 
 
@@ -127,8 +127,8 @@ update-lambda -lambdafunctionname "Logverz-Initiate"`
 create-Bundle -zipfilename "jobproducer.zip" `
               -projectpath $projectpath `
               -componentpath "\sources\jobproducer"`
-              -files "db.js","jobproducer.js","package.json","package-lock.json"`
-              -extrafiles "\sources\shared\commonshared.js","\sources\shared\package.json","\sources\shared\authenticationshared.js"
+              -files "jobproducer.js","package.json","package-lock.json"`
+              -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\package.json","\sources\shared\authenticationsharedv3.js"
 
 
 update-lambda -lambdafunctionname "Logverz-JobProducer"`

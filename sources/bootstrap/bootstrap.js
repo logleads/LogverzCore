@@ -55,7 +55,7 @@ export const handler = async (event, context) => {
     params.MaximumCacheTime = '20'
     params.EnableSocialIdenties = 'false'
     params.LocalBundle = 'init.zip'
-    environment.localpath = '/var/task/'
+    environment.localpath = 'file:///' + '/var/task/'
     // params.myKeyPair="";
     environment.BootStrapBucket = process.env.BootStrapBucket
     environment.CFNRole = process.env.CFNRole

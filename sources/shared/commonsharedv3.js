@@ -2,16 +2,18 @@
 /* eslint-disable no-redeclare */
 /* eslint-disable no-var */
 
-const getssmparameter = async (SSM, params, dynamodb, details) => {
+const getssmparameter = async (ssmclient, GetParameterCommand, params, ddclient, PutItemCommand, details) => {
   try {
-    const ssmresult = await SSM.getParameter(params).promise()
+    // const ssmresult = await SSM.getParameter(params).promise()
+    const command = new GetParameterCommand(params);
+    const ssmresult = await ssmclient.send(command);
     return ssmresult
   } catch (error) {
     const ssmresult = params.Name + ':     ' + error + '    SSM Parameter retrieval failed.'
     console.error(ssmresult)
     details.message = ssmresult
     try {
-      await AddDDBEntry(dynamodb, 'Logverz-Invocations', 'GetParameter', 'Error', 'Infra', details, 'API')
+      await AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'GetParameter', 'Error', 'Infra', details, 'API')
       return ssmresult
     } catch (error) {
       // at stack initialisation DynamoDB does not exists...
@@ -21,7 +23,7 @@ const getssmparameter = async (SSM, params, dynamodb, details) => {
   }
 }
 
-const setssmparameter = async (SSM, params, dynamodb, details) => {
+const setssmparameter = async (ssmclient, params, ddclient, details) => {
   try {
     const ssmresult = await SSM.putParameter(params).promise()
     return ssmresult
@@ -29,7 +31,7 @@ const setssmparameter = async (SSM, params, dynamodb, details) => {
     const ssmresult = params.Name + ':     ' + error + '    SSM Parameter persistance failed.'
     console.error(ssmresult)
     details.message = ssmresult
-    await AddDDBEntry(dynamodb, 'Logverz-Invocations', 'SetParameter', 'Error', 'Infra', details, 'API')
+    await AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'SetParameter', 'Error', 'Infra', details, 'API')
     return ssmresult
   }
 }
@@ -89,7 +91,7 @@ const timeConverter = (UNIX_timestamp) => {
   return time
 }
 
-const AddDDBEntry = async (dynamodb, DDBTableName, Action, Severity, Category, Details, Type) => {
+const AddDDBEntry = async (ddclient, PutItemCommand, DDBTableName, Action, Severity, Category, Details, Type) => {
   var CurrentTime = Date.now().toString()
 
   var dbentryparams = {
@@ -124,7 +126,11 @@ const AddDDBEntry = async (dynamodb, DDBTableName, Action, Severity, Category, D
       S: Value
     }
   }
-  return await dynamodb.putItem(dbentryparams).promise()
+  //return await dynamodb.putItem(dbentryparams).promise()
+
+  const command = new PutItemCommand(input);
+  const response = await ddclient.send(command);
+  return response
 }
 
 const deleteDDB = async (docClient, params) => {
@@ -190,23 +196,6 @@ const putJSONDDB = async (docClient, params) => {
     })
   })
   var queryresults = await promisedputresult
-  return queryresults
-}
-
-const queryDDB = async (docClient, params) => {
-
-  var promisedqueryresult = new Promise((resolve, reject) => {
-    docClient.query(params, function (err, data) {
-      if (err) {
-        console.error('Unable to query. Error:', JSON.stringify(err, null, 2))
-        reject(err)
-      } else {
-        // console.log("Query succeeded.");
-        resolve(data)
-      }
-    })
-  })
-  var queryresults = await promisedqueryresult
   return queryresults
 }
 
@@ -472,7 +461,7 @@ const S3PUT = async (s3, destinationbucket, destinationkey, data) => {
 
 const s3putdependencies = async (LocalPath, DstBucket, s3client, PutObjectCommand, fs, fileURLToPath, FileName) =>{
 
-  var content = fs.readFileSync(fileURLToPath(LocalPath), 'utf-8')
+  var content = fs.readFileSync(fileURLToPath(LocalPath))
 
   const uploadParams = {
     Bucket: DstBucket,
@@ -520,7 +509,7 @@ const emptybucket= async  (s3client, ListObjectVersionsCommand, DeleteObjectComm
   return resolved
 }
 
-const  getallversions = async (s3client, ListObjectVersionsCommand,  params, allversions = []) => {
+const getallversions = async (s3client, ListObjectVersionsCommand,  params, allversions = []) => {
   const command = new ListObjectVersionsCommand(params)
   const response = await s3client.send(command)
   response.Versions.forEach(obj => allversions.push([params.Bucket, obj.Key, obj.VersionId]))
@@ -760,17 +749,6 @@ const TransformInputValues = (S3Folders, S3EnumerationDepth, _) => {
   return Patharray
 }
 
-const GetRDSSettings = async (rds, params) => {
-  var promisedrdssettings = new Promise((resolve, reject) => {
-    rds.describeDBInstances(params, function (err, data) {
-      if (err) reject(err) // console.log(err, err.stack); // an error occurred
-      else resolve(data) // console.log(data);           // successful response
-    })
-  })
-  var settings = await promisedrdssettings
-  return settings
-}
-
 const ASGstatus = async (autoscaling, AutoScalingGroupNames) => {
   // todo make request in batches simmilar to getiamidentitiessegment(Marker)
   var params = {
@@ -914,8 +892,8 @@ const  maskcredentials = (mevent) => {
 
 export { 
   getssmparameter, setssmparameter, receiveSQSMessage, makeid, timeConverter, AddDDBEntry, deleteDDB, putDDB, putJSONDDB, 
-  queryDDB, UpdateDDB, SelectDBfromRegistry, ValidateToken, apigatewayresponse, newcfnresponse, getquerystringparameter,
-  eventpropertylookup, propertyvaluelookup, getcookies, S3GET, S3PUT, s3putdependencies, emptybucket,
-  GetAsgSettings, GroupAsgInstances, GetEC2InstancesMetrics, GetRDSInstancesMetrics, GetCWmetrics, CreatePeriod, average, 
-  getbuildstatus, walkfolders, TransformInputValues, GetRDSSettings, ASGstatus, deactivatequery, masktoken, maskcredentials
+  UpdateDDB, SelectDBfromRegistry, ValidateToken, apigatewayresponse, newcfnresponse, getquerystringparameter,
+  eventpropertylookup, propertyvaluelookup, getcookies, S3GET, S3PUT, s3putdependencies, emptybucket,GetAsgSettings,
+  GroupAsgInstances, GetEC2InstancesMetrics, GetRDSInstancesMetrics, GetCWmetrics, CreatePeriod, average, getbuildstatus,
+  walkfolders, TransformInputValues, ASGstatus, deactivatequery, masktoken, maskcredentials
 };

@@ -1,5 +1,8 @@
+/* eslint-disable array-callback-return */
 /* eslint-disable no-redeclare */
 /* eslint-disable no-var */
+/* eslint brace-style: ["error", "stroustrup"] */
+
 if (process.env.Environment !== 'LocalDev') {
   var modulespath = '../node_modules/'
 } else {
@@ -7,6 +10,7 @@ if (process.env.Environment !== 'LocalDev') {
 }
 
 const Sequelize = require(modulespath + 'sequelize')
+//import Sequelize from 'sequelize'
 
 const InvocationsModel = {
   jobid: {
@@ -306,18 +310,6 @@ const ConfigureSequalize= (DBEngineType)=>{
   return sequaliseconfig
 }
 
-exports.constructmodel = constructmodel
-exports.AddSqlEntry = AddSqlEntry
-exports.UpdateSqlEntry = UpdateSqlEntry
-exports.SelectSQLTable = SelectSQLTable
-exports.InitiateSQLConnection = InitiateSQLConnection
-exports.CloseSQLConnection = CloseSQLConnection
-exports.DBpropertylookup = DBpropertylookup
-exports.InvocationsModel = InvocationsModel
-exports.ProcessingErrorsModel = ProcessingErrorsModel
-exports.convertschema = convertschema
-exports.ConfigureSequalize=ConfigureSequalize
-
-// syntax info:
-// https://stackoverflow.com/questions/16631064/declare-multiple-module-exports-in-node-js
-// https://stackoverflow.com/questions/10554241/can-i-load-multiple-files-with-one-require-statement/10554457
+export { constructmodel, AddSqlEntry, UpdateSqlEntry, SelectSQLTable, InitiateSQLConnection, CloseSQLConnection,
+  DBpropertylookup, InvocationsModel, ProcessingErrorsModel, convertschema, ConfigureSequalize
+}

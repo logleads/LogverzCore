@@ -1,5 +1,5 @@
 // const helper = require("./worker/worker");
- import * as helper from './jobproducer/jobproducer.js'
+// import * as helper from './jobproducer/jobproducer.js'
 // const helper = require("./mastercontroller/mastercontroller");
 // import * as helper from './init/initiate.js';
 // const helper = require("./setconnectionparamsdb/setconnectionparamsdb");
@@ -13,5 +13,5 @@
 // const helper = require("./info/info");
 
 //import * as helper from './bootstrap/bootstrap.js'
-// const helper = require("./scale/scale");
+import * as helper from './scale/scale.js'
 helper.handler()

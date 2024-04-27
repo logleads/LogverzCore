@@ -74,7 +74,7 @@
 		"QueryString": {
 			"Type": "String",
 			"Default": "SELECT * FROM S3Object s",
-			"Description": "Specify here the S3 select query parameters. Syntax changes on datatype CloudTrail for example \"SELECT * FROM  S3Object[*].Records[*] s\", for additional examples check https://microsite.logverz.io/docs/intro. For complex queries, before execution we recommend testing on the S3 console or CLI. "
+			"Description": "Specify here the S3 select query parameters. Syntax changes on datatype CloudTrail for example \"SELECT * FROM  S3Object[*].Records[*] s\", for additional examples check https://docs.logverz.io/docs/Data%20Collection/CollectionRules For complex queries, before execution we recommend testing on the S3 console or CLI. "
 		},
 		"CustomQuerySchema": {
 			"Type": "String",
@@ -175,7 +175,7 @@
 				"Role": {
 					"Fn::GetAtt": ["JobProducerRole", "Arn"]
 				},
-				"Runtime": "nodejs18.x",
+				"Runtime": "nodejs20.x",
 				"Timeout": "30",
 				"MemorySize": "512"
 			}

@@ -103,3 +103,4 @@ infrastructure/webrtcproxycontrol/webrtcproxycontrol.zip
 scratch
 sources/webrtcproxy/landingpage/bundle.js
 sources/webrtcproxy/gotable.exe
+/infrastructure/public.key

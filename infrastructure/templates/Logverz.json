@@ -172,7 +172,7 @@
 			"AllowedValues" : ["nano", "micro", "small", "medium", "large"]
 		},
 		"TurnServerAmiId": {
-			"Description": "The Turn Server AMI ID as pare: https://discourse.ubuntu.com/t/finding-ubuntu-images-with-the-aws-ssm-parameter-store/15507",
+			"Description": "The Turn Server AMI ID as pare: https://documentation.ubuntu.com/aws/en/latest/aws-how-to/instances/find-ubuntu-images",
 			"Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
 			"Default": "/aws/service/canonical/ubuntu/server/20.04/stable/current/amd64/hvm/ebs-gp2/ami-id"
 		},
@@ -753,7 +753,7 @@
 				"Role": {
 					"Fn::GetAtt": ["InitiateRole", "Arn"]
 				},
-				"Runtime": "nodejs16.x",
+				"Runtime": "nodejs20.x",
 				"MemorySize":"256",
 				"Timeout": "360"
 			}

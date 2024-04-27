@@ -30,10 +30,9 @@ export const handler = async (event, context) => {
 
     var commonsharedpath=('file:///'+path.join(__dirname, 'commonsharedv3.js').replace(/\\/g, "/"))
     var commonshared=await GetConfiguration(commonsharedpath,'*')
-    //var commonshared = require('./commonsharedv3')
     const arnList = (context.invokedFunctionArn).split(':')
     var region = arnList[3]
-    var LocalPath = '/var/task/'
+    var LocalPath = 'file:///'+'/var/task/'
     var buildspecoverride = fs.readFileSync('./buildspec_init.yaml', 'utf8')
     var InitBucket = process.env.InitBucket
     var CBProjectName = process.env.CBProject
@@ -47,7 +46,7 @@ export const handler = async (event, context) => {
     console.log('THE EVENT: \n' + JSON.stringify(maskedevent) + '\n\n')
     console.log('context RECEIVED: ' + JSON.stringify(context))
     // Debug lambda function environment:
-    // var filename =path.resolve("./initenvironment.js");
+    // var filename =path.resolve("./initiate.js");
     // console.log(filename); ///var/task/initenvironment.js
     // var directorycontents=fs.readdirSync("/var/task/")
     // console.log (directorycontents+ "\n\n\n\n")
