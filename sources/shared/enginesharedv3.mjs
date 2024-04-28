@@ -2,15 +2,22 @@
 /* eslint-disable no-redeclare */
 /* eslint-disable no-var */
 /* eslint brace-style: ["error", "stroustrup"] */
+// import { fileURLToPath } from 'url'
+// import path from 'path'
+// const __filename = fileURLToPath(import.meta.url)
+// const __dirname = path.dirname(__filename)
+
 
 if (process.env.Environment !== 'LocalDev') {
-  var modulespath = '../node_modules/'
-} else {
-  var modulespath = '../controller/node_modules/'
+  var modulespath = '../node_modules/sequelize' //TODO add file:/// here !!
+
+} 
+else {
+  var modulespath = process.env.sequalisepath
+
 }
 
-const Sequelize = require(modulespath + 'sequelize')
-//import Sequelize from 'sequelize'
+const Sequelize =  await import(modulespath)
 
 const InvocationsModel = {
   jobid: {
@@ -237,55 +244,6 @@ const CloseSQLConnection = async (sequelize) => {
   return result
 }
 
-const DBpropertylookup = (connectionstringsarray, LogverzDBFriendlyName) => {
-  // TODO move this to commonshared so that sequelize package can be removed from scale.js.
-
-  for (var i = 0; i < connectionstringsarray.length; i++) {
-    var connectionstring = connectionstringsarray[i].split(',')
-    var CSLogverzDBFriendlyName = connectionstring.filter(s => s.includes('LogverzDBFriendlyName'))[0].split('=')[1]
-    
-    if (CSLogverzDBFriendlyName === LogverzDBFriendlyName) {
-      var DBEngineType = connectionstring.filter(s => s.includes('LogverzEngineType'))[0].split('=')[1]
-      var DBUserName = connectionstring.filter(s => s.includes('LogverzDBUserName'))[0].split('=')[1]
-      var DBEndpointName = connectionstring.filter(s => s.includes('LogverzDBEndpointName'))[0].split('=')[1]
-      var DBEndpointPort = connectionstring.filter(s => s.includes('LogverzDBEndpointPort'))[0].split('=')[1]
-      var DBSecretRef = connectionstring.filter(s => s.includes('LogverzDBSecretRef'))[0].split('=')[1]
-      var DBFriendlyName = connectionstring.filter(s => s.includes('LogverzDBFriendlyName'))[0].split('=')[1]
-
-      var LogverzDBClusterID = connectionstring.filter(s => s.includes('LogverzDBClusterID'))[0]
-      
-      if (DBEngineType.match('sqlserver')) {
-        // SQL server comes in many flavours express web standard enterprise and developer, we normalize it as mssql name convention defined by sequilize
-        DBEngineType = 'mssql'
-      }
-
-      if (LogverzDBClusterID !== undefined) {
-        var DBClusterID =LogverzDBClusterID.split('=')[1]
-      }
-      break
-    }
-  }
-
-  var result = {
-    DBEngineType,
-    DBUserName,
-    DBEndpointName,
-    DBEndpointPort,
-    DBSecretRef,
-    DBFriendlyName
-  }
-
-  if (typeof DBClusterID !== 'undefined') {
-    // if DBclusterid exists its a serverless database so we add it to the results 
-    //result['DBClusterID']+=DBClusterID
-     Object.defineProperty(result, 'DBClusterID', {
-       'value': DBClusterID
-    });
-  }
-
-  return result
-}
-
 const ConfigureSequalize= (DBEngineType)=>{
   
   var sequaliseconfig = {
@@ -309,7 +267,7 @@ const ConfigureSequalize= (DBEngineType)=>{
   }
   return sequaliseconfig
 }
-
-export { constructmodel, AddSqlEntry, UpdateSqlEntry, SelectSQLTable, InitiateSQLConnection, CloseSQLConnection,
-  DBpropertylookup, InvocationsModel, ProcessingErrorsModel, convertschema, ConfigureSequalize
+    
+export { constructmodel, AddSqlEntry, UpdateSqlEntry, SelectSQLTable, InitiateSQLConnection, 
+  CloseSQLConnection, InvocationsModel, ProcessingErrorsModel, convertschema, ConfigureSequalize
 }

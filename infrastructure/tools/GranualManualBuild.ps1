@@ -119,7 +119,7 @@ set-init-sources -projectpath $projectpath -extrafiles $extrafiles -builddirecto
 
 update-lambda -lambdafunctionname "Logverz-Initiate"`
               -projectpath $projectpath `
-              -lambdafunctionbundle "\sources\init\init_new.zip"
+              -lambdafunctionbundle "\sources\init\init.zip"
 
 
 
@@ -214,8 +214,8 @@ update-lambda -lambdafunctionname "Logverz-Info"`
 create-Bundle -zipfilename "scale.zip" `
               -projectpath $projectpath `
               -componentpath "\sources\scale"`
-              -files "db.js","scale.js","package.json","package-lock.json"`
-              -extrafiles "\sources\shared\engineshared.js","\sources\shared\commonshared.js","\sources\shared\package.json","\sources\shared\authenticationshared.js"
+              -files "scale.js","package.json","package-lock.json"`
+              -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\package.json","\sources\shared\authenticationsharedv3.js"
                    
 update-lambda -lambdafunctionname "Logverz-Scale"`
               -projectpath $projectpath `

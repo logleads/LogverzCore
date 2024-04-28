@@ -2,18 +2,16 @@
 /* eslint-disable no-redeclare */
 /* eslint-disable no-var */
 
-const getssmparameter = async (ssmclient, GetParameterCommand, params, ddclient, PutItemCommand, details) => {
+const getssmparameter = async (SSM, params, dynamodb, details) => {
   try {
-    // const ssmresult = await SSM.getParameter(params).promise()
-    const command = new GetParameterCommand(params);
-    const ssmresult = await ssmclient.send(command);
+    const ssmresult = await SSM.getParameter(params).promise()
     return ssmresult
   } catch (error) {
     const ssmresult = params.Name + ':     ' + error + '    SSM Parameter retrieval failed.'
     console.error(ssmresult)
     details.message = ssmresult
     try {
-      await AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'GetParameter', 'Error', 'Infra', details, 'API')
+      await AddDDBEntry(dynamodb, 'Logverz-Invocations', 'GetParameter', 'Error', 'Infra', details, 'API')
       return ssmresult
     } catch (error) {
       // at stack initialisation DynamoDB does not exists...
@@ -23,7 +21,7 @@ const getssmparameter = async (ssmclient, GetParameterCommand, params, ddclient,
   }
 }
 
-const setssmparameter = async (ssmclient, params, ddclient, details) => {
+const setssmparameter = async (SSM, params, dynamodb, details) => {
   try {
     const ssmresult = await SSM.putParameter(params).promise()
     return ssmresult
@@ -31,7 +29,7 @@ const setssmparameter = async (ssmclient, params, ddclient, details) => {
     const ssmresult = params.Name + ':     ' + error + '    SSM Parameter persistance failed.'
     console.error(ssmresult)
     details.message = ssmresult
-    await AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'SetParameter', 'Error', 'Infra', details, 'API')
+    await AddDDBEntry(dynamodb, 'Logverz-Invocations', 'SetParameter', 'Error', 'Infra', details, 'API')
     return ssmresult
   }
 }
@@ -91,7 +89,7 @@ const timeConverter = (UNIX_timestamp) => {
   return time
 }
 
-const AddDDBEntry = async (ddclient, PutItemCommand, DDBTableName, Action, Severity, Category, Details, Type) => {
+const AddDDBEntry = async (dynamodb, DDBTableName, Action, Severity, Category, Details, Type) => {
   var CurrentTime = Date.now().toString()
 
   var dbentryparams = {
@@ -126,11 +124,7 @@ const AddDDBEntry = async (ddclient, PutItemCommand, DDBTableName, Action, Sever
       S: Value
     }
   }
-  //return await dynamodb.putItem(dbentryparams).promise()
-
-  const command = new PutItemCommand(dbentryparams);
-  const response = await ddclient.send(command);
-  return response
+  return await dynamodb.putItem(dbentryparams).promise()
 }
 
 const deleteDDB = async (docClient, params) => {
@@ -199,6 +193,23 @@ const putJSONDDB = async (docClient, params) => {
   return queryresults
 }
 
+const queryDDB = async (docClient, params) => {
+
+  var promisedqueryresult = new Promise((resolve, reject) => {
+    docClient.query(params, function (err, data) {
+      if (err) {
+        console.error('Unable to query. Error:', JSON.stringify(err, null, 2))
+        reject(err)
+      } else {
+        // console.log("Query succeeded.");
+        resolve(data)
+      }
+    })
+  })
+  var queryresults = await promisedqueryresult
+  return queryresults
+}
+
 const SelectDBfromRegistry = (_, Registry, DBidentifier, mode) => {
   var connectionstringsarray = _.reject(Registry.Parameter.Value.split(',[[DBDELIM]]'), _.isEmpty)
 
@@ -217,55 +228,6 @@ const SelectDBfromRegistry = (_, Registry, DBidentifier, mode) => {
   }
 
   return DBidentifier
-}
-
-const DBpropertylookup = (connectionstringsarray, LogverzDBFriendlyName) => {
-  // TODO move this to commonshared so that sequelize package can be removed from scale.js.
-
-  for (var i = 0; i < connectionstringsarray.length; i++) {
-    var connectionstring = connectionstringsarray[i].split(',')
-    var CSLogverzDBFriendlyName = connectionstring.filter(s => s.includes('LogverzDBFriendlyName'))[0].split('=')[1]
-    
-    if (CSLogverzDBFriendlyName === LogverzDBFriendlyName) {
-      var DBEngineType = connectionstring.filter(s => s.includes('LogverzEngineType'))[0].split('=')[1]
-      var DBUserName = connectionstring.filter(s => s.includes('LogverzDBUserName'))[0].split('=')[1]
-      var DBEndpointName = connectionstring.filter(s => s.includes('LogverzDBEndpointName'))[0].split('=')[1]
-      var DBEndpointPort = connectionstring.filter(s => s.includes('LogverzDBEndpointPort'))[0].split('=')[1]
-      var DBSecretRef = connectionstring.filter(s => s.includes('LogverzDBSecretRef'))[0].split('=')[1]
-      var DBFriendlyName = connectionstring.filter(s => s.includes('LogverzDBFriendlyName'))[0].split('=')[1]
-
-      var LogverzDBClusterID = connectionstring.filter(s => s.includes('LogverzDBClusterID'))[0]
-      
-      if (DBEngineType.match('sqlserver')) {
-        // SQL server comes in many flavours express web standard enterprise and developer, we normalize it as mssql name convention defined by sequilize
-        DBEngineType = 'mssql'
-      }
-
-      if (LogverzDBClusterID !== undefined) {
-        var DBClusterID =LogverzDBClusterID.split('=')[1]
-      }
-      break
-    }
-  }
-
-  var result = {
-    DBEngineType,
-    DBUserName,
-    DBEndpointName,
-    DBEndpointPort,
-    DBSecretRef,
-    DBFriendlyName
-  }
-
-  if (typeof DBClusterID !== 'undefined') {
-    // if DBclusterid exists its a serverless database so we add it to the results 
-    //result['DBClusterID']+=DBClusterID
-    Object.defineProperty(result, 'DBClusterID', {
-      'value': DBClusterID
-    });
-  }
-
-  return result
 }
 
 const ValidateToken = (jwt, headers, cert) => {
@@ -369,39 +331,51 @@ const apigatewayresponse = (input, headers, AllowedOrigins) => {
 }
 
 const newcfnresponse= async (event, context, responseStatus, responseData) => {
-  
-  var responseBody = JSON.stringify({
-    Status: responseStatus,
-    Reason: "See the details in CloudWatch Log Stream: " + context.logStreamName,
-    PhysicalResourceId: context.logStreamName,
-    StackId: event.StackId,
-    RequestId: event.RequestId,
-    LogicalResourceId: event.LogicalResourceId,
-    NoEcho: false,
-    Data: responseData
-  });
 
-  console.log("Response body:\n", responseBody);
+  return new Promise((resolve, reject) => {
+      var responseBody = JSON.stringify({
+          Status: responseStatus,
+          Reason: "See the details in CloudWatch Log Stream: " + context.logStreamName,
+          PhysicalResourceId: context.logStreamName,
+          StackId: event.StackId,
+          RequestId: event.RequestId,
+          LogicalResourceId: event.LogicalResourceId,
+          NoEcho: false,
+          Data: responseData
+      });
 
-  var response = await fetch(event.ResponseURL, {
-    headers: { 
-      "Content-Type": "application/json",
-      'Content-Length': responseBody.length
-   },
-    method: 'PUT',
-    body: responseBody
+      console.log("Response body:\n", responseBody);
+
+      var https = require("https");
+      var url = require("url");
+
+      var parsedUrl = url.parse(event.ResponseURL);
+      var options = {
+          hostname: parsedUrl.hostname,
+          port: 443,
+          path: parsedUrl.path,
+          method: "PUT",
+          headers: {
+              "content-type": "application/json",
+              "content-length": responseBody.length
+          }
+      };
+
+      var request = https.request(options, function(response) {
+          console.log("Status code: " + response.statusCode);
+          console.log("Status message: " + response.statusMessage);
+          resolve(context.done());
+      });
+
+      request.on("error", function(error) {
+          console.log("send(..) failed executing https.request(..): " + error);
+          reject(context.done(error));
+      });
+
+      request.write(responseBody);
+      request.end();
   })
 
-  try {  
-    const result = await response.text()
-    console.log("Result: \n\n"+result)
-    //return context.done()
-    return result
-  } catch (error) {
-    console.error('Error:', error);
-    //return context.done(error)
-    return error
-  }
 }
 
 const getquerystringparameter = (parameter) => {
@@ -508,69 +482,6 @@ const S3PUT = async (s3, destinationbucket, destinationkey, data) => {
   // s3.upload... in s3copytet.js
 }
 
-const s3putdependencies = async (LocalPath, DstBucket, s3client, PutObjectCommand, fs, fileURLToPath, FileName) =>{
-
-  var content = fs.readFileSync(fileURLToPath(LocalPath))
-
-  const uploadParams = {
-    Bucket: DstBucket,
-    Key: FileName,
-    Body: content
-  }
-
-  const command = new PutObjectCommand(uploadParams)
-
-  try {
-    const s3result = await s3client.send(command)
-    console.log('Successfully put file ' + FileName + ' to: ' + DstBucket + ' bucket.')
-    return await s3result.ETag
-  }
-  catch (error) {
-      //console.error(error) // from creation or business logic
-      return await error
-  }
-  
-}
-
-const emptybucket= async  (s3client, ListObjectVersionsCommand, DeleteObjectCommand, bucket) =>{
-  const params = {
-    Bucket: bucket
-    //, MaxKeys: "10"
-  }
-  var allversions
-  await getallversions(s3client, ListObjectVersionsCommand, params, allversions = [])
-  console.log("In bucket '" + bucket + "' the total number of files are " + allversions.length)
-
-  const promises = allversions.map(onefile => {
-    const deleteParam = {
-      Bucket: onefile[0],
-      Key: onefile[1],
-      VersionId: onefile[2]
-    }
-
-    const command = new DeleteObjectCommand(deleteParam)
-    const response = s3client.send(command)
-    return response
-  })
-
-  const resolved = await Promise.all(promises)
-  console.log('finished emptying ' + bucket)
-  return resolved
-}
-
-const getallversions = async (s3client, ListObjectVersionsCommand,  params, allversions = []) => {
-  const command = new ListObjectVersionsCommand(params)
-  const response = await s3client.send(command)
-  response.Versions.forEach(obj => allversions.push([params.Bucket, obj.Key, obj.VersionId]))
-
-  if (response.NextVersionIdMarker) {
-    params.VersionIdMarker = response.NextVersionIdMarker
-    params.KeyMarker = response.NextKeyMarker
-    await getallversions(s3client, params, allversions) // RECURSIVE CALL
-  }
-  return allversions
-}
-
 const GetAsgSettings = async (autoscaling, params) => {
   var promisedasgsettings = new Promise((resolve, reject) => {
     autoscaling.describeAutoScalingGroups(params, function (err, data) {
@@ -612,8 +523,8 @@ const GetEC2InstancesMetrics = async (cloudwatch, instances, period) => {
   var time = CreatePeriod(period) // in minutes
 
   var params = {
-    StartTime: new Date(time.StartDate),
-    EndTime: new Date(time.Enddate),
+    StartTime: time.StartDate,
+    EndTime: time.Enddate,
     MetricDataQueries: CreateDataqueries('ec2', instances, metricslong),
     ScanBy: 'TimestampDescending'
   }
@@ -622,7 +533,7 @@ const GetEC2InstancesMetrics = async (cloudwatch, instances, period) => {
   return metrics
 }
 
-const GetRDSInstancesMetrics = async (cwclient, GetMetricDataCommand, activedbinstances, dbpropertiesarray) => {
+const GetRDSInstancesMetrics = async (cloudwatch, activedbinstances, dbpropertiesarray) => {
   var metricslong = Object.keys(dbpropertiesarray[0].CWMetrics)
   var maxperiod = Math.max(...(dbpropertiesarray.map(p => p.IdlePeriodMin)))
   var time = CreatePeriod(maxperiod) // in minutes
@@ -634,14 +545,25 @@ const GetRDSInstancesMetrics = async (cwclient, GetMetricDataCommand, activedbin
   })
 
   var params = {
-    StartTime: new Date(time.StartDate),
-    EndTime: new Date(time.Enddate),
+    StartTime: time.StartDate,
+    EndTime: time.Enddate,
     MetricDataQueries: CreateDataqueries('rds', dbinstances, metricslong),
     ScanBy: 'TimestampDescending'
   }
 
-  const command = new GetMetricDataCommand(params);
-  const metrics = await cwclient.send(command);
+  var metrics = await GetCWmetrics(cloudwatch, params)
+  return metrics
+}
+
+const GetCWmetrics = async (cloudwatch, params) => {
+  // https://docs.aws.amazon.com/AWSJavaScriptSDK/latest/AWS/CloudWatch.html#getMetricData-property
+  var promisedcwmetrics = new Promise((resolve, reject) => {
+    cloudwatch.getMetricData(params, function (err, data) {
+      if (err) reject(err) // console.log(err, err.stack); // an error occurred
+      else resolve(data) // console.log(data);           // successful response
+    })
+  })
+  var metrics = await promisedcwmetrics
   return metrics
 }
 
@@ -716,14 +638,20 @@ const average = (nums) => {
   }
 }
 
-const getbuildstatus = async (cbclient, BatchGetBuildsCommand, buildid) => {
+const getbuildstatus = async (codebuild, buildid) => {
   var params = {
     ids: buildid
   }
-
-  const command = new BatchGetBuildsCommand(params);
-  const buildresult = await cbclient.send(command);
-  return buildresult
+  return new Promise((resolve, reject) => {
+    codebuild.batchGetBuilds(params, function (err, data) {
+      if (err) {
+        console.log(err, err.stack)
+        reject(err)
+      } // an error occurred
+      // else     console.log(data);           // successful response
+      resolve(data)
+    })
+  })
 }
 
 const walkfolders = async (_, s3, dynamodb, commonshared, tobeprocessed, subfolderlist, getCommonPrefixes) => {
@@ -787,19 +715,31 @@ const TransformInputValues = (S3Folders, S3EnumerationDepth, _) => {
   return Patharray
 }
 
-const ASGstatus = async (AutoScalingClient, paginateDescribeAutoScalingGroups, AutoScalingGroupNames) => {
-  
-  const paginatorConfig = {
-    client: new AutoScalingClient({}),  
-    pageSize: 100
-  };
+const GetRDSSettings = async (rds, params) => {
+  var promisedrdssettings = new Promise((resolve, reject) => {
+    rds.describeDBInstances(params, function (err, data) {
+      if (err) reject(err) // console.log(err, err.stack); // an error occurred
+      else resolve(data) // console.log(data);           // successful response
+    })
+  })
+  var settings = await promisedrdssettings
+  return settings
+}
 
-  const paginator = paginateDescribeAutoScalingGroups(paginatorConfig, {AutoScalingGroupNames});
-  const ASGList = [];
-  for await (const oneasg of paginator) {
-    ASGList.push(...oneasg.AutoScalingGroups);
+const ASGstatus = async (autoscaling, AutoScalingGroupNames) => {
+  // todo make request in batches simmilar to getiamidentitiessegment(Marker)
+  var params = {
+    AutoScalingGroupNames
   }
-  return ASGList
+
+  var promisedasgsettings = new Promise((resolve, reject) => {
+    autoscaling.describeAutoScalingGroups(params, function (err, data) {
+      if (err) reject(err) // console.log(err, err.stack); // an error occurred
+      else resolve(data) // console.log(data);           // successful response
+    })
+  })
+  var settings = await promisedasgsettings
+  return settings.AutoScalingGroups
 }
 
 const deactivatequery = async (commonshared, docClient, DatabaseName, DBTableName, jobid) =>{
@@ -873,64 +813,38 @@ const masktoken = (maskedevent) => {
   return maskedevent
 }
 
-const maskcredentials = (mevent) => {
-
-  if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.TokenSigningPassphrase !== undefined) {
-    mevent.ResourceProperties.TokenSigningPassphrase = '****'
-    mevent.OldResourceProperties.TokenSigningPassphrase = '****'
-  } 
-  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "TokenSigningPassphrase")){
-      mevent.Parameters.filter(k=> k.ParameterKey === "TokenSigningPassphrase")[0].ParameterValue ='****'
-  }  
-  else if(mevent.ResourceProperties.TokenSigningPassphrase !== undefined) {
-    // at first deployment time no OldResourceProperties exists
-    mevent.ResourceProperties.TokenSigningPassphrase = '****'
-  }
-
-  if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.TurnSrvPassword !== undefined) {
-    mevent.ResourceProperties.TurnSrvPassword = '****'
-    mevent.OldResourceProperties.TurnSrvPassword = '****'
-  } 
-  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "TurnSrvPassword")){
-    mevent.Parameters.filter(k=> k.ParameterKey === "TurnSrvPassword")[0].ParameterValue ='****'
-  }  
-  else if (mevent.ResourceProperties.TurnSrvPassword !== undefined) {
-    // at first deployment time no OldResourceProperties exists
-    mevent.ResourceProperties.TurnSrvPassword = '****'
-  }
-
-  if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.WebRTCProxyKey !== undefined) {
-    mevent.ResourceProperties.WebRTCProxyKey = '****'
-    mevent.OldResourceProperties.WebRTCProxyKey = '****'
-  }
-  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "WebRTCProxyKey")){
-    mevent.Parameters.filter(k=> k.ParameterKey === "WebRTCProxyKey")[0].ParameterValue ='****'
-  }  
-  else if (mevent.ResourceProperties.WebRTCProxyKey !== undefined) {
-    // at first deployment time no OldResourceProperties exists
-    mevent.ResourceProperties.WebRTCProxyKey = '****'
-  }
-
-  if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.DBpassword !== undefined) {
-    mevent.ResourceProperties.DBpassword = '****'
-    mevent.OldResourceProperties.DBpassword = '****'
-  }
-  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "DBUserPasswd")){
-    mevent.Parameters.filter(k=> k.ParameterKey === "DBUserPasswd")[0].ParameterValue ='****'
-  }  
-  else if (mevent.ResourceProperties.DBpassword !== undefined) {
-    // at first deployment time no OldResourceProperties exists
-    mevent.ResourceProperties.DBpassword = '****'
-  }
-
-  return mevent
-}
-
-
-export { 
-  getssmparameter, setssmparameter, receiveSQSMessage, makeid, timeConverter, AddDDBEntry, deleteDDB, putDDB, putJSONDDB, 
-  UpdateDDB, SelectDBfromRegistry, DBpropertylookup, ValidateToken, apigatewayresponse, newcfnresponse, 
-  getquerystringparameter, eventpropertylookup, propertyvaluelookup, getcookies, S3GET, S3PUT, s3putdependencies, 
-  emptybucket, GetAsgSettings, GroupAsgInstances, GetEC2InstancesMetrics, GetRDSInstancesMetrics, CreatePeriod, 
-  average, getbuildstatus, walkfolders, TransformInputValues, ASGstatus, deactivatequery, masktoken, maskcredentials
-};
+exports.getssmparameter = getssmparameter
+exports.setssmparameter = setssmparameter
+exports.receiveSQSMessage = receiveSQSMessage
+exports.makeid = makeid
+exports.timeConverter = timeConverter
+exports.AddDDBEntry = AddDDBEntry
+exports.deleteDDB = deleteDDB
+exports.putDDB = putDDB
+exports.putJSONDDB = putJSONDDB
+exports.queryDDB = queryDDB
+exports.UpdateDDB = UpdateDDB
+exports.SelectDBfromRegistry = SelectDBfromRegistry
+exports.ValidateToken = ValidateToken
+exports.apigatewayresponse = apigatewayresponse
+exports.newcfnresponse = newcfnresponse
+exports.getquerystringparameter = getquerystringparameter
+exports.eventpropertylookup = eventpropertylookup
+exports.propertyvaluelookup = propertyvaluelookup
+exports.getcookies = getcookies
+exports.S3GET = S3GET
+exports.S3PUT = S3PUT
+exports.GetAsgSettings = GetAsgSettings
+exports.GroupAsgInstances = GroupAsgInstances
+exports.GetEC2InstancesMetrics = GetEC2InstancesMetrics
+exports.GetRDSInstancesMetrics = GetRDSInstancesMetrics
+exports.GetCWmetrics = GetCWmetrics
+exports.CreatePeriod = CreatePeriod
+exports.average = average
+exports.getbuildstatus = getbuildstatus
+exports.walkfolders = walkfolders
+exports.TransformInputValues = TransformInputValues
+exports.GetRDSSettings = GetRDSSettings
+exports.ASGstatus = ASGstatus
+exports.deactivatequery = deactivatequery
+exports.masktoken = masktoken

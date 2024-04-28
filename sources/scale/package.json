@@ -8,10 +8,16 @@
     "type": "git",
     "url": "https://logleads@dev.azure.com/logleads/Logverz/_git/Logverz"
   },
+  "type": "module",
   "author": "platformlead",
   "license": "LogLeads License 1.0",
   "dependencies": {
-    "aws-sdk": "^2.1596.0",
+    "@aws-sdk/client-auto-scaling": "^3.564.0",
+    "@aws-sdk/client-cloudwatch": "^3.564.0",
+    "@aws-sdk/client-dynamodb": "^3.564.0",
+    "@aws-sdk/client-rds": "^3.564.0",
+    "@aws-sdk/client-ssm": "^3.564.0",
+    "@aws-sdk/lib-dynamodb": "^3.564.0",
     "jsonwebtoken": "^9.0.2",
     "lodash": "^4.17.21",
     "lokijs": "^1.5.12",

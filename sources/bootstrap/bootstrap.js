@@ -3,9 +3,6 @@
 /* eslint-disable no-var */
 /* eslint brace-style: ["error", "stroustrup"] */
 
-// const fs = require('fs');
-//const path = require('path')
-//const fsPromises = require('fs').promises
 import { fileURLToPath } from 'url'
 import path from 'path'
 import fs from 'fs'
