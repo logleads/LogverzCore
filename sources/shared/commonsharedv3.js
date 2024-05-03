@@ -1,21 +1,24 @@
-/* eslint-disable no-undef-init */
+/* eslint-disable array-callback-return */
 /* eslint-disable no-redeclare */
 /* eslint-disable no-var */
+/* eslint brace-style: ["error", "stroustrup"] */
 
 const getssmparameter = async (ssmclient, GetParameterCommand, params, ddclient, PutItemCommand, details) => {
   try {
     // const ssmresult = await SSM.getParameter(params).promise()
-    const command = new GetParameterCommand(params);
-    const ssmresult = await ssmclient.send(command);
+    const command = new GetParameterCommand(params)
+    const ssmresult = await ssmclient.send(command)
     return ssmresult
-  } catch (error) {
+  }
+  catch (error) {
     const ssmresult = params.Name + ':     ' + error + '    SSM Parameter retrieval failed.'
     console.error(ssmresult)
     details.message = ssmresult
     try {
       await AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'GetParameter', 'Error', 'Infra', details, 'API')
       return ssmresult
-    } catch (error) {
+    }
+    catch (error) {
       // at stack initialisation DynamoDB does not exists...
       console.error('Error saving execution results to Logverz-Invocations table.')
       return ssmresult
@@ -23,11 +26,13 @@ const getssmparameter = async (ssmclient, GetParameterCommand, params, ddclient,
   }
 }
 
-const setssmparameter = async (ssmclient, params, ddclient, details) => {
+const setssmparameter = async (ssmclient, PutItemCommand, PutParameterCommand, params, ddclient, details) => {
   try {
-    const ssmresult = await SSM.putParameter(params).promise()
+    const command = new PutParameterCommand(params)
+    const ssmresult = await ssmclient.send(command)
     return ssmresult
-  } catch (error) {
+  }
+  catch (error) {
     const ssmresult = params.Name + ':     ' + error + '    SSM Parameter persistance failed.'
     console.error(ssmresult)
     details.message = ssmresult
@@ -36,12 +41,12 @@ const setssmparameter = async (ssmclient, params, ddclient, details) => {
   }
 }
 
-const receiveSQSMessage = async function (QueueURL, sqs) {
+const receiveSQSMessage = async function (sqsclient, ReceiveMessageCommand, QueueURL, maxmessagenumber) {
   var params = {
     AttributeNames: [
       'SentTimestamp'
     ],
-    MaxNumberOfMessages: 1,
+    MaxNumberOfMessages: maxmessagenumber,
     MessageAttributeNames: [
       'All'
     ],
@@ -49,20 +54,9 @@ const receiveSQSMessage = async function (QueueURL, sqs) {
     VisibilityTimeout: 90,
     WaitTimeSeconds: 0
   }
-  return new Promise((resolve, reject) => {
-    sqs.receiveMessage(params, function (err, data) {
-      if (err) {
-        reject(err)
-        console.log('Receive Error', err)
-      } else if (data.Messages) {
-        resolve(data.Messages)
-      } else {
-        var msg = 'No message in Queue...'
-        reject(msg)
-        console.log(msg)
-      }
-    }) // sqs
-  }) // promise
+ 
+  const command = new ReceiveMessageCommand(params)
+  return await sqsclient.send(command)
 }
 
 const makeid = (length) => {
@@ -126,21 +120,20 @@ const AddDDBEntry = async (ddclient, PutItemCommand, DDBTableName, Action, Sever
       S: Value
     }
   }
-  //return await dynamodb.putItem(dbentryparams).promise()
 
-  const command = new PutItemCommand(dbentryparams);
-  const response = await ddclient.send(command);
+  const command = new PutItemCommand(dbentryparams)
+  const response = await ddclient.send(command)
   return response
 }
 
 const deleteDDB = async (docClient, params) => {
-
   var promiseddelete = new Promise((resolve, reject) => {
     docClient.delete(params, function (err, data) {
       if (err) {
         console.error('Unable to delete item. Error JSON:', JSON.stringify(err, null, 2))
         reject(err)
-      } else {
+      }
+      else {
         console.log('Delete Item succeeded:', JSON.stringify(params.Key, null, 2))
         resolve(data)
       }
@@ -150,24 +143,6 @@ const deleteDDB = async (docClient, params) => {
   return deleteresult
 }
 
-const UpdateDDB = async (docClient, params) => {
-
-  var promisedupdate = new Promise((resolve, reject) => {
-    docClient.update(params, function (err, data) {
-      if (err) {
-        console.error('Unable to update item. Error JSON:', JSON.stringify(err, null, 2))
-        reject(err)
-      } else {
-        var message = 'Update Item succeeded:' + JSON.stringify(params.Key, null, 2)
-        // console.log(message);
-        resolve(message)
-      }
-    })
-  })
-  var updateresult = await promisedupdate
-  return updateresult
-}
-
 const putDDB = async (dynamodb, params) => {
   var promisedput = new Promise((resolve, reject) => {
     dynamodb.putItem(params, function (err, data) {
@@ -175,7 +150,8 @@ const putDDB = async (dynamodb, params) => {
         console.log(err, err.stack)
         reject(err)
         // an error occurred
-      } else resolve(data) // console.log(data);           // successful response
+      }
+      else resolve(data) // console.log(data);           // successful response
     })
   })
   var putresults = await promisedput
@@ -183,13 +159,13 @@ const putDDB = async (dynamodb, params) => {
 }
 
 const putJSONDDB = async (docClient, params) => {
-
   var promisedputresult = new Promise((resolve, reject) => {
     docClient.put(params, function (err, data) {
       if (err) {
         console.error('Unable to put data to DynamoDB. Error:', JSON.stringify(err, null, 2))
         reject(err)
-      } else {
+      }
+      else {
         // console.log("Query succeeded.");
         resolve(data)
       }
@@ -209,7 +185,8 @@ const SelectDBfromRegistry = (_, Registry, DBidentifier, mode) => {
       if (mode === 'idonly') {
         var DBEndpointName = connectionstring.filter(s => s.includes('LogverzDBEndpointName'))[0].split('=')[1]
         DBidentifier = DBEndpointName.split('.')[0]
-      } else {
+      }
+      else {
         var DBidentifier = connectionstringsarray[i].replace(/,/g, '<!!>')
       }
       break
@@ -225,7 +202,7 @@ const DBpropertylookup = (connectionstringsarray, LogverzDBFriendlyName) => {
   for (var i = 0; i < connectionstringsarray.length; i++) {
     var connectionstring = connectionstringsarray[i].split(',')
     var CSLogverzDBFriendlyName = connectionstring.filter(s => s.includes('LogverzDBFriendlyName'))[0].split('=')[1]
-    
+
     if (CSLogverzDBFriendlyName === LogverzDBFriendlyName) {
       var DBEngineType = connectionstring.filter(s => s.includes('LogverzEngineType'))[0].split('=')[1]
       var DBUserName = connectionstring.filter(s => s.includes('LogverzDBUserName'))[0].split('=')[1]
@@ -235,14 +212,14 @@ const DBpropertylookup = (connectionstringsarray, LogverzDBFriendlyName) => {
       var DBFriendlyName = connectionstring.filter(s => s.includes('LogverzDBFriendlyName'))[0].split('=')[1]
 
       var LogverzDBClusterID = connectionstring.filter(s => s.includes('LogverzDBClusterID'))[0]
-      
+
       if (DBEngineType.match('sqlserver')) {
         // SQL server comes in many flavours express web standard enterprise and developer, we normalize it as mssql name convention defined by sequilize
         DBEngineType = 'mssql'
       }
 
       if (LogverzDBClusterID !== undefined) {
-        var DBClusterID =LogverzDBClusterID.split('=')[1]
+        var DBClusterID = LogverzDBClusterID.split('=')[1]
       }
       break
     }
@@ -258,11 +235,11 @@ const DBpropertylookup = (connectionstringsarray, LogverzDBFriendlyName) => {
   }
 
   if (typeof DBClusterID !== 'undefined') {
-    // if DBclusterid exists its a serverless database so we add it to the results 
-    //result['DBClusterID']+=DBClusterID
+    // if DBclusterid exists its a serverless database so we add it to the results
+    // result['DBClusterID']+=DBClusterID
     Object.defineProperty(result, 'DBClusterID', {
-      'value': DBClusterID
-    });
+      value: DBClusterID
+    })
   }
 
   return result
@@ -279,19 +256,23 @@ const ValidateToken = (jwt, headers, cert) => {
     tokenobject.value = 'Error: No authentication token was found in the request. Please log in to the application.'
     tokenobject.state = false
     console.error(JSON.stringify(tokenobject))
-  } else {
+  }
+  else {
     // cookies comming fromAPI gateway are of type strings
     if (headers.Authorization !== undefined) {
       var token = headers.Authorization.split(' ')[1]
-    } else if (typeof (headers.cookies) !== 'object') {
+    }
+    else if (typeof (headers.cookies) !== 'object') {
       var cookiearray = cookies.split(';')
       var LogverzAuthCookie = cookiearray.filter(i => i.includes('LogverzAuthToken')) // https://stackoverflow.com/questions/4556099/in-javascript-how-do-you-search-an-array-for-a-substring-match
       if (LogverzAuthCookie.length !== 0) {
         var token = LogverzAuthCookie[0].split('=')[1]
-      } else {
+      }
+      else {
         var token = 'missing'
       }
-    } else {
+    }
+    else {
       // cookies parsed by webrtcproxy are object.
       var token = cookies.LogverzAuthToken
     }
@@ -302,12 +283,14 @@ const ValidateToken = (jwt, headers, cert) => {
           algorithms: ['RS512']
         })
         // console.log(JSON.stringify(tokenobject))
-      } catch (tokenvalidationerror) {
+      }
+      catch (tokenvalidationerror) {
         console.log(tokenvalidationerror)
         tokenobject.value = tokenvalidationerror
         tokenobject.state = false
       }
-    } else {
+    }
+    else {
       tokenobject.value = 'Error: No authentication token was found in the request.'
       tokenobject.state = false
       console.error(JSON.stringify(tokenobject))
@@ -317,17 +300,18 @@ const ValidateToken = (jwt, headers, cert) => {
 }
 
 const apigatewayresponse = (input, headers, AllowedOrigins) => {
-  
-  if (input.header['Content-Type'] !== null && input.header['Content-Type'] !==undefined) {
+  if (input.header['Content-Type'] !== null && input.header['Content-Type'] !== undefined) {
     var contenttype = input.header['Content-Type']
-  } else {
+  }
+  else {
     var contenttype = 'application/json'
   }
 
   if (headers.origin !== null && (AllowedOrigins.split(',').map(p => p.includes(headers.origin)).includes(true))) {
     // set origin dynamically in case the response comes from a known / accepted source.
     var origin = headers.origin
-  } else {
+  }
+  else {
     var origin = '*' // * effective Deny as Cross origin resource sharing with credentials are not allowed by browsers
   }
 
@@ -345,7 +329,8 @@ const apigatewayresponse = (input, headers, AllowedOrigins) => {
       },
       body: message
     }
-  } else {
+  }
+  else {
     var response = {
       statusCode: input.status,
       headers: {
@@ -368,38 +353,38 @@ const apigatewayresponse = (input, headers, AllowedOrigins) => {
   return response
 }
 
-const newcfnresponse= async (event, context, responseStatus, responseData) => {
-  
+const newcfnresponse = async (event, context, responseStatus, responseData) => {
   var responseBody = JSON.stringify({
     Status: responseStatus,
-    Reason: "See the details in CloudWatch Log Stream: " + context.logStreamName,
+    Reason: 'See the details in CloudWatch Log Stream: ' + context.logStreamName,
     PhysicalResourceId: context.logStreamName,
     StackId: event.StackId,
     RequestId: event.RequestId,
     LogicalResourceId: event.LogicalResourceId,
     NoEcho: false,
     Data: responseData
-  });
+  })
 
-  console.log("Response body:\n", responseBody);
+  console.log('Response body:\n', responseBody)
 
   var response = await fetch(event.ResponseURL, {
-    headers: { 
-      "Content-Type": "application/json",
+    headers: {
+      'Content-Type': 'application/json',
       'Content-Length': responseBody.length
-   },
+    },
     method: 'PUT',
     body: responseBody
   })
 
-  try {  
+  try {
     const result = await response.text()
-    console.log("Result: \n\n"+result)
-    //return context.done()
+    console.log('Result: \n\n' + result)
+    // return context.done()
     return result
-  } catch (error) {
-    console.error('Error:', error);
-    //return context.done(error)
+  }
+  catch (error) {
+    console.error('Error:', error)
+    // return context.done(error)
     return error
   }
 }
@@ -408,7 +393,8 @@ const getquerystringparameter = (parameter) => {
   var result = null
   try {
     result = parameter
-  } catch (querystringerror) {
+  }
+  catch (querystringerror) {
     result = querystringerror
     console.log(querystringerror)
   }
@@ -420,28 +406,35 @@ const eventpropertylookup = (event, property, type) => {
     var value = undefined
     try {
       value = event.queryStringParameters[property]
-    } catch {
+    }
+    catch {
       // console.error(err)
     }
-  } else if (type === 'root') {
+  }
+  else if (type === 'root') {
     var value = undefined
     try {
       value = event[property]
-    } catch {
+    }
+    catch {
       // console.error(err)
     }
-  } else if (type === 'headers') {
+  }
+  else if (type === 'headers') {
     var value = undefined
     try {
       value = event.headers[property]
-    } catch {
+    }
+    catch {
       // console.error(err)
     }
-  } else {
+  }
+  else {
     var value = undefined
     try {
       value = event.ResourceProperties[property]
-    } catch (err) {
+    }
+    catch (err) {
       console.log('error at function requestproperty lookup:')
       console.error(err)
     }
@@ -453,7 +446,8 @@ const propertyvaluelookup = (string) => {
   var result = null
   try {
     result = string[0].split('=')[1]
-  } catch (e) {
+  }
+  catch (e) {
     result = 'none'
   }
   return result
@@ -463,11 +457,14 @@ const getcookies = (headers) => {
   // Different browsers and browser version handle cookies differently
   if (headers.cookie !== undefined) {
     var cookies = headers.cookie
-  } else if (headers.Cookie !== undefined) {
+  }
+  else if (headers.Cookie !== undefined) {
     var cookies = headers.Cookie
-  } else if (headers.cookies !== undefined) {
+  }
+  else if (headers.cookies !== undefined) {
     var cookies = headers.cookies
-  } else {
+  }
+  else {
     var cookies = undefined
   }
   return cookies
@@ -480,7 +477,8 @@ const S3GET = async (s3, requestbucket, requestedfile) => {
   }
   try {
     var data = await s3.getObject(getParams).promise()
-  } catch (e) {
+  }
+  catch (e) {
     var data = e
   }
 
@@ -500,7 +498,8 @@ const S3PUT = async (s3, destinationbucket, destinationkey, data) => {
 
   try {
     var data = await s3.putObject(putparams).promise()
-  } catch (e) {
+  }
+  catch (e) {
     var data = e
   }
   return data
@@ -508,8 +507,7 @@ const S3PUT = async (s3, destinationbucket, destinationkey, data) => {
   // s3.upload... in s3copytet.js
 }
 
-const s3putdependencies = async (LocalPath, DstBucket, s3client, PutObjectCommand, fs, fileURLToPath, FileName) =>{
-
+const s3putdependencies = async (LocalPath, DstBucket, s3client, PutObjectCommand, fs, fileURLToPath, FileName) => {
   var content = fs.readFileSync(fileURLToPath(LocalPath))
 
   const uploadParams = {
@@ -526,13 +524,12 @@ const s3putdependencies = async (LocalPath, DstBucket, s3client, PutObjectComman
     return await s3result.ETag
   }
   catch (error) {
-      //console.error(error) // from creation or business logic
-      return await error
+    // console.error(error) // from creation or business logic
+    return await error
   }
-  
 }
 
-const emptybucket= async  (s3client, ListObjectVersionsCommand, DeleteObjectCommand, bucket) =>{
+const emptybucket = async (s3client, ListObjectVersionsCommand, DeleteObjectCommand, bucket) => {
   const params = {
     Bucket: bucket
     //, MaxKeys: "10"
@@ -558,7 +555,7 @@ const emptybucket= async  (s3client, ListObjectVersionsCommand, DeleteObjectComm
   return resolved
 }
 
-const getallversions = async (s3client, ListObjectVersionsCommand,  params, allversions = []) => {
+const getallversions = async (s3client, ListObjectVersionsCommand, params, allversions = []) => {
   const command = new ListObjectVersionsCommand(params)
   const response = await s3client.send(command)
   response.Versions.forEach(obj => allversions.push([params.Bucket, obj.Key, obj.VersionId]))
@@ -607,7 +604,7 @@ const GroupAsgInstances = (asgsettings) => {
   }
 }
 
-const GetEC2InstancesMetrics = async (cloudwatch, instances, period) => {
+const GetEC2InstancesMetrics = async (cwclient, GetMetricDataCommand, instances, period) => {
   var metricslong = ['AWS/EC2:CPUUtilization', 'AWS/EC2:CPUCreditBalance']
   var time = CreatePeriod(period) // in minutes
 
@@ -618,7 +615,8 @@ const GetEC2InstancesMetrics = async (cloudwatch, instances, period) => {
     ScanBy: 'TimestampDescending'
   }
 
-  var metrics = await GetCWmetrics(cloudwatch, params)
+  const command = new GetMetricDataCommand(params)
+  const metrics = await cwclient.send(command)
   return metrics
 }
 
@@ -640,8 +638,8 @@ const GetRDSInstancesMetrics = async (cwclient, GetMetricDataCommand, activedbin
     ScanBy: 'TimestampDescending'
   }
 
-  const command = new GetMetricDataCommand(params);
-  const metrics = await cwclient.send(command);
+  const command = new GetMetricDataCommand(params)
+  const metrics = await cwclient.send(command)
   return metrics
 }
 
@@ -664,7 +662,8 @@ function CreateDataqueries (type, instancelist, metricslong) {
   for (var item in instancelist) {
     if (type === 'ec2') {
       var instance = instancelist[item].InstanceId
-    } else if (type === 'rds') {
+    }
+    else if (type === 'rds') {
       var onedbproperties = instancelist[item]
       var instance = onedbproperties.DBInstanceIdentifier
     }
@@ -677,7 +676,8 @@ function CreateDataqueries (type, instancelist, metricslong) {
       if (type === 'ec2') {
         var property = 'InstanceId' // Dimension property
         var stattype = 'Average'
-      } else if (type === 'rds') {
+      }
+      else if (type === 'rds') {
         var property = 'DBInstanceIdentifier' // Dimension property
         var stattype = onedbproperties.CWMetrics[(namespace + ':' + name)]
       }
@@ -711,7 +711,8 @@ const average = (nums) => {
   // kudos https://jrsinclair.com/articles/2019/five-ways-to-average-with-js-reduce/
   if (nums.length === 0) {
     return 0
-  } else {
+  }
+  else {
     return nums.reduce((a, b) => (a + b)) / nums.length
   }
 }
@@ -721,12 +722,12 @@ const getbuildstatus = async (cbclient, BatchGetBuildsCommand, buildid) => {
     ids: buildid
   }
 
-  const command = new BatchGetBuildsCommand(params);
-  const buildresult = await cbclient.send(command);
+  const command = new BatchGetBuildsCommand(params)
+  const buildresult = await cbclient.send(command)
   return buildresult
 }
 
-const walkfolders = async (_, s3, dynamodb, commonshared, tobeprocessed, subfolderlist, getCommonPrefixes) => {
+const walkfolders = async (_, s3client, ListObjectsV2Command, ddclient, PutItemCommand, commonshared, tobeprocessed, subfolderlist, getCommonPrefixes, callerid) => {
   for (const item of tobeprocessed) {
     var folder = item[0]
     var bucket = item[1]
@@ -742,7 +743,7 @@ const walkfolders = async (_, s3, dynamodb, commonshared, tobeprocessed, subfold
       continue
     }
 
-    const subfolder = await getCommonPrefixes(dynamodb, commonshared, s3, {
+    const subfolder = await getCommonPrefixes(callerid, ddclient, PutItemCommand, commonshared, s3client, ListObjectsV2Command, {
       Bucket: bucket,
       Prefix: folder,
       Delimiter: delimiter
@@ -754,7 +755,8 @@ const walkfolders = async (_, s3, dynamodb, commonshared, tobeprocessed, subfold
       if (delim === '/') {
         subfolderlist.push(object)
         _.pull(tobeprocessed, object)
-      } else {
+      }
+      else {
         tobeprocessed.push([prfx, bucket, '/', maxdepth]) // delim
       }
     })
@@ -776,7 +778,8 @@ const TransformInputValues = (S3Folders, S3EnumerationDepth, _) => {
       var maxdepth = parseInt(S3EnumerationDepth) + currentdepth
       Patharray.push([prefix, bucket, delimiter, maxdepth])
     })
-  } else {
+  }
+  else {
     var oneresult = S3Folders
     var prefix = oneresult.split('/').slice(3).join('/')
     var bucket = oneresult.split('/').slice(1)[1]
@@ -788,22 +791,20 @@ const TransformInputValues = (S3Folders, S3EnumerationDepth, _) => {
 }
 
 const ASGstatus = async (AutoScalingClient, paginateDescribeAutoScalingGroups, AutoScalingGroupNames) => {
-  
   const paginatorConfig = {
-    client: new AutoScalingClient({}),  
+    client: new AutoScalingClient({}),
     pageSize: 100
-  };
+  }
 
-  const paginator = paginateDescribeAutoScalingGroups(paginatorConfig, {AutoScalingGroupNames});
-  const ASGList = [];
+  const paginator = paginateDescribeAutoScalingGroups(paginatorConfig, { AutoScalingGroupNames })
+  const ASGList = []
   for await (const oneasg of paginator) {
-    ASGList.push(...oneasg.AutoScalingGroups);
+    ASGList.push(...oneasg.AutoScalingGroups)
   }
   return ASGList
 }
 
-const deactivatequery = async (commonshared, docClient, DatabaseName, DBTableName, jobid) =>{
-   
+const deactivatequery = async (docClient, QueryCommand, UpdateCommand, DatabaseName, DBTableName, jobid) => {
   const TableName = 'Logverz-Queries'
   const queryparams = {
     TableName,
@@ -821,20 +822,24 @@ const deactivatequery = async (commonshared, docClient, DatabaseName, DBTableNam
     IndexName: 'TableName'
   }
 
-  const data = (await commonshared.queryDDB(docClient, queryparams)).Items
+  // const data = (await commonshared.queryDDB(docClient, queryparams)).Items
+  const command = new QueryCommand(queryparams)
+  var data = (await docClient.send(command)).Items
 
-  if (jobid !== false){
+  if (jobid !== false) {
     var lisofupdateitems = data.filter(d => d.QuerySettings.JobID !== jobid).map(i => {
       return [i.UsersQuery, i.UnixTime]
     })
   }
-  else{
-    var lisofupdateitems=data.map(d=>{return [d.UsersQuery, d.UnixTime,d.TableName,d.QueryType]})
+  else {
+    var lisofupdateitems = data.map(d => {
+      return [d.UsersQuery, d.UnixTime, d.TableName, d.QueryType]
+    })
   }
 
-  for await (item of lisofupdateitems) {
+  for await (var item of lisofupdateitems) {
     console.log('Setting UsersQuery ' + item[0] + ' at ' + item[1] + " 'Active: false'.")
-    if (item[2]!==undefined){
+    if (item[2] !== undefined) {
       console.log('Corresponding TableName ' + item[2] + " and QueryType'" + item[3] + " '.")
     }
     const updateparams = {
@@ -849,12 +854,19 @@ const deactivatequery = async (commonshared, docClient, DatabaseName, DBTableNam
       },
       ReturnValues: 'UPDATED_NEW'
     }
-    var updateresult = (await commonshared.UpdateDDB(docClient, updateparams))
-    console.log(updateresult)
-  }
-  return updateresult
-}
 
+    const command = new UpdateCommand(updateparams)
+    try {
+      await docClient.send(command)
+      var message = 'Update Item succeeded:' + JSON.stringify(updateparams.Key, null, 2)
+      console.log('\n' + message)
+    }
+    catch (error) {
+      console.error('Unable to update item. Error JSON:', JSON.stringify(error, null, 2))
+    }
+  }
+  // return updateresult
+}
 const masktoken = (maskedevent) => {
   if (maskedevent.headers !== undefined && maskedevent.headers.Authorization !== undefined) {
     maskedevent.headers.Authorization = '****'
@@ -874,15 +886,14 @@ const masktoken = (maskedevent) => {
 }
 
 const maskcredentials = (mevent) => {
-
   if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.TokenSigningPassphrase !== undefined) {
     mevent.ResourceProperties.TokenSigningPassphrase = '****'
     mevent.OldResourceProperties.TokenSigningPassphrase = '****'
-  } 
-  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "TokenSigningPassphrase")){
-      mevent.Parameters.filter(k=> k.ParameterKey === "TokenSigningPassphrase")[0].ParameterValue ='****'
-  }  
-  else if(mevent.ResourceProperties.TokenSigningPassphrase !== undefined) {
+  }
+  else if (mevent.Parameters !== undefined && mevent.Parameters.some(k => k.ParameterKey === 'TokenSigningPassphrase')) {
+    mevent.Parameters.filter(k => k.ParameterKey === 'TokenSigningPassphrase')[0].ParameterValue = '****'
+  }
+  else if (mevent.ResourceProperties.TokenSigningPassphrase !== undefined) {
     // at first deployment time no OldResourceProperties exists
     mevent.ResourceProperties.TokenSigningPassphrase = '****'
   }
@@ -890,10 +901,10 @@ const maskcredentials = (mevent) => {
   if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.TurnSrvPassword !== undefined) {
     mevent.ResourceProperties.TurnSrvPassword = '****'
     mevent.OldResourceProperties.TurnSrvPassword = '****'
-  } 
-  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "TurnSrvPassword")){
-    mevent.Parameters.filter(k=> k.ParameterKey === "TurnSrvPassword")[0].ParameterValue ='****'
-  }  
+  }
+  else if (mevent.Parameters !== undefined && mevent.Parameters.some(k => k.ParameterKey === 'TurnSrvPassword')) {
+    mevent.Parameters.filter(k => k.ParameterKey === 'TurnSrvPassword')[0].ParameterValue = '****'
+  }
   else if (mevent.ResourceProperties.TurnSrvPassword !== undefined) {
     // at first deployment time no OldResourceProperties exists
     mevent.ResourceProperties.TurnSrvPassword = '****'
@@ -903,9 +914,9 @@ const maskcredentials = (mevent) => {
     mevent.ResourceProperties.WebRTCProxyKey = '****'
     mevent.OldResourceProperties.WebRTCProxyKey = '****'
   }
-  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "WebRTCProxyKey")){
-    mevent.Parameters.filter(k=> k.ParameterKey === "WebRTCProxyKey")[0].ParameterValue ='****'
-  }  
+  else if (mevent.Parameters !== undefined && mevent.Parameters.some(k => k.ParameterKey === 'WebRTCProxyKey')) {
+    mevent.Parameters.filter(k => k.ParameterKey === 'WebRTCProxyKey')[0].ParameterValue = '****'
+  }
   else if (mevent.ResourceProperties.WebRTCProxyKey !== undefined) {
     // at first deployment time no OldResourceProperties exists
     mevent.ResourceProperties.WebRTCProxyKey = '****'
@@ -915,9 +926,9 @@ const maskcredentials = (mevent) => {
     mevent.ResourceProperties.DBpassword = '****'
     mevent.OldResourceProperties.DBpassword = '****'
   }
-  else if(mevent.Parameters !== undefined && mevent.Parameters.some(k=> k.ParameterKey === "DBUserPasswd")){
-    mevent.Parameters.filter(k=> k.ParameterKey === "DBUserPasswd")[0].ParameterValue ='****'
-  }  
+  else if (mevent.Parameters !== undefined && mevent.Parameters.some(k => k.ParameterKey === 'DBUserPasswd')) {
+    mevent.Parameters.filter(k => k.ParameterKey === 'DBUserPasswd')[0].ParameterValue = '****'
+  }
   else if (mevent.ResourceProperties.DBpassword !== undefined) {
     // at first deployment time no OldResourceProperties exists
     mevent.ResourceProperties.DBpassword = '****'
@@ -926,11 +937,10 @@ const maskcredentials = (mevent) => {
   return mevent
 }
 
-
-export { 
-  getssmparameter, setssmparameter, receiveSQSMessage, makeid, timeConverter, AddDDBEntry, deleteDDB, putDDB, putJSONDDB, 
-  UpdateDDB, SelectDBfromRegistry, DBpropertylookup, ValidateToken, apigatewayresponse, newcfnresponse, 
-  getquerystringparameter, eventpropertylookup, propertyvaluelookup, getcookies, S3GET, S3PUT, s3putdependencies, 
-  emptybucket, GetAsgSettings, GroupAsgInstances, GetEC2InstancesMetrics, GetRDSInstancesMetrics, CreatePeriod, 
-  average, getbuildstatus, walkfolders, TransformInputValues, ASGstatus, deactivatequery, masktoken, maskcredentials
-};
+export {
+  getssmparameter, setssmparameter, receiveSQSMessage, makeid, timeConverter, AddDDBEntry, deleteDDB, putDDB, putJSONDDB,
+  SelectDBfromRegistry, DBpropertylookup, ValidateToken, apigatewayresponse, newcfnresponse, getquerystringparameter,
+  eventpropertylookup, propertyvaluelookup, getcookies, S3GET, S3PUT, s3putdependencies, emptybucket, GetAsgSettings,
+  GroupAsgInstances, GetEC2InstancesMetrics, GetRDSInstancesMetrics, CreatePeriod, average, getbuildstatus,
+  walkfolders, TransformInputValues, ASGstatus, deactivatequery, masktoken, maskcredentials
+}

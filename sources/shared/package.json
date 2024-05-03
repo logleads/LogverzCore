@@ -2,7 +2,7 @@
   "name": "Logverz",
   "version": "0.7.00",
   "description": "Log Interpreter Serverless Application: shared functions module",
-  "main": "engineshared.js",
+  "main": "enginesharedv3.mjs",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -10,9 +10,7 @@
     "type": "git",
     "url": "https://logleads@dev.azure.com/logleads/Logverz/_git/Logverz"
   },
+  "type": "module",
   "author": "platformlead",
-  "license": "LogLeads License 1.0",
-  "dependencies": {
-    "aws-sdk": "^2.588.0"
-  }
+  "license": "LogLeads License 1.0"
 }

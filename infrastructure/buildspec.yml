@@ -1,9 +1,14 @@
 version: 0.2
 phases:
+  install:
+    runtime-versions:
+      nodejs: 18
   build:
     commands:
+       - n 20 --offline
        - mkdir build
-       - npm --version
+       #- npm --version
+       - node --version
        #- npm install
        - ls -la
        - node controller.js

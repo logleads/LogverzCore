@@ -1,18 +1,12 @@
-/* eslint-disable array-callback-return */
 /* eslint-disable no-redeclare */
 /* eslint-disable no-var */
-/* eslint brace-style: ["error", "stroustrup"] */
-
-if (process.env.CODEBUILD_SRC_DIR !== undefined) {
-  // codebuild environment (controller.js) path is dynamic.
-  var sequelizepath = 'file:///' + process.env.CODEBUILD_SRC_DIR + '/node_modules/sequelize/lib/index.mjs'
-}
-else {
-  // production lambda (and local dev) paths are static, env vars can be used.
-  var sequelizepath = process.env.sequalisepath
+if (process.env.Environment !== 'LocalDev') {
+  var modulespath = '../node_modules/'
+} else {
+  var modulespath = '../controller/node_modules/'
 }
 
-const Sequelize = await import(sequelizepath)
+const Sequelize = require(modulespath + 'sequelize')
 
 const InvocationsModel = {
   jobid: {
@@ -60,8 +54,7 @@ const ProcessingErrorsModel = (DBEngineType) => {
         type: Sequelize.STRING
       }
     }
-  }
-  else {
+  } else {
     var model = {
       jobid: {
         type: Sequelize.STRING
@@ -91,19 +84,16 @@ const ProcessingErrorsModel = (DBEngineType) => {
 
 const constructmodel = (schema, usage) => {
   if ((usage === 'controller') || (usage === 'proxyserver')) {
-    // var FileContent = 'const Sequelize = require("sequelize");\n'
-    var FileContent = 'const Sequelize = await import("sequelize");\n'
-  }
-  else { // lambda function directory
+    var FileContent = 'const Sequelize = require("sequelize");\n'
+  } else if ((usage === 'worker') && (process.env.Environment === 'LocalDev')) {
+    var FileContent = 'const Sequelize = require("../node_modules/sequelize");\n'
+  } else { // lambda function directory
     // console.log("Linux model");
-    // var FileContent = 'const Sequelize = require("/var/task/node_modules/sequelize");\n'
-    var FileContent = 'const Sequelize = await import("' + sequelizepath + '")\n'
+    var FileContent = 'const Sequelize = require("/var/task/node_modules/sequelize");\n'
   }
 
   FileContent += 'var SelectedModel =' + schema
-  // FileContent += '\nmodule.exports = SelectedModel;'
-  FileContent += '\nexport { SelectedModel }'
-
+  FileContent += '\nmodule.exports = SelectedModel;'
   return FileContent
 }
 
@@ -132,7 +122,7 @@ const AddSqlEntry = async (sequelize, Model, SelectedModel, QueryType, DBTableNa
 
     DBEntry.create(mydata)
       .then(result => {
-        // console.log('SQL Entry ' + JSON.stringify(result) + 'has been added.')
+        console.log('SQL Entry ' + JSON.stringify(result) + 'has been added.')
         // Transaction has been committed
         // resolve(result)
         resolve({
@@ -183,17 +173,16 @@ const SelectSQLTable = async (sequelize, Model, SelectedModel, QueryType, DBTabl
 
   if (Mode === 'findOne') {
     return await Query.findOne(QueryParameters)
-  }
-  else if (Mode === 'findAll') {
+  } else if (Mode === 'findAll') {
     return await Query.findAll(QueryParameters)
-  }
-  else {
+  } else {
     return await Query.findByPk(QueryParameters)
   }
   // Todo: add here "raw" mode for regular sql queries
 }
 
 const InitiateSQLConnection = async (sequelize, DBEngineType, connectionstring, DBName) => {
+
   if (DBEngineType === 'mssql') {
     // by default mssql does not have a Logverz database, so at first execution it needs to be created.
 
@@ -202,8 +191,7 @@ const InitiateSQLConnection = async (sequelize, DBEngineType, connectionstring, 
 
     try {
       await sequelize.authenticate()
-    }
-    catch (err) {
+    } catch (err) {
       if (err.name === 'SequelizeAccessDeniedError') {
         await sequelize.close()
         // At first execution Logverz DB is not present need to connect to a different db to verify credentials
@@ -222,13 +210,11 @@ const InitiateSQLConnection = async (sequelize, DBEngineType, connectionstring, 
         // connectioning to newly created DB
         var sequelize = new Sequelize(connectionstring)
         var result = await sequelize.authenticate()
-      }
-      else {
+      } else {
         console.log(err)
       }
     }
-  }
-  else {
+  } else {
     // non mssql DB
     var result = await sequelize.authenticate()
   }
@@ -241,14 +227,63 @@ const CloseSQLConnection = async (sequelize) => {
   try {
     await sequelize.close()
     result = 'connection was closed'
-  }
-  catch (err) {
+  } catch (err) {
     result = JSON.stringify(err)
   }
   return result
 }
 
-const ConfigureSequalize = (DBEngineType) => {
+const DBpropertylookup = (connectionstringsarray, LogverzDBFriendlyName) => {
+  // TODO move this to commonshared so that sequelize package can be removed from scale.js.
+
+  for (var i = 0; i < connectionstringsarray.length; i++) {
+    var connectionstring = connectionstringsarray[i].split(',')
+    var CSLogverzDBFriendlyName = connectionstring.filter(s => s.includes('LogverzDBFriendlyName'))[0].split('=')[1]
+    
+    if (CSLogverzDBFriendlyName === LogverzDBFriendlyName) {
+      var DBEngineType = connectionstring.filter(s => s.includes('LogverzEngineType'))[0].split('=')[1]
+      var DBUserName = connectionstring.filter(s => s.includes('LogverzDBUserName'))[0].split('=')[1]
+      var DBEndpointName = connectionstring.filter(s => s.includes('LogverzDBEndpointName'))[0].split('=')[1]
+      var DBEndpointPort = connectionstring.filter(s => s.includes('LogverzDBEndpointPort'))[0].split('=')[1]
+      var DBSecretRef = connectionstring.filter(s => s.includes('LogverzDBSecretRef'))[0].split('=')[1]
+      var DBFriendlyName = connectionstring.filter(s => s.includes('LogverzDBFriendlyName'))[0].split('=')[1]
+
+      var LogverzDBClusterID = connectionstring.filter(s => s.includes('LogverzDBClusterID'))[0]
+      
+      if (DBEngineType.match('sqlserver')) {
+        // SQL server comes in many flavours express web standard enterprise and developer, we normalize it as mssql name convention defined by sequilize
+        DBEngineType = 'mssql'
+      }
+
+      if (LogverzDBClusterID !== undefined) {
+        var DBClusterID =LogverzDBClusterID.split('=')[1]
+      }
+      break
+    }
+  }
+
+  var result = {
+    DBEngineType,
+    DBUserName,
+    DBEndpointName,
+    DBEndpointPort,
+    DBSecretRef,
+    DBFriendlyName
+  }
+
+  if (typeof DBClusterID !== 'undefined') {
+    // if DBclusterid exists its a serverless database so we add it to the results 
+    //result['DBClusterID']+=DBClusterID
+     Object.defineProperty(result, 'DBClusterID', {
+       'value': DBClusterID
+    });
+  }
+
+  return result
+}
+
+const ConfigureSequalize= (DBEngineType)=>{
+  
   var sequaliseconfig = {
     pool: {
       max: 10,
@@ -260,8 +295,8 @@ const ConfigureSequalize = (DBEngineType) => {
     }
   }
 
-  if (DBEngineType === 'postgres') {
-    sequaliseconfig.dialectOptions = {
+  if (DBEngineType ==='postgres'){
+    sequaliseconfig.dialectOptions= {
       ssl: {
         require: true,
         rejectUnauthorized: false
@@ -271,7 +306,18 @@ const ConfigureSequalize = (DBEngineType) => {
   return sequaliseconfig
 }
 
-export {
-  constructmodel, AddSqlEntry, UpdateSqlEntry, SelectSQLTable, InitiateSQLConnection,
-  CloseSQLConnection, InvocationsModel, ProcessingErrorsModel, convertschema, ConfigureSequalize
-}
+exports.constructmodel = constructmodel
+exports.AddSqlEntry = AddSqlEntry
+exports.UpdateSqlEntry = UpdateSqlEntry
+exports.SelectSQLTable = SelectSQLTable
+exports.InitiateSQLConnection = InitiateSQLConnection
+exports.CloseSQLConnection = CloseSQLConnection
+exports.DBpropertylookup = DBpropertylookup
+exports.InvocationsModel = InvocationsModel
+exports.ProcessingErrorsModel = ProcessingErrorsModel
+exports.convertschema = convertschema
+exports.ConfigureSequalize=ConfigureSequalize
+
+// syntax info:
+// https://stackoverflow.com/questions/16631064/declare-multiple-module-exports-in-node-js
+// https://stackoverflow.com/questions/10554241/can-i-load-multiple-files-with-one-require-statement/10554457

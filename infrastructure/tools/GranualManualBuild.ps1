@@ -83,8 +83,8 @@ update-lambda -lambdafunctionname "Logverz-SetConnectionParamsDNS"`
 create-Bundle -zipfilename "controller.zip" `
               -projectpath $projectpath `
               -componentpath "\sources\controller"`
-              -files "db.js","controller.js","package.json","package-lock.json","DbInstanceClasses.csv"`
-              -extrafiles "\infrastructure\buildspec.yaml","\sources\shared\engineshared.js","\sources\shared\commonshared.js","\sources\shared\authenticationshared.js","\sources\shared\package.json"
+              -files "controller.js","package.json","package-lock.json","DbInstanceClasses.csv"`
+              -extrafiles "\infrastructure\buildspec.yml","\sources\shared\enginesharedv3.mjs","\sources\shared\commonsharedv3.js","\sources\shared\authenticationsharedv3.js","\sources\shared\package.json"
               $projectpath=$projectpath
               cd $($projectpath+"\sources\controller\build\package")
                    
@@ -109,7 +109,7 @@ $buildrelativepath="sources/init"
 $buildfullpath="$projectpath/$buildrelativepath/build"
 $repobaseurl="https://logleads@dev.azure.com/logleads/LogverzPortal/_git/"
 
-build-webapp-source -builddirectory $buildfullpath -repo $($repobaseurl+"Portal") -appname "Portal" -branchname "internal" -OSType $OSType
+build-webapp-source -builddirectory $buildfullpath -repo $($repobaseurl+"Portal") -appname "Portal" -branchname "main" -OSType $OSType
 build-webapp-source -builddirectory $buildfullpath -repo $($repobaseurl+"PortalAccess") -appname "PortalAccess" -branchname "main" -OSType $OSType
 
 
@@ -192,7 +192,7 @@ create-Bundle -zipfilename "mastercontroller.zip" `
                     -projectpath $projectpath `
                     -componentpath "\sources\mastercontroller"`
                     -files "mastercontroller.js","package.json","package-lock.json"`
-                    -extrafiles "\infrastructure\buildspec.yaml","\sources\shared\commonshared.js","\sources\shared\package.json"
+                    -extrafiles "\infrastructure\buildspec.yml","\sources\shared\commonshared.js","\sources\shared\package.json"
 
 update-lambda -lambdafunctionname "Logverz-MasterController"`
               -projectpath $projectpath `

@@ -3,41 +3,56 @@
 /* eslint-disable no-var */
 /* eslint brace-style: ["error", "stroustrup"] */
 
-const AWS = require('aws-sdk')
-const https = require('https')
-const _ = require('lodash')
-const Sequelize = require('sequelize')
-const { Op } = require('sequelize')
-const Bottleneck = require('bottleneck')
-const fsPromises = require('fs').promises
-const fs = require('fs')
-const path = require('path')
-const { performance } = require('perf_hooks')
-const db = require('./db').db
-const dbinstanceclasses = fs.readFileSync(path.join(__dirname, 'DbInstanceClasses.csv'), {
-  encoding: 'utf8',
-  flag: 'r'
-})
+import { performance } from 'perf_hooks'
+import { fileURLToPath } from 'url'
+import path from 'path'
+import fs from 'fs'
+import https from 'https'
+import _ from 'lodash'
+import { Sequelize, Op } from 'sequelize'
+import Bottleneck from 'bottleneck'
+import { NodeHttpHandler } from '@smithy/node-http-handler'
+
+import { S3Client, ListObjectsV2Command } from '@aws-sdk/client-s3'
+import { CodeBuildClient, BatchGetBuildsCommand } from '@aws-sdk/client-codebuild'
+import { SQSClient, SendMessageCommand, GetQueueAttributesCommand } from '@aws-sdk/client-sqs'
+import { SSMClient, GetParameterCommand, DeleteParameterCommand, PutParameterCommand } from '@aws-sdk/client-ssm'
+import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb'
+import { DynamoDBDocumentClient, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb'
+import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
+import { ServiceQuotasClient, GetServiceQuotaCommand } from '@aws-sdk/client-service-quotas'
+import { CloudWatchClient, GetMetricDataCommand } from '@aws-sdk/client-cloudwatch'
+import { EC2Client, paginateDescribeNetworkInterfaces } from '@aws-sdk/client-ec2'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const dbinstanceclasses = fs.readFileSync(path.join(__dirname, 'DbInstanceClasses.csv'), { encoding: 'utf8', flag: 'r' })
+
+// enginetype, memory requirment per connection, max DB engine connection count.
+// https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_Limits.html#RDS_Limits.MaxConnections
 const dbenginememorylimits = [
   ['mysql', 12, 100000],
   ['postgres', 9.5, 8388607],
-  ['mssql', 10, 32767] // Todo set to 1 , once logic is more robust. Currently using 10 so that automatic connection count is similar to other dbs
-] // enginetype, memory requirment per connection, max DB engine connection count.
-// https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_Limits.html#RDS_Limits.MaxConnections
+  ['mssql', 10, 32767]
+  // Todo set to 1 , once logic is more robust. Currently using 10 so that automatic connection count is similar to other dbs
+]
 let SQSQUEUENOTNULL = true
 const subfolderlist = []
 let tobeprocessed = []
-var MaximumCacheTime=process.env.MaximumCacheTime
 
 if (process.env.Environment !== 'LocalDev') {
   // CodeBuild prod environment settings
-  var engineshared = require('./shared/engineshared')
-  var commonshared = require('./shared/commonshared')
-  var authenticationshared = require('./shared/authenticationshared')
+  var commonsharedpath = ('file:///' + path.join(__dirname, 'shared', 'commonsharedv3.js').replace(/\\/g, '/'))
+  var commonshared = await GetConfiguration(commonsharedpath, '*')
+  var authenticationsharedpath = ('file:///' + path.join(__dirname, 'shared', 'authenticationsharedv3.js').replace(/\\/g, '/'))
+  var authenticationshared = await GetConfiguration(authenticationsharedpath, '*')
+  var enginesharedpath = ('file:///' + path.join(__dirname, 'shared', 'enginesharedv3.mjs').replace(/\\/g, '/'))
+  var engineshared = await GetConfiguration(enginesharedpath, '*')
   var region = process.env.AWS_REGION
   var sqsmessagesize = 50 // TODO Determine the message size based on the number of files and and the length of the files.
   var WorkerFunction = process.env.WorkerFunction
-  var SelectedModelPath = './build/SelectedModel'
+  var SelectedModelPath = ('file:///' + path.join(__dirname, 'build', 'SelectedModel.js').replace(/\\/g, '/'))
+  // './build/SelectedModel'
   var S3SelectQuery = process.env.S3SelectQuery
   var S3SelectParameter = process.env.S3SelectParameter
   var QueryType = process.env.QueryType
@@ -54,9 +69,12 @@ if (process.env.Environment !== 'LocalDev') {
   console.log(S3Folders)
   console.log('CurrentBuildID:')
   console.log(cbbuildid)
-} else {
+}
+else {
   // Dev environment settings
-  const mydev = require(path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'controller', 'mydev.js'))
+  var directory = path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'controller', 'mydev.mjs')
+  const mydev = await import('file:///' + directory.replace(/\\/g, '/'))
+  // const Sequelize =  await import(process.env.sequalisepath)
   var engineshared = mydev.engineshared
   var commonshared = mydev.commonshared
   var authenticationshared = mydev.authenticationshared
@@ -74,9 +92,16 @@ if (process.env.Environment !== 'LocalDev') {
   var DatabaseParameters = mydev.DatabaseParameters
   var TableParameters = mydev.TableParameters
   var Schema = mydev.Schema
-  var QueueURL = mydev.QueueURL
+  var QueueURL = mydev.MessageQueue
   var cbbuildid = mydev.cbbuildid
 }
+if (PreferedWorkerNumber === 'auto') {
+  var socketnumber = 500 // default 50
+}
+else {
+  var socketnumber = Math.round(PreferedWorkerNumber * 1.2)
+}
+
 // Limits the number of subfolders queried parallel.
 const s3limiter = new Bottleneck({
   // maxConcurrent: 10
@@ -87,65 +112,54 @@ const sqslimiter = new Bottleneck({
   minTime: 5 // sqs fifo max request count per sec is 300. Configuring 5 milisec between calls, allows max 200 calls/sec
 })
 
+// https://aws.amazon.com/premiumsupport/knowledge-center/lambda-function-retry-timeout-sdk/
 const lambdatimeout = 900000
 const lambdacheckfrequency = 5000
 
-const agent = new https.Agent({
-  maxSockets: Math.round(PreferedWorkerNumber * 1.2) // https://stackoverflow.com/questions/54629780/how-can-the-aws-lambda-concurrent-execution-limit-be-reached
-})
-
-AWS.config.update({
-  region,
-  maxRetries: 2,
-  httpOptions: {
-    timeout: lambdatimeout, // https://aws.amazon.com/premiumsupport/knowledge-center/lambda-function-retry-timeout-sdk/
-    agent
-  }
-})
-
-const s3 = new AWS.S3()
-const codebuild = new AWS.CodeBuild()
-const sqs = new AWS.SQS({
-  apiVersion: '2012-11-05'
-})
-const SSM = new AWS.SSM()
-const dynamodb = new AWS.DynamoDB()
-const docClient = new AWS.DynamoDB.DocumentClient()
-const lambda = new AWS.Lambda({
-  apiVersion: '2015-03-31'
-})
-const servicequotas = new AWS.ServiceQuotas()
-const cloudwatch = new AWS.CloudWatch()
-const ec2 = new AWS.EC2()
-
-if (db.collections.length === 0) {
-  
-  if (MaximumCacheTime === undefined){
-    MaximumCacheTime =1
-  }
-
-  var identity = db.addCollection('Logverz-Identities', {
-    ttl: MaximumCacheTime * 60 * 1000
-  })
+const agentOptions = {
+  keepAlive: false,
+  maxSockets: socketnumber
 }
 
-/* End of Initializing Environment */
-main(ec2, s3, sqs, SSM, dynamodb, servicequotas, cloudwatch, Sequelize, fsPromises, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber)
+const httpsAgent = new https.Agent(agentOptions)
 
-async function main (ec2, s3, sqs, SSM, dynamodb, servicequotas, cloudwatch, Sequelize, fsPromises, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber) {
+var config = {
+  region,
+  maxRetries: 2,
+  requestHandler: new NodeHttpHandler({
+    httpsAgent
+  }),
+  requestTimeout: lambdatimeout
+}
+
+const s3client = new S3Client(config)
+const cbclient = new CodeBuildClient(config)
+const sqsclient = new SQSClient(config)
+const ssmclient = new SSMClient(config)
+const ddclient = new DynamoDBClient(config)
+const docClient = DynamoDBDocumentClient.from(ddclient)
+const lmdclient = new LambdaClient(config)
+const scclient = new ServiceQuotasClient(config)
+const cwclient = new CloudWatchClient(config)
+
+/* End of Initializing Environment */
+
+main(s3client, cbclient, sqsclient, ssmclient, ddclient, docClient, scclient, Sequelize, cwclient, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber)
+
+async function main (s3client, cbclient, sqsclient, ssmclient, ddclient, docClient, scclient, Sequelize, cwclient, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber) {
   console.log('PreferedWorkerNumber: ' + PreferedWorkerNumber + '\n')
 
-  if (PreferedWorkerNumber !== 'auto' && (Number.isNaN(Number(PreferedWorkerNumber))===true)){
-    //validate if input is not auto and not a number. Than change PreferedWorkerNumber 'auto'
-    PreferedWorkerNumber ='auto'
+  if (PreferedWorkerNumber !== 'auto' && (Number.isNaN(Number(PreferedWorkerNumber)) === true)) {
+    // validate if input is not auto and not a number. Than change PreferedWorkerNumber 'auto'
+    PreferedWorkerNumber = 'auto'
     console.log('The PreferedWorkerNumber parameter is incorrect, it has to be a whole number such as 20, 200 etc or auto which will automatically determine the most suitable worker count')
   }
-  else if (Number.isInteger(Number(PreferedWorkerNumber))){
-    //if its value eg "10" or 10, that can be converted to integer, than convert it to integer. 
-    PreferedWorkerNumber =Number(PreferedWorkerNumber) 
+  else if (Number.isInteger(Number(PreferedWorkerNumber))) {
+    // if its value eg "10" or 10, that can be converted to integer, than convert it to integer.
+    PreferedWorkerNumber = Number(PreferedWorkerNumber)
   }
   else {
-    PreferedWorkerNumber ='auto'
+    PreferedWorkerNumber = 'auto'
   }
 
   const z0 = performance.now()
@@ -160,26 +174,25 @@ async function main (ec2, s3, sqs, SSM, dynamodb, servicequotas, cloudwatch, Seq
   const DBSecretRef = DBAvalue.filter(s => s.includes('LogverzDBSecretRef'))[0].split('=')[1]
   const DBTableName = TableParameters.split('<!!>').filter(s => s.includes('TableName'))[0].split('=')[1]
   const DBInstanceClass = DBAvalue.filter(s => s.includes('LogverzDBInstanceClass'))[0].split('=')[1]
-  
+
   var details = {
     source: 'controller.js:main/getssmparameter',
     message: ''
   }
-
-  let DBPassword = await commonshared.getssmparameter(SSM, {
+  var params = {
     Name: DBSecretRef,
     WithDecryption: true
-  }, dynamodb, details)
+  }
 
+  let DBPassword = await commonshared.getssmparameter(ssmclient, GetParameterCommand, params, ddclient, PutItemCommand, details)
+  const buildstatus = await commonshared.getbuildstatus(cbclient, BatchGetBuildsCommand, [cbbuildid])
   // get who/what initated the codebuild run
-  const buildstatus = await commonshared.getbuildstatus(codebuild, [cbbuildid])
   const username = buildstatus.builds[0].initiator
   const buildenvironment = buildstatus.builds[0].environment.computeType
-
   // if not authorized process exits;
   await authorizecollection(username)
 
-  const NumberofWorkers = await EnvironmentMaxWokerCount(commonshared, ec2, servicequotas, cloudwatch, dbinstanceclasses, DBInstanceClass, DBEngineType, DBEndpointName, buildenvironment, PreferedWorkerNumber)
+  const NumberofWorkers = await EnvironmentMaxWokerCount(commonshared, scclient, cwclient, dbinstanceclasses, DBInstanceClass, DBEngineType, DBEndpointName, buildenvironment, PreferedWorkerNumber)
 
   const workerlimiter = new Bottleneck({
     minTime: 200, // so that max 5 request is made per second.
@@ -205,24 +218,25 @@ async function main (ec2, s3, sqs, SSM, dynamodb, servicequotas, cloudwatch, Seq
       source: 'controller.js:main/setssmparameter',
       message: ''
     }
-    await commonshared.setssmparameter(SSM, ssmparams, dynamodb, details)
+    await commonshared.setssmparameter(ssmclient, PutItemCommand, PutParameterCommand, ssmparams, ddclient, details)
     Schema = ''
   }
 
   DBPassword = DBPassword.Parameter.Value
   DBEngineType = (DBEngineType.match('sqlserver-') ? 'mssql' : DBEngineType)
   Schema = engineshared.convertschema(Schema, DBEngineType)
-  await fsPromises.writeFile(SelectedModelPath, engineshared.constructmodel(Schema, 'controller'))
+  fs.writeFileSync(fileURLToPath(SelectedModelPath), engineshared.constructmodel(Schema, 'controller'))
   const DBName = 'Logverz'
   const connectionstring = `${DBEngineType}://${DBUserName}:${DBPassword}@${DBEndpointName}:${DBEndpointPort}/${DBName}`
-  const sequaliseconfig =engineshared.ConfigureSequalize(DBEngineType)
+  const sequaliseconfig = engineshared.ConfigureSequalize(DBEngineType)
   const sequelize = new Sequelize(connectionstring, sequaliseconfig)
   sequelize.options.logging = false // Disable logging
 
   try {
     await engineshared.InitiateSQLConnection(sequelize, DBEngineType, connectionstring, DBName)
     console.log('Connection has been established successfully.\n')
-  } catch (e) {
+  }
+  catch (e) {
     const message = 'Error establishing SQL connection. Further details: \n'
     console.error(message + e)
     var details = {
@@ -230,7 +244,7 @@ async function main (ec2, s3, sqs, SSM, dynamodb, servicequotas, cloudwatch, Seq
       message: message + e,
       jobid
     }
-    await commonshared.AddDDBEntry(dynamodb, 'Logverz-Invocations', 'SQLConnect', 'Error', 'Infra', details, 'API')
+    await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'SQLConnect', 'Error', 'Infra', details, 'API')
     process.exit(1)
   }
 
@@ -238,37 +252,43 @@ async function main (ec2, s3, sqs, SSM, dynamodb, servicequotas, cloudwatch, Seq
   if (process.env.Environment !== 'LocalDev') {
     const DatabaseName = DBAvalue.filter(s => s.includes('LogverzDBFriendlyName'))[0].split('=')[1]
     const DBTableName = TableParameters.split('<!!>').filter(s => s.includes('TableName'))[0].split('=')[1]
-    await commonshared.deactivatequery(commonshared, docClient, DatabaseName, DBTableName, jobid)
+    await commonshared.deactivatequery(docClient, QueryCommand, UpdateCommand, DatabaseName, DBTableName, jobid)
   }
 
   // Verify that Invocations table exists, if not create it and the Error messages table,
   try {
     const initatequery = initiatetablesquery(DBEngineType)
     await sequelize.query(initatequery)
-  } catch (err) {
+  }
+  catch (err) {
     console.log('Invocations table does not exists creating it and Processingerrors table.')
     await CreateSQLTable(sequelize, Model, engineshared.InvocationsModel, 'Invocation', 'Invocations')
     await CreateSQLTable(sequelize, Model, engineshared.ProcessingErrorsModel(DBEngineType), 'ProcessingError', 'ProcessingErrors')
-  } finally {
+  }
+  finally {
     // TODO: Set "failed to complete status" to stale entries that are running status and older than 15 minutes.
   };
 
-  const SelectedModel = require('./build/SelectedModel')
+  // const SelectedModel = require('./build/SelectedModel')
+  var SelectedModelpath = ('file:///' + path.join(__dirname, 'build', 'SelectedModel.js').replace(/\\/g, '/'))
+  const SelectedModel = (await import(SelectedModelpath)).SelectedModel
+
   try {
     await CreateSQLTable(sequelize, Model, SelectedModel, QueryType, DBTableName)
     console.log('Table ' + DBTableName + ' for "' + QueryType + '" data type queries has been created.')
-  } catch (e) {
+  }
+  catch (e) {
     console.error(e)
   }
 
   const z1 = performance.now()
 
-  console.log('2.) Starting walk folders, ellipsed time from the beggining is ' + (z1 - z0) / 1000)
+  console.log('2.) Starting walk folders, ellipsed time from the beginning is ' + (z1 - z0) / 1000)
   // TODO: CACHE MODE which  SAVE sallKeys to S3 than read it from there
   tobeprocessed = commonshared.TransformInputValues(S3Folders, S3EnumerationDepth, _)
 
   do {
-    await commonshared.walkfolders(_, s3, dynamodb, commonshared, tobeprocessed, subfolderlist, getCommonPrefixes)
+    await commonshared.walkfolders(_, s3client, ListObjectsV2Command, ddclient, PutItemCommand, commonshared, tobeprocessed, subfolderlist, getCommonPrefixes, 'controller.js')
   }
   while (((subfolderlist.length + tobeprocessed.length) !== 0) && (tobeprocessed.length !== 0))
   const z2 = performance.now()
@@ -276,7 +296,7 @@ async function main (ec2, s3, sqs, SSM, dynamodb, servicequotas, cloudwatch, Seq
 
   const alltasksresolved = await s3limiter.schedule(() => {
     const allTasks = subfolderlist.map(
-      subfolderarrayitem => getAllKeys(s3, {
+      subfolderarrayitem => getAllKeys(s3client, ListObjectsV2Command, {
         Bucket: subfolderarrayitem[1],
         Prefix: subfolderarrayitem[0],
         Delimiter: subfolderarrayitem[2]
@@ -293,10 +313,10 @@ async function main (ec2, s3, sqs, SSM, dynamodb, servicequotas, cloudwatch, Seq
 
   // TODO: dontwait for all files to be enumerated but do file enumeration and SQL population in parralell
   // TODO: handle allkeys zero case (no acces to bucket or non existent bucket etc.)
-  populatesqs(sqs, sqslimiter, allKeys, QueueURL)
+  populatesqs(sqsclient, SendMessageCommand, sqslimiter, allKeys, QueueURL)
   // TODO: Set the message queue size dynamically based on the number of estimated files.
 
-  await controllambdajobs(workerlimiter, dynamodb, SSM, sequelize, Model, engineshared.InvocationsModel, QueueURL, S3SelectParameter, jobid, NumberofWorkers)
+  await controllambdajobs(workerlimiter, ddclient, PutItemCommand, ssmclient, sequelize, Model, engineshared.InvocationsModel, QueueURL, S3SelectParameter, jobid, NumberofWorkers)
 
   console.log('\n\n FINISHED EXECUTION at: ' + Date.now() + ', ' + commonshared.timeConverter(Date.now()) + ' local time.\n\n')
   process.exit()
@@ -304,7 +324,7 @@ async function main (ec2, s3, sqs, SSM, dynamodb, servicequotas, cloudwatch, Seq
   // entries matched and  inserted to database, number of erros etc. And the settings that where used to create the table.
 }
 
-async function EnvironmentMaxWokerCount (commonshared, ec2, servicequotas, cloudwatch, dbinstanceclasses, DBInstanceClass, DBEngineType, DBEndpointName, buildenvironment, PreferedWorkerNumber) {
+async function EnvironmentMaxWokerCount (commonshared, scclient, cwclient, dbinstanceclasses, DBInstanceClass, DBEngineType, DBEndpointName, buildenvironment, PreferedWorkerNumber) {
   const maxworkercount = []
   const monitoringtimeperiod = 5 // min
 
@@ -319,16 +339,15 @@ async function EnvironmentMaxWokerCount (commonshared, ec2, servicequotas, cloud
     IdlePeriodMin: monitoringtimeperiod
   }]
 
-  const RDSCWmetrics = (await commonshared.GetRDSInstancesMetrics(cloudwatch, [DBEndpointName.split('.')[0]], dbpropertiesarray)).MetricDataResults
+  const RDSCWmetrics = (await commonshared.GetRDSInstancesMetrics(cwclient, GetMetricDataCommand, [DBEndpointName.split('.')[0]], dbpropertiesarray)).MetricDataResults
   const currentactiveconnections = RDSCWmetrics.filter(obj => obj.Label.match('DatabaseConnections'))[0].Values[0]
   const currentfreememory = RDSCWmetrics.filter(obj => obj.Label.match('FreeableMemory'))[0].Values[0]
-  var maxactiveconnection =0
+  var maxactiveconnection = 0
 
   const maxdbconnectioncount = determinemaxdbconnectioncount(dbinstanceclasses, DBInstanceClass, DBEngineType)
   maxworkercount.push(maxdbconnectioncount)
-  
-  if(typeof currentactiveconnections === 'number' &&  typeof currentfreememory === 'number'){
-    
+
+  if (typeof currentactiveconnections === 'number' && typeof currentfreememory === 'number') {
     const cpuutilisation = RDSCWmetrics.filter(obj => obj.Label.match('CPUUtilization'))[0]
     console.log('\nDatabase server CPU utilisation metrics in the last few minutes, latest on top: \n')
     cpuutilisation.Values.map(c => {
@@ -341,24 +360,25 @@ async function EnvironmentMaxWokerCount (commonshared, ec2, servicequotas, cloud
     var maxactiveconnection = determinedbmaxactiveconnection(currentfreememory, DBEngineType) - 3 // - controller connections
     maxworkercount.push(maxactiveconnection)
     console.log('Database server effective connections count: ' + maxactiveconnection + '\n' + '(Derived from current free memory (' + Math.round(currentfreememory / 1024 / 1024) + ') MB / per connection memory requirement (approx 10MB) - Controller connections)\n')
-
-  }else{
-    console.log('\nFailed to get performance metrics (free memory, cpu utilisation, connection count) for DB instance: \n'+DBEndpointName+'\n')
-    console.log('\nMaximum database server connections count: ' + maxdbconnectioncount + '\n') 
   }
-  
-  // describe vpc network interfaces
-  const EniList = await DesribeAllENI(ec2)
+  else {
+    console.log('\nFailed to get performance metrics (free memory, cpu utilisation, connection count) for DB instance: \n' + DBEndpointName + '\n')
+    console.log('\nMaximum database server connections count: ' + maxdbconnectioncount + '\n')
+  }
 
-  // quotas
-  // Network interfaces per Region arn:aws:servicequotas:ca-central-1:accountnumber:vpc/L-DF5E4CA3
+  // describe vpc network interfaces
+  const EniList = await DesribeAllENI()
+
   const vpcquotaparams = {
     QuotaCode: 'L-DF5E4CA3',
     /* required */
     ServiceCode: 'vpc' /* required */
   }
 
-  const vpcquota = (await getquotas(servicequotas, vpcquotaparams)).Quota.Value
+  var command = new GetServiceQuotaCommand(vpcquotaparams)
+  const vpcquota = (await scclient.send(command)).Quota.Value
+
+  // const vpcquota = (await getquotas(servicequotas, vpcquotaparams)).Quota.Value
   maxworkercount.push(vpcquota - EniList.length)
   console.log('Available number of ENIs, determined by quota(' + vpcquota + ') - current usage(' + EniList.length + '): ' + (vpcquota - EniList.length) + '\n')
 
@@ -369,13 +389,14 @@ async function EnvironmentMaxWokerCount (commonshared, ec2, servicequotas, cloud
     /* required */
     ServiceCode: 'lambda' /* required */
   }
-  const lambdaquota = await getquotas(servicequotas, lambdaquotaparams)
+  var command = new GetServiceQuotaCommand(lambdaquotaparams)
+  const lambdaquota = (await scclient.send(command)).Quota.Value
 
   // lambda concurrent count metrics
-  const concurrentlambdacount = await determineconcurrentlambdacount(cloudwatch, commonshared, monitoringtimeperiod)
-  console.log('Maximum Lambda executions determined by quota(' + lambdaquota.Quota.Value + ') - current usage(' + concurrentlambdacount + '): ' + (lambdaquota.Quota.Value - concurrentlambdacount) + '\n')
+  const concurrentlambdacount = await determineconcurrentlambdacount(cwclient, GetMetricDataCommand, commonshared, monitoringtimeperiod)
+  console.log('Maximum Lambda executions determined by quota(' + lambdaquota + ') - current usage(' + concurrentlambdacount + '): ' + (lambdaquota - concurrentlambdacount) + '\n')
 
-  maxworkercount.push(lambdaquota.Quota.Value - concurrentlambdacount)
+  maxworkercount.push(lambdaquota - concurrentlambdacount)
 
   // https://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-compute-types.html
   // Type, MemoryAllocated,Concurrency so that one workerthread has approx 10 MB ram.
@@ -388,50 +409,50 @@ async function EnvironmentMaxWokerCount (commonshared, ec2, servicequotas, cloud
   console.log('Selected build environment maximum concurrent execution capacity: ' + codebuildmaxworkercount + '\n')
   maxworkercount.push(codebuildmaxworkercount)
 
-  if ((maxactiveconnection !== 0)){ //there are database performance metrics available for further decisions.
-
+  if ((maxactiveconnection !== 0)) { // there are database performance metrics available for further decisions.
     if (PreferedWorkerNumber === 'auto') {
       var NumberofWorkers = parseInt(Math.min(...maxworkercount))
-      console.log('The determined worker count equals to the lowest environment limit ('+NumberofWorkers+').\n')
+      console.log('The determined worker count equals to the lowest environment limit (' + NumberofWorkers + ').\n')
     }
-    else if ((Math.min(...maxworkercount) > PreferedWorkerNumber)  && (PreferedWorkerNumber > maxactiveconnection)) {
+    else if ((Math.min(...maxworkercount) > PreferedWorkerNumber) && (PreferedWorkerNumber > maxactiveconnection)) {
       console.log(warning)
       var NumberofWorkers = parseInt(PreferedWorkerNumber)
-      console.log('The prefered ('+PreferedWorkerNumber+') worker count is under the environment limits, hence it will be used. However the connections memory requirement is more than the available free memory, \n')
-      console.log('If its significantly higher the database will start to **SWAP** and execution will be significantly slower or fail, if current number ('+NumberofWorkers+') of Lambda workers are needed a larger capacity DB instance is advised.\n')
+      console.log('The prefered (' + PreferedWorkerNumber + ') worker count is under the environment limits, hence it will be used. However the connections memory requirement is more than the available free memory, \n')
+      console.log('If its significantly higher the database will start to **SWAP** and execution will be significantly slower or fail, if current number (' + NumberofWorkers + ') of Lambda workers are needed a larger capacity DB instance is advised.\n')
     }
-    else if ((Math.min(...maxworkercount) > PreferedWorkerNumber)  && (PreferedWorkerNumber < maxactiveconnection)) {
+    else if ((Math.min(...maxworkercount) > PreferedWorkerNumber) && (PreferedWorkerNumber < maxactiveconnection)) {
       var NumberofWorkers = parseInt(PreferedWorkerNumber)
-      console.log('The prefered ('+PreferedWorkerNumber+') worker count is under the environment limits and memory requirement, hence it will be used.\n')
-    }else{
-      var NumberofWorkers = parseInt(Math.ceil(Math.min(...maxworkercount) * 0.8))
-      console.log('The prefered ('+PreferedWorkerNumber+') worker count is over the lowest environment limit, 80% of the limit ('+NumberofWorkers+') is going to be used.\n')
-    }
-  }  
-  else{ 
-    //bellow doing the determination without database performance metrics
-    if (PreferedWorkerNumber === 'auto') {
-      var NumberofWorkers = parseInt(Math.min(...maxworkercount)* 0.8)
-      console.log('The determined worker count is '+NumberofWorkers+', 80% of the lowest environment limit ('+Math.min(...maxworkercount) + ').\n')
-    }
-    else if ((Math.min(...maxworkercount) > PreferedWorkerNumber) ){
-      var NumberofWorkers = parseInt(PreferedWorkerNumber)
-      console.log('The determined worker count is '+NumberofWorkers+', as the prefered worker count ('+ PreferedWorkerNumber + ') is lower the lowest environment limit '+Math.min(...maxworkercount)+ '.\n')
-    }
-    else if ((Math.min(...maxworkercount) < PreferedWorkerNumber) ){
-      var NumberofWorkers = parseInt(Math.ceil(Math.min(...maxworkercount) * 0.8))
-      console.log('The determined worker count is '+NumberofWorkers+',  80% of the lowest environment limit ('+Math.min(...maxworkercount)+'). As the prefered worker count ('+ PreferedWorkerNumber + ') is over the lowest environment limit. \n')
+      console.log('The prefered (' + PreferedWorkerNumber + ') worker count is under the environment limits and memory requirement, hence it will be used.\n')
     }
     else {
-      console.log("something went wrong, there should have been a decision made earlier, stopping execution")
-      exit
+      var NumberofWorkers = parseInt(Math.ceil(Math.min(...maxworkercount) * 0.8))
+      console.log('The prefered (' + PreferedWorkerNumber + ') worker count is over the lowest environment limit, 80% of the limit (' + NumberofWorkers + ') is going to be used.\n')
+    }
+  }
+  else {
+    // bellow doing the determination without database performance metrics
+    if (PreferedWorkerNumber === 'auto') {
+      var NumberofWorkers = parseInt(Math.min(...maxworkercount) * 0.8)
+      console.log('The determined worker count is ' + NumberofWorkers + ', 80% of the lowest environment limit (' + Math.min(...maxworkercount) + ').\n')
+    }
+    else if ((Math.min(...maxworkercount) > PreferedWorkerNumber)) {
+      var NumberofWorkers = parseInt(PreferedWorkerNumber)
+      console.log('The determined worker count is ' + NumberofWorkers + ', as the prefered worker count (' + PreferedWorkerNumber + ') is lower the lowest environment limit ' + Math.min(...maxworkercount) + '.\n')
+    }
+    else if ((Math.min(...maxworkercount) < PreferedWorkerNumber)) {
+      var NumberofWorkers = parseInt(Math.ceil(Math.min(...maxworkercount) * 0.8))
+      console.log('The determined worker count is ' + NumberofWorkers + ',  80% of the lowest environment limit (' + Math.min(...maxworkercount) + '). As the prefered worker count (' + PreferedWorkerNumber + ') is over the lowest environment limit. \n')
+    }
+    else {
+      console.log('something went wrong, there should have been a decision made earlier, stopping execution')
+      process.exit(1)
     }
   }
 
   return NumberofWorkers
 }
 
-async function controllambdajobs (workerlimiter, dynamodb, SSM, sequelize, Model, InvocationsModel, QueueURL, S3SelectParameter, jobid, NumberofWorkers) {
+async function controllambdajobs (workerlimiter, ddclient, PutItemCommand, ssmclient, sequelize, Model, InvocationsModel, QueueURL, S3SelectParameter, jobid, NumberofWorkers) {
   // wait 3 seconds for the queue to be populated.
   console.log('Determined initial number of workers ' + NumberofWorkers)
   await new Promise((resolve, reject) => setTimeout(resolve, 3000)) // wait a bit so that sqs queue is not empty at later check
@@ -443,7 +464,7 @@ async function controllambdajobs (workerlimiter, dynamodb, SSM, sequelize, Model
   if (initialqueuelength !== 0) { // checks for initial queue length if SQS is empty at start, than no need to start worker lambdas.
     var jobquelength = Math.ceil(NumberofWorkers * 1.2)
     console.log('Internal jobqueue length: ' + jobquelength)
-    submitlambdajobs2Q(throttledlambdajob, dynamodb, sequelize, Model, InvocationsModel, jobid, S3SelectParameter, jobquelength)
+    submitlambdajobs2Q(throttledlambdajob, ddclient, PutItemCommand, sequelize, Model, InvocationsModel, jobid, S3SelectParameter, jobquelength)
 
     let exitcondition = false
     do {
@@ -468,12 +489,13 @@ async function controllambdajobs (workerlimiter, dynamodb, SSM, sequelize, Model
       if (queuelength <= (Math.ceil(NumberofWorkers * 0.25)) && SQSQUEUENOTNULL) {
         SQSQUEUENOTNULL = false // when sqs approx length is less than 25% SQSQUEUENOTNULL=false
         console.log('Finished processing the SQS queue. ' + counts.EXECUTING + ' Lambdas are finishing up.')
-      } else if ((counts.RECEIVED <= Math.ceil((NumberofWorkers * 0.25))) && (counts.QUEUED <= Math.ceil((NumberofWorkers * 0.25))) && SQSQUEUENOTNULL) {
+      }
+      else if ((counts.RECEIVED <= Math.ceil((NumberofWorkers * 0.25))) && (counts.QUEUED <= Math.ceil((NumberofWorkers * 0.25))) && SQSQUEUENOTNULL) {
         // The number of jobs in the internalqueue is getting low adding new jobs
         console.log('placing worker jobs to internal queue\n')
         console.log(JSON.stringify(counts) + '\n')
         var jobquelength = Math.ceil(NumberofWorkers * 0.75)
-        submitlambdajobs2Q(throttledlambdajob, dynamodb, sequelize, Model, InvocationsModel, jobid, S3SelectParameter, jobquelength)
+        submitlambdajobs2Q(throttledlambdajob, ddclient, PutItemCommand, sequelize, Model, InvocationsModel, jobid, S3SelectParameter, jobquelength)
         var newcounts = workerlimiter.counts()
         console.log('internal queue state' + JSON.stringify(newcounts))
       }
@@ -496,24 +518,23 @@ async function controllambdajobs (workerlimiter, dynamodb, SSM, sequelize, Model
     const params = {
       Name: '/Logverz/Engine/Schemas/' + QueryType
     }
-    await SSM.deleteParameter(params).promise()
+    const command = new DeleteParameterCommand(params)
+    await ssmclient.send(command)
   }
 }
 
-function submitlambdajobs2Q (throttledlambdajob, dynamodb, sequelize, Model, InvocationsModel, jobid, S3SelectParameter, jobquelength) {
+function submitlambdajobs2Q (throttledlambdajob, ddclient, PutItemCommand, sequelize, Model, InvocationsModel, jobid, S3SelectParameter, jobquelength) {
   // this is the internal queue (based on bottleneck), that controlls lambda execution ensures that exactly NumberofWorkers lambda jobs are running
   const newjobs = []
   for (let i = 0; i < jobquelength; i++) {
     newjobs.push(i)
   }
-  newjobs.map(job => {
-    // eslint-disable-next-line no-undef
-    value = throttledlambdajob(dynamodb, sequelize, Model, InvocationsModel, jobid, S3SelectParameter)
-  })
+
+  newjobs.map(j => throttledlambdajob(ddclient, PutItemCommand, sequelize, Model, InvocationsModel, jobid, S3SelectParameter, j))
   console.log('placed ' + JSON.stringify(jobquelength) + ' worker jobs in internal queue')
 }
 
-async function lambdajob (dynamodb, sequelize, Model, InvocationsModel, jobid, S3SelectParameter) {
+async function lambdajob (ddclient, PutItemCommand, sequelize, Model, InvocationsModel, jobid, S3SelectParameter) {
   if (SQSQUEUENOTNULL === true) {
     const invocationid = commonshared.makeid(16)
     // TODO: instead of makeid use :https://www.npmjs.com/package/docker-names
@@ -533,7 +554,7 @@ async function lambdajob (dynamodb, sequelize, Model, InvocationsModel, jobid, S
         message: AddSQLEntryresult.Data,
         jobid
       }
-      await commonshared.AddDDBEntry(dynamodb, 'Logverz-Invocations', 'SQLInsert', 'Error', 'Infra', details, 'API')
+      await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'SQLInsert', 'Error', 'Infra', details, 'API')
     }
 
     // checks for lambda statusin sql if completed or last update more than 15 second old returns promise
@@ -551,7 +572,8 @@ async function lambdajob (dynamodb, sequelize, Model, InvocationsModel, jobid, S
       await timeout(lambdacheckfrequency)
     }
     // console.log("I am here-finished lamdajob")
-  } else {
+  }
+  else {
     // There are N number of jobs submited in controllambdajobs. Once the queue is empty we iterate over the remaining jobs without submitting a lambda job.
     return null
   }
@@ -582,10 +604,8 @@ async function invokelambda (invocationid, jobid, S3SelectParameter) {
     LogType: 'None'
   }
 
-  lambda.invoke(lambdaparams, function (err, data) {
-    if (err) console.log(err, err.stack) // an error occurred
-    else console.log(data) // successful response
-  })
+  const command = new InvokeCommand(lambdaparams)
+  await lmdclient.send(command)
 }
 
 async function SelectSQLTable (sequelize, Model, SelectedModel, QueryType, DBTableName, QueryTypes, QueryParameters) {
@@ -599,9 +619,11 @@ async function SelectSQLTable (sequelize, Model, SelectedModel, QueryType, DBTab
 
   if (QueryTypes === 'findOne') {
     return await Query.findOne(QueryParameters)
-  } else if (QueryTypes === 'findAll') {
+  }
+  else if (QueryTypes === 'findAll') {
     return await Query.findAll(QueryParameters)
-  } else {
+  }
+  else {
     return await Query.findByPk(QueryParameters)
   }
 }
@@ -625,7 +647,7 @@ async function CreateSQLTable (sequelize, Model, SelectedModel, QueryType, DBTab
   })
 }
 
-async function populatesqs (sqs, sqslimiter, allKeys, QueueURL) {
+async function populatesqs (sqsclient, SendMessageCommand, sqslimiter, allKeys, QueueURL) {
   var MessagesArray = []
   var onebatch = []
 
@@ -640,9 +662,18 @@ async function populatesqs (sqs, sqslimiter, allKeys, QueueURL) {
     }
   }
 
-  return await MessagesArray.map(onebatch => {
+  MessagesArray.map(onebatch => {
     sqslimiter.schedule(() => {
-      sendSQSMessage(sqs, onebatch, QueueURL)
+      const params = {
+        MessageGroupId: '',
+        MessageBody: '',
+        QueueUrl: QueueURL
+      }
+
+      params.MessageBody = JSON.stringify(onebatch)
+      params.MessageGroupId = commonshared.makeid(128)
+      const command = new SendMessageCommand(params)
+      sqsclient.send(command)
     }) // sqslimiter
   }) // onebatch
 }
@@ -655,92 +686,66 @@ async function getSQSqueueProperties (QueueURL) {
       'ApproximateNumberOfMessages'
     ]
   }
-  const numofsqs = await sqs.getQueueAttributes(params, function (err, data) {
-    if (err) console.log(err, err.stack) // an error occurred
-    // console.log(data);           // successful response
-  }).promise()
+
+  const command = new GetQueueAttributesCommand(params)
+  const numofsqs = await sqsclient.send(command)
   return numofsqs.Attributes.ApproximateNumberOfMessages
 }
 
-async function sendSQSMessage (sqs, onebatch, QueueURL) {
-  // https://github.com/aws/aws-sdk-js/issues/745
-  const params = {
-    MessageGroupId: '',
-    MessageBody: '',
-    QueueUrl: QueueURL
+const getCommonPrefixes = async (callerid, ddclient, PutItemCommand, commonshared, s3client, ListObjectsV2Command, params, allKeys = [], jobid) => {
+  // https://stackoverflow.com/questions/42394429/aws-sdk-s3-best-way-to-list-all-keys-with-listobjectsv2
+
+  try {
+    const command = new ListObjectsV2Command(params)
+    var data = await s3client.send(command)
+    var response = {
+      Result: 'PASS',
+      Data: data
+    }
+  }
+  catch (error) {
+    // console.error(error) // from creation or business logic
+    var response = {
+      Result: 'Fail',
+      Data: error
+    }
   }
 
-  params.MessageBody = JSON.stringify(onebatch)
-  params.MessageGroupId = commonshared.makeid(128)
-  return await sqs.sendMessage(params, function (err, data) {
-    if (err) {
-      console.log('Error', JSON.stringify(err))
-    } else {
-      // const today = new Date()
-      // const date = today.getFullYear() + '-' + (today.getMonth() + 1) + '-' + today.getDate()
-      // const time = today.getHours() + ':' + today.getMinutes() + ':' + today.getSeconds()
-      // const dateTime = date + ' ' + time
-      // console.log("Sent SQS message "+dateTime+" "+data.MessageId )
-    }
-  })
-}
-
-const getCommonPrefixes = async (dynamodb, commonshared, s3, params, allKeys = [], jobid) => {
-  // https://stackoverflow.com/questions/42394429/aws-sdk-s3-best-way-to-list-all-keys-with-listobjectsv2
-  // const response = await s3.listObjectsV2(params).promise();
-
-  const promisedresponse = new Promise((resolve, reject) => {
-    s3.listObjectsV2(params, function (err, data) {
-      if (err) {
-        console.error('Error with input parameters:\n', JSON.stringify(params), JSON.stringify(err, null, 2))
-        resolve({
-          Result: 'Fail',
-          Data: err
-        })
-      } else {
-        resolve({
-          Result: 'PASS',
-          Data: data
-        })
-      }
-    })
-  })
-  let response = await promisedresponse
   if (response.Result !== 'PASS') {
     const details = {
-      source: 'controller.js:getCommonPrefixes',
+      source: callerid + ':getCommonPrefixes',
       message: JSON.stringify(response.Data),
       jobid
     }
-    await commonshared.AddDDBEntry(dynamodb, 'Logverz-Invocations', 'S3List', 'Error', 'Infra', details, 'API')
-  } else {
+    await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'S3List', 'Error', 'Infra', details, 'API')
+  }
+  else {
     response = response.Data
-    if ((response.Contents.length > 0) && (response.CommonPrefixes.length === 0)) {
-      // There are objects in the given prefix so it needs to be explictly scoped to the prefix level, otherwise it  would also contain the subfolders.
-      // listing bucket 06/ without delimiter it would contain files from 06/01, 06/02, 06/abc subfolders.
-      var delimeter = '/'
-      allKeys.push([response.Prefix, params.Bucket, delimeter])
-    } else if ((response.Contents.length > 0)) {
-      var delimeter = '/'
-      allKeys.push([response.Prefix, params.Bucket, delimeter])
-      var delimiter = '*'
-      response.CommonPrefixes.forEach(obj => allKeys.push([obj.Prefix, params.Bucket, delimiter]))
-    } else {
+
+    if (response.CommonPrefixes !== undefined) {
+      // folders with more subfolders to be scanned
       var delimiter = '*'
       response.CommonPrefixes.forEach(obj => allKeys.push([obj.Prefix, params.Bucket, delimiter]))
     }
+    else {
+      // folders with no more subfolders to be scanned
+      var delimiter = '/'
+      allKeys.push([response.Prefix, params.Bucket, delimiter])
+    }
   }
+
   return allKeys
 }
 
-async function getAllKeys (s3, params, allKeys = []) {
+async function getAllKeys (s3client, ListObjectsV2Command, params, allKeys = []) {
   // https://stackoverflow.com/questions/42394429/aws-sdk-s3-best-way-to-list-all-keys-with-listobjectsv2
-  const response = await s3.listObjectsV2(params).promise()
+  const command = new ListObjectsV2Command(params)
+  const response = await s3client.send(command)
   response.Contents.forEach(obj => allKeys.push([obj.Key, params.Bucket]))
 
   if (response.NextContinuationToken) {
     params.ContinuationToken = response.NextContinuationToken
-    await getAllKeys(s3, params, allKeys) // RECURSIVE CALL
+    await getAllKeys(s3client, ListObjectsV2Command, params, allKeys) // RECURSIVE CALL
   }
   return allKeys
 }
@@ -750,21 +755,21 @@ function timeout (ms) {
 }
 
 function determinemaxdbconnectioncount (dbinstanceclasses, DBInstanceClass, DBEngineType) {
-  
   const dbarray = dbinstanceclasses.split(/\r\n|\r|\n/).filter(text => text.match(/^db.*/)).map(dbi => dbi.split(';'))
- 
-  if(DBInstanceClass.match("db.serverless")){
-    var maxacu = DBInstanceClass.split(":")[1].split("-")[1]
-    //Set instance memory based limit, 1 ACU => 2GB RAM
-    var instancememorymb =maxacu  * 2 * 1000
+
+  if (DBInstanceClass.match('db.serverless')) {
+    var maxacu = DBInstanceClass.split(':')[1].split('-')[1]
+    // Set instance memory based limit, 1 ACU => 2GB RAM
+    var instancememorymb = maxacu * 2 * 1000
   }
-  else{
+  else {
     var instancememorymb = dbarray.filter(dba => dba[0] === DBInstanceClass)[0][1].replace(' GiB', '') * 1000
   }
 
-  instancememorymb = instancememorymb - 600 //removing 600 MB for general OS purposes
-  const specificenginelimit = dbenginememorylimits.filter(de => de[0] === DBEngineType)[0]
-  //const maxutilisation = 0.90 // 90%
+  instancememorymb = instancememorymb - 600 // removing 600 MB for general OS purposes
+  var specificenginelimit = dbenginememorylimits.filter(de => de[0] === DBEngineType)[0]
+  console.log('limit:' + specificenginelimit)
+  // const maxutilisation = 0.90 // 90%
   const maxdbconnectioncount = specificenginelimit[2] ? Math.round(instancememorymb / specificenginelimit[1]) : specificenginelimit[2] // specificenginelimit[1] * maxutilisation
   return maxdbconnectioncount
 }
@@ -777,7 +782,7 @@ function determinedbmaxactiveconnection (currentfreememory, DBEngineType) {
   return maxactiveconnection
 }
 
-async function determineconcurrentlambdacount (cloudwatch, commonshared, monitoringtimeperiod) {
+async function determineconcurrentlambdacount (cwclient, GetMetricDataCommand, commonshared, monitoringtimeperiod) {
   const MetricDataQueries = [{
     Id: 'accountCurrentLambdaExecutions',
     MetricStat: {
@@ -788,86 +793,56 @@ async function determineconcurrentlambdacount (cloudwatch, commonshared, monitor
       Period: 60,
       Stat: 'Average'
     },
-
     Label: 'ConcurrentExecutionsNumber',
     ReturnData: true
-
   }]
 
   const time = commonshared.CreatePeriod(monitoringtimeperiod)
 
   const cwlambdaconcurentexecutions = {
-    StartTime: time.StartDate,
-    EndTime: time.Enddate,
+    StartTime: new Date(time.StartDate),
+    EndTime: new Date(time.Enddate),
     MetricDataQueries,
     ScanBy: 'TimestampDescending'
   }
 
-  const LambdaConcurrentExecutionsCount = await commonshared.GetCWmetrics(cloudwatch, cwlambdaconcurentexecutions)
-  let concurrentlambdacount = LambdaConcurrentExecutionsCount.MetricDataResults[0].Values
+  const command = new GetMetricDataCommand(cwlambdaconcurentexecutions)
+  let concurrentlambdacount = (await cwclient.send(command)).MetricDataResults[0].Values
 
   if (concurrentlambdacount.length !== 0) {
     concurrentlambdacount = Math.round(concurrentlambdacount.reduce((a, v, i) => (a * i + v) / (i + 1)))
-  } else {
+  }
+  else {
     concurrentlambdacount = 0
   }
   return concurrentlambdacount
 }
 
-async function getquotas (servicequotas, lambdaquotaparams) {
-  const promisedquotavalue = new Promise((resolve, reject) => {
-    servicequotas.getServiceQuota(lambdaquotaparams, function (err, data) {
-      if (err) reject(err) // console.log(err, err.stack); // an error occurred
-      else resolve(data) // console.log(data);           // successful response
-    })
-  })
-  const quotavalue = await promisedquotavalue
-  return quotavalue
-}
-
-async function DesribeAllENI (ec2) {
-  const ENIlistArray = []
-  let NextToken
-
-  do {
-    var ENIlistpartial = await ENIlistsegment(ec2, NextToken)
-    if (ENIlistpartial.NextToken !== undefined) {
-      NextToken = ENIlistpartial.NextToken
-    }
-    ENIlistArray.push(ENIlistpartial)
-  } while (ENIlistpartial.NextToken !== undefined)
-
-  return _.flatten(ENIlistArray.map(ea => ea.NetworkInterfaces))
-}
-
-function ENIlistsegment (ec2, NextToken) {
-  if (NextToken) {
-    var params = {
-      NextToken
-      //, MaxResults: '5'
-    }
-  } else {
-    var params = {}
+async function DesribeAllENI () {
+  const paginatorConfig = {
+    client: new EC2Client({}),
+    pageSize: 100
   }
-  return new Promise(function (resolve, reject) {
-    ec2.describeNetworkInterfaces(params, function (err, data) {
-      if (err) {
-        console.log(err, err.stack)
-        reject(err)
-        // an error occurred
-      } else resolve(data) // successful response
-    })
-  })
+
+  const paginator = paginateDescribeNetworkInterfaces(paginatorConfig, {})
+  const ENIlistArray = []
+  for await (const onelist of paginator) {
+    ENIlistArray.push(...onelist.NetworkInterfaces)
+  }
+  return ENIlistArray
 }
 
 function initiatetablesquery (DBEngineType) {
   if (DBEngineType === 'postgres') {
     var initiatetables = 'SELECT 1 FROM public."Invocations"'
-  } else if (DBEngineType === 'mysql') {
+  }
+  else if (DBEngineType === 'mysql') {
     var initiatetables = 'SELECT 1 FROM Invocations'
-  } else if (DBEngineType.match('mssql')) {
+  }
+  else if (DBEngineType.match('mssql')) {
     var initiatetables = 'SELECT 1 FROM dbo.Invocations'
-  } else {
+  }
+  else {
     var initiatetables = 'null'
     console.error('unknown unsupported DB option')
   }
@@ -881,19 +856,11 @@ async function authorizecollection (username) {
   if (username.match('Logverz-MasterController') === null) {
     const usertype = 'UserAWS'
     console.log("Checking authorization of '" + username + "'." + "Type:'UserAWS'.")
-
-    let userattributes = identity.chain().find({
-      Type: usertype,
-      Name: username
-    }).collection.data[0] // ?.data()
-    if (userattributes === undefined) {
-      userattributes = await authenticationshared.getidentityattributes(commonshared, docClient, username, usertype)
-      userattributes = userattributes.Items[0]
-      identity.insert(userattributes)
-    }
-
+    let userattributes = await authenticationshared.getidentityattributes(docClient, QueryCommand, username, usertype)
+    userattributes = userattributes.Items[0]
     var S3authresult = authenticationshared.authorizeS3access(_, commonshared, userattributes, S3Foldersarray)
-  } else {
+  }
+  else {
     // if match than authorization is granted. TODO , perform authoriation check on MasterController as well.
     var S3authresult = 'ok'
   }
@@ -906,11 +873,26 @@ async function authorizecollection (username) {
       message,
       jobid
     }
-    await commonshared.AddDDBEntry(dynamodb, 'Logverz-Invocations', 'S3Access', 'Error', 'User', details, 'API')
+    await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'S3Access', 'Error', 'User', details, 'API')
     process.exit(1)
-  } else {
+  }
+  else {
     console.log(username + ' can access folders ' + S3Foldersarray)
   }
+}
+
+async function GetConfiguration (directory, value) {
+  // Kudos: https://stackoverflow.com/questions/71432755/how-to-use-dynamic-import-from-a-dependency-in-node-js
+  const moduleText = fs.readFileSync(fileURLToPath(directory), 'utf-8').toString()
+  const moduleBase64 = Buffer.from(moduleText).toString('base64')
+  const moduleDataURL = `data:text/javascript;base64,${moduleBase64}`
+  if (value !== '*') {
+    var data = (await import(moduleDataURL))[value]
+  }
+  else {
+    var data = (await import(moduleDataURL))
+  }
+  return data
 }
 
 // kudos : "https://manytools.org/hacker-tools/ascii-banner/"
