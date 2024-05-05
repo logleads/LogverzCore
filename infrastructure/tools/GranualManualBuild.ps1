@@ -96,7 +96,7 @@ create-Bundle -zipfilename "worker.zip" `
               -projectpath $projectpath `
               -componentpath "\sources\worker"`
               -files "worker.js","package.json","package-lock.json"`
-              -extrafiles "\sources\shared\engineshared.js","\sources\shared\commonshared.js","\sources\shared\package.json"
+              -extrafiles "\sources\shared\enginesharedv3.mjs","\sources\shared\commonsharedv3.js","\sources\shared\package.json"
 
 update-lambda -lambdafunctionname "Logverz-Worker"`
               -projectpath $projectpath `

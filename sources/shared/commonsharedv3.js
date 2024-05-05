@@ -56,7 +56,8 @@ const receiveSQSMessage = async function (sqsclient, ReceiveMessageCommand, Queu
   }
  
   const command = new ReceiveMessageCommand(params)
-  return await sqsclient.send(command)
+  const result= await sqsclient.send(command)
+  return result
 }
 
 const makeid = (length) => {

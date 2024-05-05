@@ -1,33 +1,49 @@
+/* eslint-disable array-callback-return */
 /* eslint-disable no-redeclare */
 /* eslint-disable no-var */
-const AWS = require('./node_modules/aws-sdk')
-const s3 = new AWS.S3()
-const fs = require('fs')
-const path = require('path')
-const { promisify } = require('util')
-const writeFileAsync = promisify(fs.writeFile)
-const _ = require('./node_modules/lodash')
-const { TaskTimer } = require('./node_modules/tasktimer')
-const Sequelize = require('./node_modules/sequelize')
-const { performance } = require('perf_hooks')
+/* eslint brace-style: ["error", "stroustrup"] */
+
+import { performance } from 'perf_hooks'
+import { fileURLToPath } from 'url'
+import path from 'path'
+import fs from 'fs'
+//import https from 'https'
+//import { NodeHttpHandler } from '@smithy/node-http-handler'
+import _ from 'lodash'
+import pkg from 'tasktimer';
+import { Sequelize } from 'sequelize'
+import { S3Client, SelectObjectContentCommand, SelectObjectContentEventStream  } from '@aws-sdk/client-s3'
+import { SQSClient, ReceiveMessageCommand, DeleteMessageCommand, SendMessageCommand, GetQueueAttributesCommand } from '@aws-sdk/client-sqs'
+import { SSMClient, GetParameterCommand} from '@aws-sdk/client-ssm'
+import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb'
+// import { time } from 'console'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const { TaskTimer } = pkg;
+
 let rdsinsertsuccess = false
 let t0
-// var appLBfiles=path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment','events','worker','appLBfiles.json');
-// var prefixarray =require(appLBfiles);
+let sqsempty=0
 
-module.exports.handler = async function (event, context) {
+export const handler = async (event, context) => {
+
   if (process.env.Environment !== 'LocalDev') {
     // Prod lambda function settings
-    var engineshared = require('./shared/engineshared')
-    var commonshared = require('./shared/commonshared')
+    var commonsharedpath = ('file:///' + path.join(__dirname, 'shared', 'commonsharedv3.js').replace(/\\/g, '/'))
+    var commonshared = await GetConfiguration(commonsharedpath, '*')
+    var enginesharedpath = ('file:///' + path.join(__dirname, 'shared', 'enginesharedv3.mjs').replace(/\\/g, '/'))
+    var engineshared = await GetConfiguration(enginesharedpath, '*')
     const arnList = (context.invokedFunctionArn).split(':')
     var region = arnList[3]
-    var FileName = '/tmp/SelectedModel.js'
+    var FileName = ('file:///' + path.join('tmp', 'SelectedModel.mjs').replace(/\\/g, '/')) // '/tmp/SelectedModel.js'
     var TestingTimeout = process.env.TestingTimeout
     console.log('REQUEST RECEIVED: ' + JSON.stringify(context))
-  } else {
+  }
+  else {
     // Dev environment settings
-    const mydev = require(path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'worker', 'mydev.js'))
+    var directory = path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'worker', 'mydev.mjs')
+    const mydev = await import('file:///' + directory.replace(/\\/g, '/'))
     var engineshared = mydev.engineshared
     var commonshared = mydev.commonshared
     var region = mydev.region
@@ -55,82 +71,58 @@ module.exports.handler = async function (event, context) {
   var header = true
   if (S3SelectParameter.InputSerialization.JsonType !== undefined) {
     var type = 'JSON'
-  } else if (S3SelectParameter.InputSerialization.CSV.FileHeaderInfo === 'USE') {
+  }
+  else if (S3SelectParameter.InputSerialization.CSV.FileHeaderInfo === 'USE') {
     var type = 'CSV'
-  } else {
+  }
+  else {
     var type = 'CSV'
     var header = false
   }
 
-  AWS.config.update({
-    region
-  })
+  const sqsclient = new SQSClient({})
+  const ssmclient = new SSMClient({})
+  const ddclient = new DynamoDBClient({})
+  const s3client = new S3Client({})
 
-  const SSM = new AWS.SSM()
-  const sqs = new AWS.SQS({
-    apiVersion: '2012-11-05'
-  })
-  const dynamodb = new AWS.DynamoDB()
-  const details = {
-    source: 'signal.js:handler',
-    message: ''
-  }
+  const initialparameters = await initialseparameters(commonshared, Schema, DBFrendlyName, ssmclient, GetParameterCommand, ddclient, PutItemCommand)
+  const DBPassword = initialparameters.Password
+  Schema = initialparameters.Schema
 
-  if (Schema === '') {
-    // It only retrieves schema parameter if the client context does not have it. Which happenes if the schema is big + query is big so the
-    // total client context is close to or more than 3583bytes.https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html#API_Invoke_RequestSyntax
-    var [DBPassword, SchemaObject] = await Promise.all([
-      commonshared.getssmparameter(SSM, {
-        Name: '/Logverz/Database/DefaultDBPassword',
-        WithDecryption: true
-      }, dynamodb, details),
-      commonshared.getssmparameter(SSM, {
-        Name: ('/Logverz/Engine/Schemas/' + QueryType)
-      }, dynamodb, details)
-    ])
-    const SchemaArray = JSON.parse(SchemaObject.Parameter.Value).Schema
-    var Schema = ('{' + SchemaArray.map(e => e + '\n') + '}').replace(/,'/g, '"').replace(/'/g, '"') // TODO add engineshared.convertschema()
-    DBPassword = DBPassword.Parameter.Value
-  } else {
-    var DBPassword = await commonshared.getssmparameter(SSM, {
-      Name: `/Logverz/Database/${DBFrendlyName}Password`,
-      WithDecryption: true
-    }, dynamodb, details)
-    DBPassword = DBPassword.Parameter.Value
-  }
-
-  await writeFileAsync(FileName, engineshared.constructmodel(Schema, 'worker'))
-  var SelectedModel = require(FileName)
+  fs.writeFileSync(fileURLToPath(FileName), engineshared.constructmodel(Schema, 'worker'))
+  var SelectedModel = (await import(FileName)).SelectedModel
 
   const connectionstring = `${DBEngineType}://${DBUserName}:${DBPassword}@${DBEndpointName}:${DBEndpointPort}/${DBName}`
 
   try {
     var sequelize = await InitiateConnection(DBEngineType, connectionstring) // sequelize,
     console.log('SQL Server Connection has been established successfully.')
-  } catch (e) {
+  }
+  catch (e) {
     console.log('Error establishing SQL Server connection. Further details: \n')
     console.error(e)
     process.exit()
   }
 
+  //for testing
+  //await FilteredS3data(s3client, s3selectV3testing, context, engineshared, commonshared, sequelize, Model, DBEngineType, type, header)
+
   t0 = performance.now()
-  const finished = await loop(dynamodb, sequelize, context, TestingTimeout, sqs, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, type, header)
+  await loop(s3client, sqsclient, sequelize, context, TestingTimeout, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, type, header)
 
   return {
     statusCode: 200,
-    body: finished
+    body: {}
   }
 } // module exports
 
-async function loop (dynamodb, sequelize, context, TestingTimeout, sqs, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, type, header) {
+async function loop (s3client, sqsclient, sequelize, context, TestingTimeout, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, type, header) {
   // two actions are run in parallel:
   // 1.) reporting lambda state to sql database,
   // 2.) processing sqs messages via TASK function
   let i = 0
 
-  //  invocationsquery(sequelize,context,"STARTING")
-
-  const timer = new TaskTimer(2000)
+  const timer = new TaskTimer(3000)
   timer.on('tick', () => {
     console.log(`Reporting state of instance ${context.clientContext.invocationid} at ${new Date().toLocaleString()} : RUNNING`)
 
@@ -156,7 +148,7 @@ async function loop (dynamodb, sequelize, context, TestingTimeout, sqs, enginesh
         await timeout(TestingTimeout) // for testing log running lambdas
       }
       const t1 = performance.now()
-      var finished = await Task(dynamodb, sqs, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header)
+      await Task(s3client, sqsclient, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header)
       const t2 = performance.now()
       const processingtime = (t2 - t1)
       const ellipsedtime = (t2 - t0)
@@ -164,7 +156,8 @@ async function loop (dynamodb, sequelize, context, TestingTimeout, sqs, enginesh
 
       if (process.env.Environment === 'Windows') { // for local test environment
         var remainingtime = context.getRemainingTimeInMillis() - ellipsedtime
-      } else {
+      }
+      else {
         var remainingtime = context.getRemainingTimeInMillis()
       }
 
@@ -176,7 +169,8 @@ async function loop (dynamodb, sequelize, context, TestingTimeout, sqs, enginesh
         console.log('exit condition met, the Lambdafunctions remaining time ' + remainingtime / 1000 + 'sec last iteration time ' + processingtime / 1000 + 'sec')
       }
     } while (!exitcondition)
-  } catch (err) {
+  }
+  catch (err) {
     console.log(err)
   }
   timer.stop()
@@ -192,34 +186,49 @@ async function loop (dynamodb, sequelize, context, TestingTimeout, sqs, enginesh
 
   console.log(`Reporting state of instance ${context.clientContext.invocationid} at ${new Date().toLocaleString()} : COMPLETED`)
   await sequelize.close()
-  return finished
+
 }
 
-async function Task (dynamodb, sqs, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header) {
-  const sqsmessages = await commonshared.receiveSQSMessage(QueueURL, sqs)
-  // TODO test and consider raising the MaxNumberOfMessages.
+async function Task (s3client, sqsclient, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header) {
+  const sqsmessages = await commonshared.receiveSQSMessage(sqsclient, ReceiveMessageCommand, QueueURL, '3')
+  var result ={}
 
-  try {
-    var prefixarray = JSON.parse(sqsmessages[0].Body)
-    var ReceiptHandle = sqsmessages[0].ReceiptHandle
-  } catch (e) {
-    console.log('Error parsing Message retrieved from SQS. Further details: \n')
-    console.error(e)
-    process.exit()
+  if (sqsmessages.Messages !== undefined){
+    try {
+      var prefixarray = _.flatten(sqsmessages.Messages.map(msg => JSON.parse(msg.Body)))
+      //JSON.parse(sqsmessages[0].Body)
+      var ReceiptHandle = sqsmessages.Messages.map(msg => msg.ReceiptHandle)
+      //sqsmessages[0].ReceiptHandle
+    }
+    catch (e) {
+      console.log('Error parsing Message retrieved from SQS. Further details: \n')
+      console.error(e)
+      process.exit()
+    }
+
+    const s3results = await processS3data(s3client, prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, sequelize, Model, type, header)
+    const Transformeddata = DatatoSchemaTransformation(s3results, SelectedModel, S3SelectParameter, DBEngineType, type, header)
+
+    // Only call InsertData if Transformed data is not null;
+    if (Transformeddata.length !== 0) {
+      await InsertData(sequelize, Model, SelectedModel, QueryType, DBTableName, Transformeddata)
+      await deleteSQSMessage(sqsclient, QueueURL, ReceiptHandle, rdsinsertsuccess)
+    }
+    else {
+      rdsinsertsuccess = true
+      await deleteSQSMessage(sqsclient, QueueURL, ReceiptHandle, rdsinsertsuccess)
+    }
+  }
+  else if (sqsempty > 2){
+    console.log("\nQueue was empty for prolonged time stopping lambda function\n")
+    process.exit(0)
+  }
+  else {
+    console.log("\nQueue was empty waiting 1 second for new messages\n")
+    await timeout(1000)
+    sqsempty++
   }
 
-  const s3results = await processS3data(dynamodb, prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, sequelize, Model, type, header)
-  const Transformeddata = DatatoSchemaTransformation(s3results, SelectedModel, S3SelectParameter, DBEngineType, type, header)
-
-  // Only call InsertData if Transformed data is not null;
-  if (Transformeddata.length !== 0) {
-    await InsertData(sequelize, Model, SelectedModel, QueryType, DBTableName, Transformeddata)
-    await deleteSQSMessage(QueueURL, ReceiptHandle, sqs, rdsinsertsuccess)
-  } else {
-    rdsinsertsuccess = true
-    var result = await deleteSQSMessage(QueueURL, ReceiptHandle, sqs, rdsinsertsuccess)
-  }
-  return result
 }
 
 async function InsertData (sequelize, Model, SelectedModel, QueryType, DBTableName, Transformeddata) {
@@ -237,7 +246,7 @@ async function InsertData (sequelize, Model, SelectedModel, QueryType, DBTableNa
     })
       .then(result => {
         rdsinsertsuccess = true
-        console.log('SQL Server BulkEntry  has been completed successfully. Number of items: ' + Transformeddata.length)
+        console.log('SQL Server BulkEntry  has been completed successfully. Number of rows: ' + Transformeddata.length)
         // Transaction has been committed
         // result is whatever the result of the promise chain returned to the transaction callback
       }).catch(err => {
@@ -250,7 +259,7 @@ async function InsertData (sequelize, Model, SelectedModel, QueryType, DBTableNa
   }) // return sequlize
 } // insert data function
 
-async function processS3data (dynamodb, prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, sequelize, Model, type, header) {
+async function processS3data (s3client, prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, sequelize, Model, type, header) {
   // source: https://docs.aws.amazon.com/AWSJavaScriptSDK/latest/AWS/S3.html#selectObjectContent-property
 
   const s3parameters = {
@@ -269,16 +278,19 @@ async function processS3data (dynamodb, prefixarray, S3SelectQuery, S3SelectPara
     s3parameters.InputSerialization.JSON.Type = S3SelectParameter.InputSerialization.JsonType
     s3parameters.OutputSerialization.JSON = {}
     s3parameters.OutputSerialization.JSON.RecordDelimiter = ','
-  } else if (type === 'CSV') {
+  }
+  else if (type === 'CSV') {
     if (header === false) {
       s3parameters.InputSerialization.CSV = {}
       s3parameters.OutputSerialization.CSV = S3SelectParameter.OutputSerialization.CSV
-    } else {
+    }
+    else {
       s3parameters.OutputSerialization.JSON = {}
       s3parameters.OutputSerialization.JSON.RecordDelimiter = ','
     }
     s3parameters.InputSerialization.CSV = S3SelectParameter.InputSerialization.CSV
-  } else if (S3SelectParameter.InputSerialization.Parquet !== undefined) {
+  }
+  else if (S3SelectParameter.InputSerialization.Parquet !== undefined) {
     console.log('Parquet support to be done!')
   }
 
@@ -286,7 +298,7 @@ async function processS3data (dynamodb, prefixarray, S3SelectQuery, S3SelectPara
     s3parameters.Key = prefix[0]
     s3parameters.Bucket = prefix[1]
     const params = s3parameters
-    return FilteredS3data(params, context, dynamodb, engineshared, commonshared, sequelize, Model, DBEngineType, type, header)
+    return FilteredS3data(s3client, params, context, engineshared, commonshared, sequelize, Model, DBEngineType, type, header)
   }) // prefixarray.map
 
   const resolved = await Promise.all(promises)
@@ -299,73 +311,87 @@ async function processS3data (dynamodb, prefixarray, S3SelectQuery, S3SelectPara
     results = _.flatten(combined)
   }
 
-  console.log('Number of keys ' + results.length + ' \n')
+  console.log('Number of files ' + results.length + ' \n')
   return results
 }
 
-async function FilteredS3data (params, context, dynamodb, engineshared, commonshared, sequelize, Model, DBEngineType, type, header) {
-  const filtereresult = new Promise((resolve) => {
-    // sources: https://thetrevorharmon.com/blog/how-to-use-s3-select-to-query-json-in-node-js ,https://github.com/aws/aws-sdk-js/issues/1682
-    // Alternative: https://www.pluralsight.com/guides/javascript-callbacks-variable-scope-problem
-    const req = s3.selectObjectContent(params, function (err, data) {
-      if (err) {
-        console.log('error:\n')
-        console.log(JSON.stringify(err))
-        // an error occurred
-      } else {
-        const results = []
-        const eventStream = data.Payload
-
-        eventStream.on('data', ({
-          Records,
-          End
-        }) => {
-          if (Records) {
-            results.push(Records.Payload)
-          } else if (End) {
-            const plainstring = Buffer.concat(results).toString('utf8')
-            var result = []
-            if (type === 'JSON') {
-              var result = convertrawdata(plainstring)
-              resolve(result)
-            } else if (type === 'CSV' && header === true) {
-              var result = convertrawdata(plainstring)
-              resolve(result)
-            } else if (type === 'CSV' && header === false) {
-              result.push(plainstring)
-              resolve({
-                Result: 'PASS',
-                Data: result
-              })
+async function FilteredS3data (s3client, params, context, engineshared, commonshared, sequelize, Model, DBEngineType, type, header) {
+  
+  const asyncIterableStreamToString = (asyncIterable) =>
+    new Promise(async(resolve, reject) => {
+      try {
+        const chunks = [new Uint8Array()];
+        for await (const selectObjectContentEventStream of asyncIterable) {
+          if (selectObjectContentEventStream.Records) {
+            if (selectObjectContentEventStream.Records.Payload) {
+              chunks.push(selectObjectContentEventStream.Records.Payload);
             }
           }
-        }) // eventstream on data
-      } // successful response
-    })
 
-    req.on('complete', (response) => {
-      if (response.error !== null) {
-        const errorstring = response.httpResponse.stream.req._header
-        const file = errorstring.match(/POST.*?select.*/g)
-        const bucket = errorstring.match(/Host:.*/g)
-        // this is the compacted errormessage
-        const errormessagedatabase = 'Error Processing request: \n' + file + '\n' + bucket + '\nReason:\n' + Buffer.from(response.httpResponse.body).toString('utf8')
-        // this is the full errormessage:
-        let errormessageconsole = 'Error Processing request: \n' + errorstring + '\n------------------------------------------------------------------\n'
-        errormessageconsole += Buffer.from(response.httpResponse.body).toString('utf8')
-        console.log(errormessageconsole)
-        resolve({
-          Result: 'Fail',
-          Data: errormessagedatabase
-        })
+          if (selectObjectContentEventStream.End) {
+            resolve(Buffer.concat(chunks).toString("utf8"))
+          }
+        }
+      } catch (err) {
+        console.error(err);
+        reject();
       }
-    })
-  }) // new promise
+    }
+  );
 
-  const result = await filtereresult
+  const command = new SelectObjectContentCommand(params)
+  var result
+  try {
+    const response = await s3client.send(command)
+
+    if (response.$metadata.httpStatusCode == 200) {
+      if (response.Payload) {
+        const body = await asyncIterableStreamToString(response.Payload);
+       
+            if (type === 'JSON') {
+              result=convertrawdata(body)
+            }
+            else if (type === 'CSV' && header === true) {
+              result=convertrawdata(body)
+            }
+            else if (type === 'CSV' && header === false) {
+              result ={
+                Result: 'PASS',
+                Data: body
+              }
+            }
+        //console.log(body)
+      } 
+      else {
+        console.warn(`S3Select did not have payload for ${bucketName}/${key}`);
+      }
+    }
+    else if (response.error !== null) {
+      const errorstring = response.httpResponse.stream.req._header
+      const file = errorstring.match(/POST.*?select.*/g)
+      const bucket = errorstring.match(/Host:.*/g) 
+      // this is the compacted errormessage
+      const errormessagedatabase = 'Error Processing request: \n' + file + '\n' + bucket + '\nReason:\n' + Buffer.from(response.httpResponse.body).toString('utf8')
+      // this is the full errormessage:
+      let errormessageconsole = 'Error Processing request: \n' + errorstring + '\n------------------------------------------------------------------\n'
+      errormessageconsole += Buffer.from(response.httpResponse.body).toString('utf8')
+      console.log(errormessageconsole)
+      result ={
+        Result: 'Fail',
+        Data: errormessagedatabase
+      }
+
+    }
+
+  }
+  catch(e){
+    console.log(e)
+  }
+
   if (result.Result === 'PASS') {
     return result.Data
-  } else {
+  }
+  else {
     const mydata = {
       jobid: context.clientContext.jobid,
       invocationid: context.clientContext.invocationid,
@@ -384,12 +410,12 @@ async function FilteredS3data (params, context, dynamodb, engineshared, commonsh
         message: 'failed to insert processing errors to SQL table, because: ' + result.Data,
         jobid: context.clientContext.jobid
       }
-      await commonshared.AddDDBEntry(dynamodb, 'Logverz-Invocations', 'SQLInsert', 'Error', 'Infra', details, 'API')
+      await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'SQLInsert', 'Error', 'Infra', details, 'API')
     }
   }
-} // FilteredS3data
+}
 
-async function InitiateConnection (DBEngineType, connectionstring) { // sequelize,
+async function InitiateConnection (DBEngineType, connectionstring) {
   if (DBEngineType === 'mssql') {
     var config = {
       dialect: 'mssql',
@@ -401,15 +427,15 @@ async function InitiateConnection (DBEngineType, connectionstring) { // sequeliz
         }
       },
       pool: {
-        max: 1,
+        max: 2,
         min: 0,
         idle: 5000,
         acquire: 30000
       }
     }
     var sequelize = new Sequelize(connectionstring, config)
-  } 
-  else if(DBEngineType === 'postgres'){
+  }
+  else if (DBEngineType === 'postgres') {
     var config = {
       dialectOptions: {
         ssl: {
@@ -418,7 +444,7 @@ async function InitiateConnection (DBEngineType, connectionstring) { // sequeliz
         }
       },
       pool: {
-        max: 1,
+        max: 2,
         min: 0,
         idle: 5000,
         acquire: 30000
@@ -426,12 +452,11 @@ async function InitiateConnection (DBEngineType, connectionstring) { // sequeliz
     }
     var sequelize = new Sequelize(connectionstring, config)
     sequelize.options.logging = false // Disable logging
-
   }
   else {
     var config = {
       pool: {
-        max: 1,
+        max: 2,
         min: 0,
         idle: 5000,
         acquire: 30000
@@ -449,9 +474,11 @@ async function InitiateConnection (DBEngineType, connectionstring) { // sequeliz
 function DatatoSchemaTransformation (s3results, SelectedModel, S3SelectParameter, DBEngineType, type, header) {
   if (type === 'JSON') {
     var finalarray = convertdatatosqlschema(s3results, SelectedModel, DBEngineType)
-  } else if (type === 'CSV' && header === true) {
+  }
+  else if (type === 'CSV' && header === true) {
     var finalarray = convertdatatosqlschema(s3results, SelectedModel, DBEngineType)
-  } else if (type === 'CSV' && header === false) {
+  }
+  else if (type === 'CSV' && header === false) {
     var intermediatearray = []
     const headers = Object.keys(SelectedModel)
 
@@ -459,10 +486,12 @@ function DatatoSchemaTransformation (s3results, SelectedModel, S3SelectParameter
       const temparray = []
       let entries = []
       entries = onefile.split(S3SelectParameter.OutputSerialization.CSV.RecordDelimiter)
+      
       for (let i = 0; i < entries.length; i++) {
         if (S3SelectParameter.OutputSerialization.CSV.FieldDelimiter === ' ') {
           var oneentry = entries[i].match(/(?:[^\s"]+|"[^"]*")+/g)
-        } else {
+        }
+        else {
           var oneentry = entries[i].split(S3SelectParameter.OutputSerialization.CSV.FieldDelimiter)
         }
 
@@ -479,8 +508,13 @@ function DatatoSchemaTransformation (s3results, SelectedModel, S3SelectParameter
       intermediatearray.push(temparray)
     })
     var intermediatearray = _.compact(_.flatten(intermediatearray))
+    //debug dump location 1:
+    //fs.writeFileSync(fileURLToPath("file:///C:\\...path...\\intermediatearray.json"), JSON.stringify(intermediatearray))
     var finalarray = convertdatatosqlschema(intermediatearray, SelectedModel, DBEngineType)
-  } else {
+     //debug dump location 2:
+    //fs.writeFileSync(fileURLToPath("file:///C:\\...path...\\finalarray.json"), JSON.stringify(finalarray))
+  }
+  else {
     console.log('Parquet filetype not yet supported')
   }
 
@@ -491,27 +525,35 @@ function timeout (ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-async function deleteSQSMessage (QueueURL, ReceiptHandle, sqs, rdsinsertsuccess) {
-  const deleteParams = {
-    QueueUrl: QueueURL,
-    ReceiptHandle
-  }
-  return new Promise((resolve, reject) => {
+async function deleteSQSMessage (sqsclient, QueueURL, ReceiptHandles, rdsinsertsuccess) {
+
+
+  const promises = ReceiptHandles.map(ReceiptHandle => {
+
+      const deleteParams = {
+      QueueUrl: QueueURL,
+      ReceiptHandle
+      }
+
     if (rdsinsertsuccess) {
-      sqs.deleteMessage(deleteParams, function (err, data) {
-        if (err) {
-          console.log('Delete Error', err)
-          reject(err)
-        } else {
-          console.log('Message Deleted:', JSON.stringify(data))
-          resolve(JSON.stringify(data))
-        }
-      })
-      rdsinsertsuccess = false
-    } else {
+      const command = new DeleteMessageCommand(deleteParams)
+      try {
+        const response = sqsclient.send(command)
+        console.log('Message Deleted:', JSON.stringify(response))
+      }
+      catch (e) {
+        const response = e
+        console.error('Error:',JSON.stringify(response))
+      }
+    }
+    else {
       console.log('Database insert of the contents of the message failed not deleting sqs message')
     }
-  }) // new promise
+
+  }) // prefixarray.map
+  
+  await Promise.all(promises)
+  
 }
 
 function convertdatatosqlschema (s3results, SelectedModel, DBEngineType) {
@@ -526,27 +568,32 @@ function convertdatatosqlschema (s3results, SelectedModel, DBEngineType) {
         // https://sequelize.org/master/manual/other-data-types.html#mssql
         try {
           value = JSON.stringify(value)
-        } catch (error) {
+        }
+        catch (error) {
           console.log('Could not stringify json')
           console.log(JSON.stringify(error))
           value = 'error processingfield'
         }
         existingentry[Modelskey] = value
-      } else if ((type === 'INTEGER' || type === 'BIGINT') && (value !== undefined)) {
+      }
+      else if ((type === 'INTEGER' || type === 'BIGINT') && (value !== undefined)) {
         // convert non number value such as '-' to NULL
         // Note value can be undefined if the processed file does not contain same number of fields as schema example "ELBAccessLogTestFile" vs generic ELB AccessLogs
         if (value.match(/^[0-9]*$/) === null) {
           value = null
           existingentry[Modelskey] = value
-        } else {
+        }
+        else {
           try {
             value = parseInt(value)
-          } catch (err) {
+          }
+          catch (err) {
             console.log('The key: \n' + Modelskey + '\nThe Value: \n' + value + '\nThe error: \n' + err)
           };
           existingentry[Modelskey] = value
         }
-      } else if (value === 'null' || value === undefined) {
+      }
+      else if (value === 'null' || value === undefined) {
         value = null
         existingentry[Modelskey] = value
       }
@@ -567,7 +614,8 @@ function convertrawdata (plainstring) {
       Result: 'PASS',
       Data: JSONobject
     } // encapsulating state of data to PASS/FAIL JSON object.
-  } catch (e) {
+  }
+  catch (e) {
     console.log(e)
     var result = {
       Result: 'Fail',
@@ -576,4 +624,60 @@ function convertrawdata (plainstring) {
   }
 
   return result
+}
+
+async function initialseparameters (commonshared, Schema, DBFrendlyName, ssmclient, GetParameterCommand, ddclient, PutItemCommand) {
+  const details = {
+    source: 'worker.js:handler',
+    message: ''
+  }
+
+  if (Schema === '') {
+    // It only retrieves schema parameter if the client context does not have it. Which happenes if the schema is big + query is big so the
+    // total client context is close to or more than 3583bytes.https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html#API_Invoke_RequestSyntax
+
+    var [DBPassword, SchemaObject] = await Promise.all([
+      commonshared.getssmparameter(ssmclient, GetParameterCommand, {
+        Name: '/Logverz/Database/DefaultDBPassword',
+        WithDecryption: true
+      }, ddclient, PutItemCommand),
+      commonshared.getssmparameter(ssmclient, GetParameterCommand, {
+        Name: ('/Logverz/Engine/Schemas/' + QueryType)
+      }, ddclient, PutItemCommand)
+    ])
+    const SchemaArray = JSON.parse(SchemaObject.Parameter.Value).Schema
+    var Schema = ('{' + SchemaArray.map(e => e + '\n') + '}').replace(/,'/g, '"').replace(/'/g, '"') // TODO add engineshared.convertschema()
+
+    var result = {
+      Schema,
+      Password: DBPassword.Parameter.Value
+    }
+  }
+  else {
+    var DBPassword = await commonshared.getssmparameter(ssmclient, GetParameterCommand, {
+      Name: `/Logverz/Database/${DBFrendlyName}Password`,
+      WithDecryption: true
+    }, ddclient, PutItemCommand)
+
+    var result = {
+      Schema,
+      Password: DBPassword.Parameter.Value
+    }
+  }
+
+  return result
+}
+
+async function GetConfiguration (directory, value) {
+  // Kudos: https://stackoverflow.com/questions/71432755/how-to-use-dynamic-import-from-a-dependency-in-node-js
+  const moduleText = fs.readFileSync(fileURLToPath(directory), 'utf-8').toString()
+  const moduleBase64 = Buffer.from(moduleText).toString('base64')
+  const moduleDataURL = `data:text/javascript;base64,${moduleBase64}`
+  if (value !== '*') {
+    var data = (await import(moduleDataURL))[value]
+  }
+  else {
+    var data = (await import(moduleDataURL))
+  }
+  return data
 }

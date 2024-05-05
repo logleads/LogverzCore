@@ -1,4 +1,4 @@
-import * as helper from "./worker/worker"
+import * as helper from "./worker/worker.js"
 // import * as helper from './jobproducer/jobproducer.js'
 // const helper = require("./mastercontroller/mastercontroller");
 // import * as helper from './init/initiate.js';
