@@ -37,7 +37,7 @@ create-Bundle -zipfilename "transform.zip" `
               -projectpath $projectpath `
               -componentpath "\sources\transform"`
               -files "transform.js","package.json","package-lock.json"`
-              -extrafiles "\sources\shared\commonshared.js","\sources\shared\package.json"
+              -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\package.json"
                    
 update-lambda -lambdafunctionname "Logverz-Transform"`
               -projectpath $projectpath `
@@ -48,7 +48,7 @@ create-Bundle -zipfilename "signal.zip" `
               -projectpath $projectpath `
               -componentpath "\sources\signal"`
               -files "signal.js","package.json","package-lock.json"`
-              -extrafiles "\sources\shared\commonshared.js","\sources\shared\package.json"
+              -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\package.json"
                    
 update-lambda -lambdafunctionname "Logverz-WebRTCSignal"`
               -projectpath $projectpath `
@@ -140,7 +140,7 @@ create-Bundle -zipfilename "httprelay.zip" `
                     -projectpath $projectpath `
                     -componentpath "\sources\httprelay"`
                     -files "httprelay.js","package.json","package-lock.json"`
-                    -extrafiles "\sources\shared\commonshared.js","\sources\shared\package.json","\sources\shared\authenticationshared.js"
+                    -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\package.json","\sources\shared\authenticationsharedv3.js"
 
 update-lambda -lambdafunctionname "Logverz-HTTPRelay"`
               -projectpath $projectpath `
@@ -179,8 +179,8 @@ update-lambda -lambdafunctionname "Logverz-Login"`
 create-Bundle -zipfilename "nosql.zip" `
                     -projectpath $projectpath `
                     -componentpath "\sources\nosql"`
-                    -files "db.js","nosql.js","package.json","package-lock.json"`
-                    -extrafiles "\sources\shared\commonshared.js","\sources\shared\package.json","\sources\shared\authenticationshared.js"
+                    -files "nosql.js","package.json","package-lock.json"`
+                    -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\package.json","\sources\shared\authenticationsharedv3.js"
 
 update-lambda -lambdafunctionname "Logverz-NoSQL"`
               -projectpath $projectpath `
@@ -192,7 +192,7 @@ create-Bundle -zipfilename "mastercontroller.zip" `
                     -projectpath $projectpath `
                     -componentpath "\sources\mastercontroller"`
                     -files "mastercontroller.js","package.json","package-lock.json"`
-                    -extrafiles "\infrastructure\buildspec.yml","\sources\shared\commonshared.js","\sources\shared\package.json"
+                    -extrafiles "\infrastructure\buildspec.yml","\sources\shared\commonsharedv3.js","\sources\shared\package.json"
 
 update-lambda -lambdafunctionname "Logverz-MasterController"`
               -projectpath $projectpath `

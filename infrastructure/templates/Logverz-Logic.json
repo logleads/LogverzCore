@@ -2073,7 +2073,7 @@
 				"Role": {
 					"Fn::GetAtt": ["LogverzHTTPRelayRole", "Arn"]
 				},
-				"Runtime": "nodejs18.x",
+				"Runtime": "nodejs20.x",
 				"Timeout": "10",
 				"MemorySize":"512",
 				"VpcConfig": {
@@ -2637,7 +2637,7 @@
 				"Role": {
 					"Fn::GetAtt": ["LogverzNOSQLRole", "Arn"]
 				},
-				"Runtime": "nodejs18.x",
+				"Runtime": "nodejs20.x",
 				"Timeout": "5",
 				"MemorySize":"192"
 			}

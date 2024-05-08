@@ -54,9 +54,9 @@ const receiveSQSMessage = async function (sqsclient, ReceiveMessageCommand, Queu
     VisibilityTimeout: 90,
     WaitTimeSeconds: 0
   }
- 
+
   const command = new ReceiveMessageCommand(params)
-  const result= await sqsclient.send(command)
+  const result = await sqsclient.send(command)
   return result
 }
 
@@ -125,55 +125,6 @@ const AddDDBEntry = async (ddclient, PutItemCommand, DDBTableName, Action, Sever
   const command = new PutItemCommand(dbentryparams)
   const response = await ddclient.send(command)
   return response
-}
-
-const deleteDDB = async (docClient, params) => {
-  var promiseddelete = new Promise((resolve, reject) => {
-    docClient.delete(params, function (err, data) {
-      if (err) {
-        console.error('Unable to delete item. Error JSON:', JSON.stringify(err, null, 2))
-        reject(err)
-      }
-      else {
-        console.log('Delete Item succeeded:', JSON.stringify(params.Key, null, 2))
-        resolve(data)
-      }
-    })
-  })
-  var deleteresult = await promiseddelete
-  return deleteresult
-}
-
-const putDDB = async (dynamodb, params) => {
-  var promisedput = new Promise((resolve, reject) => {
-    dynamodb.putItem(params, function (err, data) {
-      if (err) {
-        console.log(err, err.stack)
-        reject(err)
-        // an error occurred
-      }
-      else resolve(data) // console.log(data);           // successful response
-    })
-  })
-  var putresults = await promisedput
-  return putresults
-}
-
-const putJSONDDB = async (docClient, params) => {
-  var promisedputresult = new Promise((resolve, reject) => {
-    docClient.put(params, function (err, data) {
-      if (err) {
-        console.error('Unable to put data to DynamoDB. Error:', JSON.stringify(err, null, 2))
-        reject(err)
-      }
-      else {
-        // console.log("Query succeeded.");
-        resolve(data)
-      }
-    })
-  })
-  var queryresults = await promisedputresult
-  return queryresults
 }
 
 const SelectDBfromRegistry = (_, Registry, DBidentifier, mode) => {
@@ -471,19 +422,20 @@ const getcookies = (headers) => {
   return cookies
 }
 
-const S3GET = async (s3, requestbucket, requestedfile) => {
+const S3GET = async (s3client, GetObjectCommand, requestbucket, requestedfile) => {
   var getParams = {
     Bucket: requestbucket,
     Key: requestedfile
   }
   try {
-    var data = await s3.getObject(getParams).promise()
+    const command = new GetObjectCommand(getParams)
+    var response = await s3client.send(command)
   }
   catch (e) {
-    var data = e
+    var response = e
   }
 
-  return data
+  return response
 
   // TODO: in case the file is larger than 6MB (lambda sync limit) the request needs to beresponded to with a presigned url
   // https://intellipaat.com/community/19121/api-gateway-get-put-large-files-into-s3
@@ -569,20 +521,9 @@ const getallversions = async (s3client, ListObjectVersionsCommand, params, allve
   return allversions
 }
 
-const GetAsgSettings = async (autoscaling, params) => {
-  var promisedasgsettings = new Promise((resolve, reject) => {
-    autoscaling.describeAutoScalingGroups(params, function (err, data) {
-      if (err) reject(err) // console.log(err, err.stack); // an error occurred
-      else resolve(data) // console.log(data);           // successful response
-    })
-  })
-  var settings = await promisedasgsettings
-  return settings
-}
-
 const GroupAsgInstances = (asgsettings) => {
-  var allinstances = asgsettings.AutoScalingGroups[0].Instances // array
-  var alltags = asgsettings.AutoScalingGroups[0].Tags.map(tag => {
+  var allinstances = asgsettings[0].Instances // array
+  var alltags = asgsettings[0].Tags.map(tag => {
     var object = {}
     object[tag.Key] = tag.Value
     return object
@@ -868,6 +809,7 @@ const deactivatequery = async (docClient, QueryCommand, UpdateCommand, DatabaseN
   }
   // return updateresult
 }
+
 const masktoken = (maskedevent) => {
   if (maskedevent.headers !== undefined && maskedevent.headers.Authorization !== undefined) {
     maskedevent.headers.Authorization = '****'
@@ -939,9 +881,9 @@ const maskcredentials = (mevent) => {
 }
 
 export {
-  getssmparameter, setssmparameter, receiveSQSMessage, makeid, timeConverter, AddDDBEntry, deleteDDB, putDDB, putJSONDDB,
-  SelectDBfromRegistry, DBpropertylookup, ValidateToken, apigatewayresponse, newcfnresponse, getquerystringparameter,
-  eventpropertylookup, propertyvaluelookup, getcookies, S3GET, S3PUT, s3putdependencies, emptybucket, GetAsgSettings,
+  getssmparameter, setssmparameter, receiveSQSMessage, makeid, timeConverter, AddDDBEntry, SelectDBfromRegistry, 
+  DBpropertylookup, ValidateToken, apigatewayresponse, newcfnresponse, getquerystringparameter,
+  eventpropertylookup, propertyvaluelookup, getcookies, S3GET, S3PUT, s3putdependencies, emptybucket,
   GroupAsgInstances, GetEC2InstancesMetrics, GetRDSInstancesMetrics, CreatePeriod, average, getbuildstatus,
   walkfolders, TransformInputValues, ASGstatus, deactivatequery, masktoken, maskcredentials
 }

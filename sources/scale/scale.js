@@ -6,31 +6,30 @@
 import { fileURLToPath } from 'url'
 import path from 'path'
 import fs from 'fs'
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
-import _ from 'lodash';
-import jwt from 'jsonwebtoken';
-import loki from 'lokijs';
+import _ from 'lodash'
+import jwt from 'jsonwebtoken'
+import loki from 'lokijs'
 
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm'
-import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
-import { RDSClient, StartDBInstanceCommand, StopDBInstanceCommand, DescribeDBInstancesCommand, DescribeEventsCommand, StartDBClusterCommand, StopDBClusterCommand } from "@aws-sdk/client-rds"; 
-import { AutoScalingClient, SetDesiredCapacityCommand, paginateDescribeAutoScalingGroups } from "@aws-sdk/client-auto-scaling";
-import { CloudWatchClient, GetMetricDataCommand } from "@aws-sdk/client-cloudwatch";
+import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb'
+import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb'
+import { RDSClient, StartDBInstanceCommand, StopDBInstanceCommand, DescribeDBInstancesCommand, DescribeEventsCommand, StartDBClusterCommand, StopDBClusterCommand } from '@aws-sdk/client-rds'
+import { AutoScalingClient, SetDesiredCapacityCommand, paginateDescribeAutoScalingGroups } from '@aws-sdk/client-auto-scaling'
+import { CloudWatchClient, GetMetricDataCommand } from '@aws-sdk/client-cloudwatch'
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
-var MaximumCacheTime=process.env.MaximumCacheTime
+var MaximumCacheTime = process.env.MaximumCacheTime
 if (typeof db === 'undefined') {
   // the variable is defined
   var db = new loki('db.json', {
     autoupdate: true
-});
+  })
 }
 
 if (db.collections.length === 0) {
-  
-  if (MaximumCacheTime === undefined){
-    MaximumCacheTime =1
+  if (MaximumCacheTime === undefined) {
+    MaximumCacheTime = 1
   }
 
   var identity = db.addCollection('Logverz-Identities', {
@@ -39,16 +38,15 @@ if (db.collections.length === 0) {
 }
 
 export const handler = async (event, context) => {
-
   if (process.env.Environment !== 'LocalDev') {
     // Prod lambda function settings
     var arnList = (context.invokedFunctionArn).split(':')
     var region = arnList[3]
     var accountnumber = arnList[4]
-    var commonsharedpath=('file:///'+path.join(__dirname, './shared/commonsharedv3.js').replace(/\\/g, "/"))
-    var commonshared=await GetConfiguration(commonsharedpath,'*')
-    var authenticationsharedpath=('file:///'+path.join(__dirname, './shared/authenticationsharedv3.js').replace(/\\/g, "/"))
-    var authenticationshared=await GetConfiguration(authenticationsharedpath,'*')
+    var commonsharedpath = ('file:///' + path.join(__dirname, './shared/commonsharedv3.js').replace(/\\/g, '/'))
+    var commonshared = await GetConfiguration(commonsharedpath, '*')
+    var authenticationsharedpath = ('file:///' + path.join(__dirname, './shared/authenticationsharedv3.js').replace(/\\/g, '/'))
+    var authenticationshared = await GetConfiguration(authenticationsharedpath, '*')
     var cert = process.env.PublicKey
     var AllowedOrigins = process.env.AllowedOrigins
     var maskedevent = commonshared.masktoken(JSON.parse(JSON.stringify(event)))
@@ -70,13 +68,13 @@ export const handler = async (event, context) => {
   }
   var arnList = (context.invokedFunctionArn).split(':')
 
-  const rdsclient = new RDSClient({});//{apiVersion: '2014-10-31'}
-  const asgclient = new AutoScalingClient({});
+  const rdsclient = new RDSClient({})// {apiVersion: '2014-10-31'}
+  const asgclient = new AutoScalingClient({})
 
-  const ddclient = new DynamoDBClient({ region});
-  const docClient = DynamoDBDocumentClient.from(ddclient);
-  const ssmclient = new SSMClient({});
-  const cwclient = new CloudWatchClient({});
+  const ddclient = new DynamoDBClient({ region })
+  const docClient = DynamoDBDocumentClient.from(ddclient)
+  const ssmclient = new SSMClient({})
+  const cwclient = new CloudWatchClient({})
 
   var message = 'ok'
   var RequestType = 'events'
@@ -117,9 +115,9 @@ export const handler = async (event, context) => {
 
     // describe status of asg and rds instances.
     var [dbstatearray, StateofASGs] = await Promise.all([
-     GetRDSinstanceproperties(rdsclient, DescribeDBInstancesCommand, dbpropertiesarray),
-     commonshared.ASGstatus(AutoScalingClient, paginateDescribeAutoScalingGroups, AutoScalingGroupNames)
-    ]) // var StateofASGs = await 
+      GetRDSinstanceproperties(rdsclient, DescribeDBInstancesCommand, dbpropertiesarray),
+      commonshared.ASGstatus(AutoScalingClient, paginateDescribeAutoScalingGroups, AutoScalingGroupNames)
+    ]) // var StateofASGs = await
 
     var activedbinstances = dbstatearray.filter(dbs => dbs.DBInstanceStatus !== 'stopped' && dbs.DBInstanceStatus !== 'stopping').map(a => a.DBInstanceIdentifier)
 
@@ -130,7 +128,7 @@ export const handler = async (event, context) => {
         GetRDSinstanceEvents(rdsclient, DescribeEventsCommand, activedbinstances, dbpropertiesarray)
       ])
     }
-       // stop or start rds if its time.
+    // stop or start rds if its time.
     await VerifyRDSDesiredState(rdsclient, StartDBClusterCommand, StopDBClusterCommand, StopDBInstanceCommand, ddclient, PutItemCommand, commonshared, RDSCWmetrics, activedbevents, activedbinstances, dbpropertiesarray, RequestType)
 
     // start asg if its time. When starting make sure that it only applies with in max 2 the time of the lambda run period.
@@ -162,7 +160,8 @@ export const handler = async (event, context) => {
         userattributes = userattributes.Items[0]
         identity.insert(userattributes)
       }
-    } else {
+    }
+    else {
       // invalid token
       message = tokenobject.value
     }
@@ -188,8 +187,7 @@ export const handler = async (event, context) => {
   return result
 }
 
-async function main(asgclient, rdsclient, ddclient, event, commonshared, authenticationshared, _, userattributes, region, accountnumber) {
-
+async function main (asgclient, rdsclient, ddclient, event, commonshared, authenticationshared, _, userattributes, region, accountnumber) {
   console.log('main')
   const service = commonshared.getquerystringparameter(event.queryStringParameters.service)
   var apicall = commonshared.getquerystringparameter(event.queryStringParameters.apicall)
@@ -213,16 +211,16 @@ async function main(asgclient, rdsclient, ddclient, event, commonshared, authent
   else {
     switch (service) {
       case 'rds':
-        
+
         var DBstate = await SetRDSDesiredState(rdsclient, StartDBInstanceCommand, StopDBInstanceCommand, StartDBClusterCommand, StopDBClusterCommand, PutItemCommand, ddclient, commonshared, parameters, apicall)
-        var reply=DBstate.clientreply
+        var reply = DBstate.clientreply
         console.log(DBstate.apiresponse)
 
         break
       case 'autoscaling':
         try {
-          const command = new SetDesiredCapacityCommand(JSON.parse(parameters));
-          var result = await asgclient.send(command);
+          const command = new SetDesiredCapacityCommand(JSON.parse(parameters))
+          var result = await asgclient.send(command)
           console.log('Changing Autoscaling group ' + JSON.parse(parameters).AutoScalingGroupName + ' desired count to ' + JSON.parse(parameters).DesiredCapacity + ' was succesfull.')
           var reply = {
             status: 200,
@@ -259,17 +257,16 @@ async function main(asgclient, rdsclient, ddclient, event, commonshared, authent
   return reply
 } // main
 
-async function SetRDSDesiredState(rdsclient, StartDBInstanceCommand, StopDBInstanceCommand, StartDBClusterCommand, StopDBClusterCommand, PutItemCommand, ddclient, commonshared, parameters, apicall) {
-  
-  var parametersobject= JSON.parse(parameters)
-  
-  if (parametersobject.hasOwnProperty("DBInstanceIdentifier")){
+async function SetRDSDesiredState (rdsclient, StartDBInstanceCommand, StopDBInstanceCommand, StartDBClusterCommand, StopDBClusterCommand, PutItemCommand, ddclient, commonshared, parameters, apicall) {
+  var parametersobject = JSON.parse(parameters)
+
+  if (parametersobject.hasOwnProperty('DBInstanceIdentifier')) {
     var rdsinstancename = parametersobject.DBInstanceIdentifier
-    var DBtype="Server"
+    var DBtype = 'Server'
   }
   else {
     var rdsclustername = parametersobject.DBClusterIdentifier
-    var DBtype="Serverless"
+    var DBtype = 'Serverless'
   }
 
   switch (DBtype) {
@@ -280,52 +277,51 @@ async function SetRDSDesiredState(rdsclient, StartDBInstanceCommand, StopDBInsta
         })
       }
       else if (apicall === 'StopDBInstance') {
-        var apiresult = await StopDBInstance(rdsclient, StopDBInstanceCommand, ddclient, PutItemCommand, commonshared,{
+        var apiresult = await StopDBInstance(rdsclient, StopDBInstanceCommand, ddclient, PutItemCommand, commonshared, {
           DBInstanceIdentifier: rdsinstancename
         })
       }
       break
     case 'Serverless':
-     
-        var apiresult = await StartStopDBCluster (rdsclient, StartDBClusterCommand, StopDBClusterCommand, ddclient, PutItemCommand, commonshared, apicall, {
-          DBClusterIdentifier: rdsclustername
-        })
+
+      var apiresult = await StartStopDBCluster(rdsclient, StartDBClusterCommand, StopDBClusterCommand, ddclient, PutItemCommand, commonshared, apicall, {
+        DBClusterIdentifier: rdsclustername
+      })
 
       break
   }
 
-  var DBstate={
-    "clientreply": apiresult.reply,
-    "apiresponse": apiresult.status
+  var DBstate = {
+    clientreply: apiresult.reply,
+    apiresponse: apiresult.status
   }
 
   return DBstate
 }
 
-async function StartStopDBCluster (rdsclient,  StartDBClusterCommand, StopDBClusterCommand, ddclient, PutItemCommand, commonshared, apicall, params) {
-
-  if (apicall === "StartDBCluster") {
+async function StartStopDBCluster (rdsclient, StartDBClusterCommand, StopDBClusterCommand, ddclient, PutItemCommand, commonshared, apicall, params) {
+  if (apicall === 'StartDBCluster') {
     var message = 'Staring DB cluster ' + params.DBClusterIdentifier + ' was succesfull.'
-    var sourceid ='scale.js:StartDBCluster'
-    var errormsg ='Error Starting DB Cluster. Further details: \n'
+    var sourceid = 'scale.js:StartDBCluster'
+    var errormsg = 'Error Starting DB Cluster. Further details: \n'
     var action = 'ScaleUpRDS'
   }
-  else{
+  else {
     var message = 'Stopping DB cluster ' + params.DBClusterIdentifier + ' was succesfull.'
-    var sourceid ='scale.js:StopDBCluster'
-    var errormsg ='Error Stopping DB Cluster. Further details: \n'
+    var sourceid = 'scale.js:StopDBCluster'
+    var errormsg = 'Error Stopping DB Cluster. Further details: \n'
     var action = 'ScaleDownRDS'
   }
 
-  if (apicall === "StartDBCluster") {
-    const command = new StartDBClusterCommand(params);
+  if (apicall === 'StartDBCluster') {
+    const command = new StartDBClusterCommand(params)
   }
-  else{
-    const command = new StopDBClusterCommand(params);
+  else {
+    const command = new StopDBClusterCommand(params)
   }
 
   try {
-    var settings = await rdsclient.send(command);
+    var settings = await rdsclient.send(command)
     console.log(message)
     var clientreply = {
       status: 200,
@@ -336,8 +332,8 @@ async function StartStopDBCluster (rdsclient,  StartDBClusterCommand, StopDBClus
       source: sourceid,
       message
     }
-    var result= settings.DBCluster
-    await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations',action , 'Info', 'User', details, 'API')
+    var result = settings.DBCluster
+    await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', action, 'Info', 'User', details, 'API')
   }
   catch (error) {
     console.error(errormsg)
@@ -353,23 +349,22 @@ async function StartStopDBCluster (rdsclient,  StartDBClusterCommand, StopDBClus
       data: error.message,
       header: {}
     }
-    var result= "error"
+    var result = 'error'
   }
 
   var result = {
-    "status": result,
-    "reply": clientreply
+    status: result,
+    reply: clientreply
   }
 
   return result
 }
 
-async function StartDBInstance(rdsclient, StartDBInstanceCommand, ddclient, PutItemCommand, commonshared, params) {
-
-  const command = new StartDBInstanceCommand(params);
+async function StartDBInstance (rdsclient, StartDBInstanceCommand, ddclient, PutItemCommand, commonshared, params) {
+  const command = new StartDBInstanceCommand(params)
 
   try {
-    var settings = await rdsclient.send(command);
+    var settings = await rdsclient.send(command)
     var message = 'Staring DB instance ' + params.DBInstanceIdentifier + ' was succesfull.'
     console.log(message)
     var clientreply = {
@@ -381,7 +376,7 @@ async function StartDBInstance(rdsclient, StartDBInstanceCommand, ddclient, PutI
       source: 'scale.js:StartDBInstance',
       message
     }
-    var result= settings.DBInstance
+    var result = settings.DBInstance
     await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'ScaleUpRDS', 'Info', 'User', details, 'API')
   }
   catch (error) {
@@ -399,23 +394,22 @@ async function StartDBInstance(rdsclient, StartDBInstanceCommand, ddclient, PutI
       data: error.message,
       header: {}
     }
-    var result= "error"
+    var result = 'error'
   }
 
   var result = {
-    "status": result,
-    "reply": clientreply
+    status: result,
+    reply: clientreply
   }
 
   return result
 }
 
-async function StopDBInstance(rdsclient, StopDBInstanceCommand, ddclient, PutItemCommand, commonshared, params) {
-  
-  const command = new StopDBInstanceCommand(params);
+async function StopDBInstance (rdsclient, StopDBInstanceCommand, ddclient, PutItemCommand, commonshared, params) {
+  const command = new StopDBInstanceCommand(params)
 
   try {
-    var settings = await rdsclient.send(command);
+    var settings = await rdsclient.send(command)
     var message = 'Stopping DB instance ' + params.DBInstanceIdentifier + ' was succesfull.'
     console.log(message)
     var clientreply = {
@@ -427,7 +421,7 @@ async function StopDBInstance(rdsclient, StopDBInstanceCommand, ddclient, PutIte
       source: 'scale.js:StopDBInstance',
       message
     }
-    var result= settings.DBInstance
+    var result = settings.DBInstance
     await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'ScaleDownRDS', 'Info', 'User', details, 'API')
   }
   catch (error) {
@@ -445,12 +439,12 @@ async function StopDBInstance(rdsclient, StopDBInstanceCommand, ddclient, PutIte
       data: error.message,
       header: {}
     }
-    var result= "error"
+    var result = 'error'
   }
 
   var result = {
-    "status": result,
-    "reply": clientreply
+    status: result,
+    reply: clientreply
   }
 
   return result
@@ -462,8 +456,8 @@ async function GetRDSinstanceproperties (rdsclient, DescribeDBInstancesCommand, 
     var dbinstanceidentifier = {
       DBInstanceIdentifier: db.DBEndpointName.split('.')[0]
     }
-    const command = new DescribeDBInstancesCommand(dbinstanceidentifier);
-    const dbstate = rdsclient.send(command);
+    const command = new DescribeDBInstancesCommand(dbinstanceidentifier)
+    const dbstate = rdsclient.send(command)
     return dbstate
   })
   var resolved = await Promise.all(promises)
@@ -498,13 +492,12 @@ function JoinDBinstanceproperties (commonshared, IdleTime, connectionstringsarra
 }
 
 async function VerifyRDSDesiredState (rdsclient, StartDBClusterCommand, StopDBClusterCommand, StopDBInstanceCommand, ddclient, PutItemCommand, commonshared, RDSCWmetrics, activedbevents, activedbinstances, dbpropertiesarray, RequestType) {
-  
   var runningdbinstances = dbpropertiesarray.filter(dbpa => {
     if (activedbinstances.includes(dbpa.DBInstanceIdentifier)) {
       return dbpa
     }
   })
-  
+
   var stoppeddbinstances = dbpropertiesarray.filter(dbpa => {
     if (!activedbinstances.includes(dbpa.DBInstanceIdentifier)) {
       return dbpa
@@ -512,8 +505,7 @@ async function VerifyRDSDesiredState (rdsclient, StartDBClusterCommand, StopDBCl
   })
 
   if (runningdbinstances.length > 0) {
-      
-      var runningdbpromises = runningdbinstances.map(async (rdbi) => {
+    var runningdbpromises = runningdbinstances.map(async (rdbi) => {
       var starttime = FindDBStartuptime(activedbevents, rdbi.DBInstanceIdentifier)
       var performancemetrics = ConvertRDSInstanceMetrics(RDSCWmetrics, rdbi)
       var cpumetricname = Object.keys(rdbi.IdleTreshold).filter(k => k.match(/.*cpu.*/i))[0]
@@ -552,18 +544,17 @@ async function VerifyRDSDesiredState (rdsclient, StartDBClusterCommand, StopDBCl
       }
 
       if (stopdbinstance === true && idletimehaspassed) {
-        
-        if (rdbi.DBClusterID !== undefined){
+        if (rdbi.DBClusterID !== undefined) {
           var rdsparams = {
             DBClusterIdentifier: rdbi.DBClusterID
           }
-          var apiresult= await StartStopDBCluster (rdsclient, StartDBClusterCommand, StopDBClusterCommand, ddclient, PutItemCommand, commonshared, "StopDBCluster", rdsparams)
+          var apiresult = await StartStopDBCluster(rdsclient, StartDBClusterCommand, StopDBClusterCommand, ddclient, PutItemCommand, commonshared, 'StopDBCluster', rdsparams)
         }
-        else{
+        else {
           var rdsparams = {
             DBInstanceIdentifier: rdbi.DBInstanceIdentifier
           }
-          var apiresult= await StopDBInstance(rdsclient, StopDBInstanceCommand, ddclient, PutItemCommand, commonshared, rdsparams)
+          var apiresult = await StopDBInstance(rdsclient, StopDBInstanceCommand, ddclient, PutItemCommand, commonshared, rdsparams)
         }
 
         return apiresult
@@ -587,24 +578,22 @@ async function VerifyRDSDesiredState (rdsclient, StartDBClusterCommand, StopDBCl
       var eligableforstart = CheckStartConditions(sdbi.StartAfter, sdbi.IdlePeriodMin, sdbi.DBInstanceIdentifier, RequestType, sdbi.StartAtUserLogin)
 
       if (eligableforstart) {
-
-        if (sdbi.DBClusterID !== undefined){
+        if (sdbi.DBClusterID !== undefined) {
           var rdsparams = {
             DBClusterIdentifier: sdbi.DBClusterID
           }
           console.log('starting ' + sdbi.DBEngineType + ' DB cluster ' + sdbi.DBClusterID + ', DBFriendlyName "' + sdbi.DBFriendlyName + '"')
-          var apiresult= await StartStopDBCluster(rdsclient, StartDBClusterCommand, StopDBClusterCommand, ddclient, PutItemCommand, commonshared, "StartDBCluster", rdsparams)
+          var apiresult = await StartStopDBCluster(rdsclient, StartDBClusterCommand, StopDBClusterCommand, ddclient, PutItemCommand, commonshared, 'StartDBCluster', rdsparams)
         }
-        else{
+        else {
           var rdsparams = {
             DBInstanceIdentifier: sdbi.DBInstanceIdentifier
           }
           console.log('starting ' + sdbi.DBEngineType + ' DB instance ' + sdbi.DBInstanceIdentifier + ', DBFriendlyName "' + sdbi.DBFriendlyName + '"')
-          var apiresult= await StartDBInstance(rdsclient, StartDBInstanceCommand, ddclient, PutItemCommand, commonshared, rdsparams)
+          var apiresult = await StartDBInstance(rdsclient, StartDBInstanceCommand, ddclient, PutItemCommand, commonshared, rdsparams)
         }
 
         return apiresult
-
       }
     })
   }
@@ -680,8 +669,8 @@ async function GetRDSinstanceEvents (rdsclient, DescribeEventsCommand, activedbi
       SourceType: 'db-instance'
     }
 
-    const command = new DescribeEventsCommand(params);
-    const response =  rdsclient.send(command);
+    const command = new DescribeEventsCommand(params)
+    const response = rdsclient.send(command)
     return response
   })
 
@@ -768,7 +757,7 @@ function CheckStartConditions (StartAfter, IdlePeriodMin, InstanceIdentifier, Re
   }
 }
 
-async function VerifyASGDesiredState(asgclient, SetDesiredCapacityCommand, AutoScalingGroupList, StateofASGs, IdleTime, RequestType) {
+async function VerifyASGDesiredState (asgclient, SetDesiredCapacityCommand, AutoScalingGroupList, StateofASGs, IdleTime, RequestType) {
   var ASGsettings = []
   var TurnServerASG = IdleTime[Object.keys(IdleTime)[Object.keys(IdleTime).findIndex(k => k.match(/Turns/i))]]
   TurnServerASG.AutoScalingGroupName = AutoScalingGroupList.TurnServerASG
@@ -796,8 +785,8 @@ async function VerifyASGDesiredState(asgclient, SetDesiredCapacityCommand, AutoS
         AutoScalingGroupName: asg.AutoScalingGroupName,
         DesiredCapacity: SpecificIdleSettings.StartDesiredCount
       }
-      const command = new SetDesiredCapacityCommand(JSON.parse(asgparams));
-      var result = asgclient.send(command);
+      const command = new SetDesiredCapacityCommand(JSON.parse(asgparams))
+      var result = asgclient.send(command)
       return result
     }
     else {
@@ -809,16 +798,15 @@ async function VerifyASGDesiredState(asgclient, SetDesiredCapacityCommand, AutoS
 }
 
 async function GetConfiguration (directory, value) {
-  
-  //Kudos: https://stackoverflow.com/questions/71432755/how-to-use-dynamic-import-from-a-dependency-in-node-js
-  const moduleText = fs.readFileSync(fileURLToPath(directory), 'utf-8').toString();
-  const moduleBase64 = Buffer.from(moduleText).toString('base64');
-  const moduleDataURL = `data:text/javascript;base64,${moduleBase64}`;
-  if (value !=="*"){
-      var data = (await import(moduleDataURL))[value];
+  // Kudos: https://stackoverflow.com/questions/71432755/how-to-use-dynamic-import-from-a-dependency-in-node-js
+  const moduleText = fs.readFileSync(fileURLToPath(directory), 'utf-8').toString()
+  const moduleBase64 = Buffer.from(moduleText).toString('base64')
+  const moduleDataURL = `data:text/javascript;base64,${moduleBase64}`
+  if (value !== '*') {
+    var data = (await import(moduleDataURL))[value]
   }
-  else{
-      var data = (await import(moduleDataURL));
+  else {
+    var data = (await import(moduleDataURL))
   }
   return data
 }

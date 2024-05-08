@@ -72,7 +72,6 @@ function getmatchingresources (_, matchingactions, userrequest) {
       if (typeof (resource) === 'string') {
         const matchresult1 = resource.match(requestedresource)
         const matchresult2 = requestedresource.match(resource)
-        // 'arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz*'.match 'arn:aws:dynamodb:ap-southeast-2:accountnumber:table/Logverz*'
         if (matchresult1 || matchresult2) {
           matchingresource.push([action[0], action[1], {
             Resource: resource
@@ -327,7 +326,7 @@ const authorize = (_, commonshared, queryStringParameters, userattributes) => {
   return resultofuserrequest
 }
 
-const AssociateUserPolicies = async (commonshared, docClient, params) => {
+const AssociateUserPolicies = async (docClient, QueryCommand, params) => {
   const groupinline = []
   const groupattached = []
   const userattached = []
@@ -350,7 +349,8 @@ const AssociateUserPolicies = async (commonshared, docClient, params) => {
       }
     }
 
-    var data = await commonshared.queryDDB(docClient, grouppolicyquery)
+    const command = new QueryCommand(grouppolicyquery)
+    var data = await docClient.send(command)
     const Policies = data.Items[0].Policies
 
     for (let k = 0; k < Object.keys(Policies.GroupInline).length; k++) {
@@ -378,7 +378,9 @@ const AssociateUserPolicies = async (commonshared, docClient, params) => {
         ':type': 'PolicyAWS'
       }
     }
-    var data = await commonshared.queryDDB(docClient, policyquery)
+
+    const command = new QueryCommand(policyquery)
+    var data = await docClient.send(command)
 
     const policystring = JSON.stringify({
       PolicyName: data.Items[0].Name,
@@ -400,7 +402,7 @@ const AssociateUserPolicies = async (commonshared, docClient, params) => {
   return params
 }
 
-const UptadeAssociatedUserPolicy = async (_, commonshared, docClient, updateidentities) => {
+const UptadeAssociatedUserPolicy = async (_, docClient, QueryCommand, PutCommand, updateidentities) => {
   const usernames = _.uniqWith(_.map(updateidentities, u => {
     return {
       Name: u.Name,
@@ -426,7 +428,9 @@ const UptadeAssociatedUserPolicy = async (_, commonshared, docClient, updateiden
       }
     }
 
-    const userproperties = await commonshared.queryDDB(docClient, originalparams)
+    const command = new QueryCommand(originalparams)
+    var userproperties = await docClient.send(command)
+    
     console.log('User properties befor change:\n' + JSON.stringify(userproperties))
     const removeitemslist = _.compact(_.map(updateidentities, (u) => {
       if (u.Name === username & u.Operator !== '+') {
@@ -465,15 +469,16 @@ const UptadeAssociatedUserPolicy = async (_, commonshared, docClient, updateiden
       params.Item.IAMGroups = userproperties.Items[0].IAMGroups
     }
 
-    const modifiedparams = await AssociateUserPolicies(commonshared, docClient, params)
+    const modifiedparams = await AssociateUserPolicies(docClient, QueryCommand, params)
     console.log(modifiedparams)
-    const data = await commonshared.putJSONDDB(docClient, modifiedparams)
+    const putcommand = new PutCommand(modifiedparams)
+    const data = await docClient.send(putcommand)
     results.push(data)
   }
   return results
 }
 
-const retriveIAMidentities = async (_, commonshared, docClient, identitytype, idetityvalue, newIAMDB) => {
+const retriveIAMidentities = async (_, docClient, QueryCommand, identitytype, idetityvalue, newIAMDB) => {
   const dataarray = []
 
   if (identitytype === 'IAMPolicies') {
@@ -491,7 +496,8 @@ const retriveIAMidentities = async (_, commonshared, docClient, identitytype, id
       FilterExpression: 'contains(IAMPolicies, :policy)',
       IndexName: 'IAMIndex'
     }
-    var data = await commonshared.queryDDB(docClient, params)
+    const command = new QueryCommand(params)
+    var data = await docClient.send(command)
     data.Items.forEach(d => dataarray.push(d))
 
     // check if changed policy is attached to a group
@@ -521,7 +527,8 @@ const retriveIAMidentities = async (_, commonshared, docClient, identitytype, id
           FilterExpression: 'contains(IAMGroups, :group)',
           IndexName: 'IAMIndex'
         }
-        var data = await commonshared.queryDDB(docClient, params)
+        const command = new QueryCommand(params)
+        var data = await docClient.send(command)
         data.Items.forEach(d => dataarray.push(d))
       }
     }
@@ -542,7 +549,8 @@ const retriveIAMidentities = async (_, commonshared, docClient, identitytype, id
       FilterExpression: 'contains(IAMGroups, :group)',
       IndexName: 'IAMIndex'
     }
-    var data = await commonshared.queryDDB(docClient, params)
+    const command = new QueryCommand(params)
+    var data = await docClient.send(command)
     data.Items.forEach(d => dataarray.push(d))
   }
 
@@ -570,7 +578,7 @@ const authorizeS3access = (_, commonshared, userattributes, S3Foldersarray) => {
   return message
 }
 
-const retrieveresourcepolicy = async (commonshared, docClient, clientrequest, mode) => {
+const retrieveresourcepolicy = async (docClient, QueryCommand, clientrequest, mode) => {
 
   if (clientrequest.TableName !== undefined && clientrequest.DatabaseName !== undefined) { // && clientrequest.DataType!==null
     var params = {
@@ -605,7 +613,9 @@ const retrieveresourcepolicy = async (commonshared, docClient, clientrequest, mo
   else{
     console.error("parameters missing in the client request")
   }
-  const data = await commonshared.queryDDB(docClient, params)
+
+  const command = new QueryCommand(params)
+  const data = await docClient.send(command)
 
   // get the latest item.
   if (mode === 'Latest') {
@@ -627,12 +637,12 @@ const retrieveresourcepolicy = async (commonshared, docClient, clientrequest, mo
   return result
 }
 
-const resourceaccessauthorization = async (_, commonshared, docClient, identities, queries, clientrequest, requestoridentity, region) => {
+const resourceaccessauthorization = async (_, docClient, QueryCommand, identities, queries, clientrequest, requestoridentity, region) => {
   var isowner = false
   var isadmin = false
   var ispoweruser = false
   var hasaccess = false
-  const resourcepolicy = await getresourcepolicy(commonshared, docClient, queries, clientrequest)
+  const resourcepolicy = await getresourcepolicy(docClient, QueryCommand, queries, clientrequest)
 
   if (resourcepolicy !== null && resourcepolicy.length !== 0) {
     const Owners = resourcepolicy[0].Owners // .Owners.split(",");
@@ -640,21 +650,21 @@ const resourceaccessauthorization = async (_, commonshared, docClient, identitie
     var TableName = resourcepolicy[0].TableName
 
     var [isowner, hasaccess] = await Promise.all([
-      userpermissionlookup(_, commonshared, docClient, Owners, identities, requestoridentity),
-      userpermissionlookup(_, commonshared, docClient, Access, identities, requestoridentity)
+      userpermissionlookup(_, docClient, QueryCommand, Owners, identities, requestoridentity),
+      userpermissionlookup(_, docClient, QueryCommand, Access, identities, requestoridentity)
     ])
   }
 
   if (isowner === false && clientrequest.Operation !== 'dynamodb:Query') {
     var [isadmin, ispoweruser] = await Promise.all([
-      admincheck(_, commonshared, docClient, identities, requestoridentity),
-      powerusercheck(_, commonshared, docClient, identities, requestoridentity, region)
+      admincheck(_, docClient, QueryCommand, identities, requestoridentity),
+      powerusercheck(_, docClient, QueryCommand, identities, requestoridentity, region)
     ])
   }
 
   // allow Logverz user to create Analysis record providing they have access/is owner to underlying table.
   if ((clientrequest.Payload !== undefined && clientrequest.Payload.QueryType !== undefined && clientrequest.Payload.QueryType === 'A') && (!(ispoweruser || isadmin))) {
-    var isowner = await analysispermissioncheck(_, commonshared, docClient, identities, requestoridentity, clientrequest)
+    var isowner = await analysispermissioncheck(_, docClient, QueryCommand, identities, requestoridentity, clientrequest)
   }
 
   if ((clientrequest.Operation === 'dynamodb:Query') && (hasaccess || isowner || isadmin || ispoweruser)) {
@@ -677,7 +687,7 @@ const resourceaccessauthorization = async (_, commonshared, docClient, identitie
   }
 }
 
-async function userpermissionlookup (_, commonshared, docClient, list, identities, requestoridentity) {
+async function userpermissionlookup (_, docClient, QueryCommand, list, identities, requestoridentity) {
   let match = false
 
   for (let j = 0; j < list.length; j++) {
@@ -690,9 +700,9 @@ async function userpermissionlookup (_, commonshared, docClient, list, identitie
         Name: Identity
       }).data() // collection.data[0];
       if (groupattributes.length === 0) {
-        var groupattributes = await getidentityattributes(commonshared, docClient, Identity, Type)
+        var groupattributes = await getidentityattributes(docClient, QueryCommand, Identity, Type)
         groupattributes = groupattributes.Items[0]
-        let groupmembers = await retriveIAMidentities(_, commonshared, docClient, 'IAMGroups', groupattributes.Name, '+')
+        let groupmembers = await retriveIAMidentities(_, docClient, QueryCommand, 'IAMGroups', groupattributes.Name, '+')
         groupmembers = groupmembers.map(u => {
           return {
             Name: u.Name,
@@ -723,11 +733,11 @@ async function userpermissionlookup (_, commonshared, docClient, list, identitie
   return match
 }
 
-const admincheck = async (_, commonshared, docClient, identities, requestoridentity) => {
+const admincheck = async (_, docClient, QueryCommand, identities, requestoridentity) => {
   var userattributes = identities.chain().find(requestoridentity).data()
 
   if (userattributes.length === 0) {
-    var userattributes = await getidentityattributes(commonshared, docClient, requestoridentity.Name, requestoridentity.Type) // "admin"
+    var userattributes = await getidentityattributes(docClient, QueryCommand, requestoridentity.Name, requestoridentity.Type) // "admin"
     userattributes = userattributes.Items[0]
     identities.insert(userattributes)
   }
@@ -752,11 +762,11 @@ const admincheck = async (_, commonshared, docClient, identities, requestorident
   return result
 }
 
-const powerusercheck = async (_, commonshared, docClient, identities, requestoridentity, region) => {
+const powerusercheck = async (_, docClient, QueryCommand, identities, requestoridentity, region) => {
   var userattributes = identities.chain().find(requestoridentity).data()
 
   if (userattributes.length === 0) {
-    var userattributes = await getidentityattributes(commonshared, docClient, requestoridentity.Name, requestoridentity.Type) // "admin"
+    var userattributes = await getidentityattributes(docClient, QueryCommand, requestoridentity.Name, requestoridentity.Type) // "admin"
     userattributes = userattributes.Items[0]
     identities.insert(userattributes)
   }
@@ -767,11 +777,11 @@ const powerusercheck = async (_, commonshared, docClient, identities, requestori
   return userattributes.IAMGroups.includes('LogverzPowerUsers' + '-' + region)
 }
 
-const usercheck = async (_, commonshared, docClient, identities, requestoridentity, region) => {
+const usercheck = async (_, docClient, QueryCommand, identities, requestoridentity, region) => {
   var userattributes = identities.chain().find(requestoridentity).data()
 
   if (userattributes.length === 0) {
-    var userattributes = await getidentityattributes(commonshared, docClient, requestoridentity.Name, requestoridentity.Type) // "admin"
+    var userattributes = await getidentityattributes(docClient, QueryCommand, requestoridentity.Name, requestoridentity.Type) // "admin"
     userattributes = userattributes.Items[0]
     identities.insert(userattributes)
   }
@@ -782,7 +792,7 @@ const usercheck = async (_, commonshared, docClient, identities, requestoridenti
   return userattributes.IAMGroups.includes('LogverzUsers' + '-' + region)
 }
 
-async function analysispermissioncheck (_, commonshared, docClient, identities, requestoridentity, clientrequest) {
+async function analysispermissioncheck (_, docClient, QueryCommand, identities, requestoridentity, clientrequest) {
   // analysis can only be created  if user has right to the table, Logverz users do not, and record with Permission attributes does not exists yet.
   // For Logverz Users we check if they have permission for the table that they wish to analyse if yes they can do so if not, then no.
   var result = false
@@ -791,13 +801,14 @@ async function analysispermissioncheck (_, commonshared, docClient, identities, 
     DatabaseName: clientrequest.Payload.DatabaseName,
     Operation: clientrequest.Operation
   }
-  const resourcepolicy = await retrieveresourcepolicy(commonshared, docClient, clientrequest, 'Latest')
+  const resourcepolicy = await retrieveresourcepolicy(docClient, QueryCommand, clientrequest, 'Latest')
+
   if (resourcepolicy !== null && resourcepolicy.length !== 0) {
     const Owners = resourcepolicy.Owners // .split(",");
     const Access = resourcepolicy.Access // .split(",");
     const [isowner, hasaccess] = await Promise.all([
-      userpermissionlookup(_, commonshared, docClient, Owners, identities, requestoridentity),
-      userpermissionlookup(_, commonshared, docClient, Access, identities, requestoridentity)
+      userpermissionlookup(_, docClient, QueryCommand, Owners, identities, requestoridentity),
+      userpermissionlookup(_, docClient, QueryCommand, Access, identities, requestoridentity)
     ])
     if (isowner || hasaccess) {
       var result = true
@@ -807,11 +818,11 @@ async function analysispermissioncheck (_, commonshared, docClient, identities, 
   return result
 }
 
-const getresourcepolicy = async (commonshared, docClient, queries, clientrequest) => {
+const getresourcepolicy = async (docClient, QueryCommand, queries, clientrequest) => {
   var resourcepolicy = queries.chain().find(clientrequest).data()
 
   if (resourcepolicy.length === 0) {
-    const retrievedresourcepolicy = await retrieveresourcepolicy(commonshared, docClient, clientrequest, 'Latest')
+    const retrievedresourcepolicy = await retrieveresourcepolicy(docClient, QueryCommand, clientrequest, 'Latest')
     var resourcepolicy = []
     if (retrievedresourcepolicy !== undefined) {
       resourcepolicy.push(retrievedresourcepolicy)

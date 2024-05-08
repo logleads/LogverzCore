@@ -1,15 +1,19 @@
 {
-  "name": "Logverz",
-  "description": "",
-  "version": "0.7.00",
-  "main": "httprelay.js",
-  "keywords": [],
-  "author": "platformlead",
-  "license": "LogLeads License 1.0",
-  "dependencies": {
-    "aws-sdk": "^2.1596.0",
-    "axios": "^1.6.8",
-    "jsonwebtoken": "^9.0.2",
-    "lodash": "^4.17.21"
-  }
+	"name": "Logverz",
+	"description": "",
+	"version": "0.7.00",
+	"main": "httprelay.js",
+	"keywords": [],
+	"type": "module",
+	"author": "platformlead",
+	"license": "LogLeads License 1.0",
+	"dependencies": {
+		"@aws-sdk/client-dynamodb": "^3.569.0",
+		"@aws-sdk/client-s3": "^3.569.0",
+		"@aws-sdk/lib-dynamodb": "^3.569.0",
+		"aws-sdk": "^2.1596.0",
+		"axios": "^1.6.8",
+		"jsonwebtoken": "^9.0.2",
+		"lodash": "^4.17.21"
+	}
 }

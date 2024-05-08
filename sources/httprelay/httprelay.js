@@ -1,11 +1,21 @@
+/* eslint-disable array-callback-return */
 /* eslint-disable no-redeclare */
 /* eslint-disable no-var */
-const aws = require('aws-sdk')
-const path = require('path')
-const s3 = new aws.S3()
-const jwt = require('jsonwebtoken')
-const _ = require('lodash')
-const axios = require('axios')
+/* eslint brace-style: ["error", "stroustrup"] */
+
+import { fileURLToPath } from 'url'
+import path from 'path'
+import fs from 'fs'
+import _ from 'lodash'
+import jwt from 'jsonwebtoken'
+import axios from 'axios'
+
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
+import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb'
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3'
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+
 // import {region, LogicBucket} from './mydev.mjs';
 // import { name } from './mydev.mjs';
 
@@ -16,15 +26,17 @@ const axios = require('axios')
 
 // User,           Access key ID,      Secret access key,                       Password
 
-module.exports.handler = async function (event, context) {
+export const handler = async (event, context) => {
   if (process.env.Environment !== 'LocalDev') {
     // Prod lambda function settings
     const arnList = (context.invokedFunctionArn).split(':')
     var region = arnList[3]
     var LogicBucket = process.env.LB
     var WRTCB = process.env.WRTCB
-    var commonshared = require('./shared/commonshared')
-    var authenticationshared = require('./shared/authenticationshared')
+    var commonsharedpath = ('file:///' + path.join(__dirname, './shared/commonsharedv3.js').replace(/\\/g, '/'))
+    var commonshared = await GetConfiguration(commonsharedpath, '*')
+    var authenticationsharedpath = ('file:///' + path.join(__dirname, './shared/authenticationsharedv3.js').replace(/\\/g, '/'))
+    var authenticationshared = await GetConfiguration(authenticationsharedpath, '*')
     var cert = process.env.PublicKey
     var TestPath = process.env.TestPath.toLowerCase()
     var AllowedOrigins = process.env.AllowedOrigins
@@ -33,9 +45,11 @@ module.exports.handler = async function (event, context) {
     const maskedevent = commonshared.masktoken(JSON.parse(JSON.stringify(event)))
     console.log('REQUEST RECEIVED: \n' + JSON.stringify(context) + '\n\n')
     console.log('THE EVENT: \n' + JSON.stringify(maskedevent) + '\n\n')
-  } else {
+  }
+  else {
     // Dev environment settings
-    const mydev = require(path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'httprelay', 'mydev.js'))
+    var directory = path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'httprelay', 'mydev.mjs')
+    const mydev = await import('file:///' + directory.replace(/\\/g, '/'))
     var region = mydev.region
     var LogicBucket = mydev.LogicBucket
     var WRTCB = mydev.WRTCB
@@ -50,41 +64,44 @@ module.exports.handler = async function (event, context) {
     // var StageName = mydev.StageName
   }
 
-  aws.config.update({
-    region
-  })
+  const ddclient = new DynamoDBClient({})
+  const docClient = DynamoDBDocumentClient.from(ddclient)
+  const s3client = new S3Client({})
+
   // var apigwurl="https://"+RestApiId+".execute-api."+region+".amazonaws.com/"+StageName+"/public/index.html"
-  const docClient = new aws.DynamoDB.DocumentClient()
-  const result = await main(event, commonshared, authenticationshared, docClient, LogicBucket, WRTCB, AllowedOrigins, cert, TestPath)
+  // const docClient = new aws.DynamoDB.DocumentClient()
+  const result = await main(s3client, GetObjectCommand, event, commonshared, authenticationshared, docClient, LogicBucket, WRTCB, AllowedOrigins, cert, TestPath)
 
   return result
 }
 
-async function main (event, commonshared, authenticationshared, docClient, LogicBucket, WRTCB, AllowedOrigins, cert, TestPath) {
+async function main (s3client, GetObjectCommand, event, commonshared, authenticationshared, docClient, LogicBucket, WRTCB, AllowedOrigins, cert, TestPath) {
   console.log('main')
   var resultobject = {}
   // Send public assets to unauthenticated users. //||((event.path).toLocaleUpperCase()).match("/favicon.ico$")
   if (event.path.match('/HTTP/S3/' + LogicBucket + '/public/*') || ((event.path).toLocaleUpperCase()).match('/HTTP/S3/LB/PUBLIC/.*')) {
-    var response = await S3Process(event, commonshared, LogicBucket)
+    var response = await S3Process(s3client, GetObjectCommand, event, commonshared, LogicBucket)
     resultobject = {
       status: response.statusCode,
       data: response.body,
       header: response.headers,
       base64: response.isBase64Encoded
     }
-  } else {
+  }
+  else {
     // Validate received token.
     const tokenobject = commonshared.ValidateToken(jwt, event.headers, cert)
     if (tokenobject.state === true) {
       // TODO s3 authorization here.
-      var response = await ProcessValidrequests(tokenobject, event, LogicBucket, WRTCB, commonshared, authenticationshared, docClient, TestPath)
+      var response = await ProcessValidrequests(s3client, GetObjectCommand, tokenobject, event, LogicBucket, WRTCB, commonshared, authenticationshared, docClient, TestPath)
       resultobject = {
         status: response.statusCode,
         data: response.body,
         header: response.headers,
         base64: response.isBase64Encoded
       }
-    } else {
+    }
+    else {
       resultobject = redirecttologin(tokenobject, LogicBucket)
     } // not valid token
   } // not public assets,
@@ -93,24 +110,28 @@ async function main (event, commonshared, authenticationshared, docClient, Logic
   return response
 }
 
-async function ProcessValidrequests (tokenobject, event, LogicBucket, WRTCB, commonshared, authenticationshared, docClient, TestPath) {
+async function ProcessValidrequests (s3client, GetObjectCommand, tokenobject, event, LogicBucket, WRTCB, commonshared, authenticationshared, docClient, TestPath) {
   if (
     ((event.path.match('/HTTP/S3/' + LogicBucket + '.*')) || (event.path.toLocaleUpperCase().match('HTTP/S3/LB/.*'))) &&
         ((event.path.toLocaleUpperCase().match('.*LS$') == null) && (event.path.toLocaleUpperCase().match('.*DIR$') == null))) {
     // Authenticated users access to UI.
-    var response = await S3Process(event, commonshared, LogicBucket)
-  } else if (((event.path.match('/HTTP/S3/' + WRTCB + '.*')) || (event.path.toLocaleUpperCase().match('HTTP/S3/WRTCB/.*'))) && ((event.path.toLocaleUpperCase().match('.*LS$') == null) && (event.path.toLocaleUpperCase().match('.*DIR$') == null))) {
+    var response = await S3Process(s3client, GetObjectCommand, event, commonshared, LogicBucket)
+  }
+  else if (((event.path.match('/HTTP/S3/' + WRTCB + '.*')) || (event.path.toLocaleUpperCase().match('HTTP/S3/WRTCB/.*'))) && ((event.path.toLocaleUpperCase().match('.*LS$') == null) && (event.path.toLocaleUpperCase().match('.*DIR$') == null))) {
     // Logverz-webrtcbucket-1mnq140wp5tjb
-    var response = await S3Process(event, commonshared, WRTCB)
-  } else if (event.path.match('/HTTP/S3/.*LS$' || '/HTTP/S3/.*DIR$')) {
+    var response = await S3Process(s3client, GetObjectCommand, event, commonshared, WRTCB)
+  }
+  else if (event.path.match('/HTTP/S3/.*LS$' || '/HTTP/S3/.*DIR$')) {
     // TODO:here comes the listing of the buckets and their contents.
     // using commonshared.walkfolders()
 
-  } else if (event.path.match('/HTTP/TEST/.*')) {
+  }
+  else if (event.path.match('/HTTP/TEST/.*')) {
     // Container ui test access page.
     if (TestPath === 'enabled' || TestPath === 'true') {
       var response = await OWSProcess(event)
-    } else {
+    }
+    else {
       var response = {
         statusCode: 401,
         headers: {
@@ -119,7 +140,8 @@ async function ProcessValidrequests (tokenobject, event, LogicBucket, WRTCB, com
         body: 'The WebRtC connection testing relay is not enabled. Open lambda \'Logverz-HTTPRelay\' and change environment variable.'
       }
     }
-  } else {
+  }
+  else {
     // here come all other bucket access
     const requestcheck = await AuthorizeRequest(tokenobject, authenticationshared, commonshared, docClient, event, LogicBucket, TestPath)
     if (requestcheck.status !== 'Allow' || requestcheck.status === 'Deny') {
@@ -131,8 +153,9 @@ async function ProcessValidrequests (tokenobject, event, LogicBucket, WRTCB, com
         },
         body: `Unauthorised. Reason: ${JSON.stringify(requestcheck)}`
       }
-    } else {
-      var response = await S3Process(event, commonshared, '')
+    }
+    else {
+      var response = await S3Process(s3client, GetObjectCommand, event, commonshared, '')
     }
   }
   return response
@@ -142,7 +165,8 @@ async function OWSProcess (event) {
   // Other Web Server such as container
   if (event.path.split('/').slice(4) === '') {
     var requestedfile = '/'
-  } else {
+  }
+  else {
     var requestedfile = '/' + event.path.split('/').slice(4).join().replace(/,/g, '/')
   }
   const url = 'http://' + event.path.split('/')[3] + requestedfile
@@ -157,7 +181,8 @@ async function OWSProcess (event) {
       },
       body: `${filecontent.message}.`
     }
-  } else {
+  }
+  else {
     const content = {}
     content.Body = filecontent.data
     _.set(content, '$response.httpResponse.statusCode', filecontent.status)
@@ -185,7 +210,8 @@ async function GetFile (url, cookie) {
   try {
     var response = await axios(config)
     console.log(response)
-  } catch (err) {
+  }
+  catch (err) {
     var response = {}
     var config = _.omit(config, 'headers')
     const message = `Details: ${err}/\n\nGetting response using+ config:\n+${JSON.stringify(config)}`
@@ -218,34 +244,38 @@ async function AuthorizeRequest (tokenobject, authenticationshared, commonshared
     // TODO refactor  authenticationshared.getusersstatements and authenticationshared.allowdeny action
     // to use authenticationshared.authorizeS3access
     console.log(decision)
-  } else if (requesttype === 'Test' && (TestPath !== 'enabled' || TestPath !== 'true')) {
+  }
+  else if (requesttype === 'Test' && (TestPath !== 'enabled' || TestPath !== 'true')) {
     var decision = true
   }
 
   return decision
 }
 
-async function S3Process (event, commonshared, ProvidedBucket) {
+async function S3Process (s3client, GetObjectCommand, event, commonshared, ProvidedBucket) {
   // happy path sending the requester the file, if exists.
   if (event.path.match('^/V3.*') === null) {
     // in case it is called by the apigateway autogenerated name the event.path will not contain the stage name (V3), example: HTTP/S3/LB/public/index.html
     var requestedfile = decodeURIComponent(event.path.split('/').slice(4).join().replace(/,/g, '/'))
     if (ProvidedBucket !== '') {
       var requestbucket = ProvidedBucket
-    } else {
+    }
+    else {
       var requestbucket = ((event.path.split('/')[3]).toLowerCase())
     }
-  } else if (event.path.match('^/V3.*') !== null) {
+  }
+  else if (event.path.match('^/V3.*') !== null) {
     // in case its called by the apiGW custom domain name it needs to contain the /V3 path
     var requestedfile = decodeURIComponent(event.path.split('/').slice(5).join().replace(/,/g, '/'))
     if (ProvidedBucket !== '') {
       var requestbucket = ProvidedBucket
-    } else {
+    }
+    else {
       var requestbucket = ((event.path.split('/')[4]).toLowerCase())
     }
   }
 
-  const content = await commonshared.S3GET(s3, requestbucket, requestedfile)
+  var content = await commonshared.S3GET(s3client, GetObjectCommand, requestbucket, requestedfile)
   if (content.code === 'NoSuchKey') {
     var response = {
       statusCode: 404,
@@ -254,7 +284,8 @@ async function S3Process (event, commonshared, ProvidedBucket) {
       },
       body: `Details:${content.message}. Please check for typo and or capitalisation of letters.`
     }
-  } else {
+  }
+  else {
     var response = await Send(content, requestedfile, event.headers)
   }
   return response
@@ -268,18 +299,23 @@ async function Send (content, requestedfile, headers) {
     // Error path
     var responseCode = content.statusCode
     var contenttype = 'text/html'
-  } else if (extension === 'ttf' || extension === 'woff' || extension === 'woff2') {
+  }
+  else if (extension === 'ttf' || extension === 'woff' || extension === 'woff2') {
     var contenttype = `font/${extension}`
-    var responseCode = content.$response.httpResponse.statusCode
-  } else {
+    //var responseCode = content.$response.httpResponse.statusCode
+    var responseCode = content.$metadata.httpStatusCode
+  }
+  else {
     // Happy path
     var contenttype = content.ContentType
-    var responseCode = content.$response.httpResponse.statusCode
+    //var responseCode = content.$response.httpResponse.statusCode
+    var responseCode = content.$metadata.httpStatusCode
   }
 
   if (type) {
     // if its binary
-    var content = content.Body
+    //var content = content.Body
+    var content = Buffer.from(await content.Body.transformToByteArray())
     var response = {
       statusCode: responseCode,
       headers: {
@@ -289,8 +325,10 @@ async function Send (content, requestedfile, headers) {
       body: content.toString('base64'),
       isBase64Encoded: true
     }
-  } else {
-    var content = content.Body.toString('utf-8')
+  }
+  else {
+    //var content = content.Body.toString('utf-8')
+    var content = Buffer.from(await content.Body.transformToByteArray()).toString('utf-8')
     var response = {
       statusCode: responseCode,
       headers: {
@@ -308,10 +346,25 @@ function isbinary (extension) {
   let decision
   if ((extension === 'png') || (extension === 'jpeg') || (extension === 'pdf') || (extension === 'ttf') || (extension === 'svg') || (extension === 'woff') || (extension === 'woff2') || (extension === 'x-icon')) {
     decision = true
-  } else {
+  }
+  else {
     decision = false
   }
   return decision
+}
+
+async function GetConfiguration (directory, value) {
+  // Kudos: https://stackoverflow.com/questions/71432755/how-to-use-dynamic-import-from-a-dependency-in-node-js
+  const moduleText = fs.readFileSync(fileURLToPath(directory), 'utf-8').toString()
+  const moduleBase64 = Buffer.from(moduleText).toString('base64')
+  const moduleDataURL = `data:text/javascript;base64,${moduleBase64}`
+  if (value !== '*') {
+    var data = (await import(moduleDataURL))[value]
+  }
+  else {
+    var data = (await import(moduleDataURL))
+  }
+  return data
 }
 
 function redirecttologin (tokenobject, LogicBucket) {

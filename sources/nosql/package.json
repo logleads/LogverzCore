@@ -1,19 +1,21 @@
 {
-  "name": "Logverz",
-  "description": "",
-  "version": "0.7.00",
-  "main": "nosql.js",
-  "keywords": [],
-  "repository": {
-    "type": "git",
-    "url": "https://logleads@dev.azure.com/logleads/Logverz/_git/Logverz"
-  },
-  "author": "platformlead",
-  "license": "LogLeads License 1.0",
-  "dependencies": {
-    "aws-sdk": "^2.1599.0",
-    "jsonwebtoken": "^9.0.2",
-    "lodash": "^4.17.20",
-    "lokijs": "^1.5.11"
-  }
+	"name": "Logverz",
+	"description": "",
+	"version": "0.7.00",
+	"main": "nosql.js",
+	"keywords": [],
+	"repository": {
+		"type": "git",
+		"url": "https://logleads@dev.azure.com/logleads/Logverz/_git/Logverz"
+	},
+	"type": "module",
+	"author": "platformlead",
+	"license": "LogLeads License 1.0",
+	"dependencies": {
+		"@aws-sdk/client-dynamodb": "^3.569.0",
+		"@aws-sdk/lib-dynamodb": "^3.569.0",
+		"jsonwebtoken": "^9.0.2",
+		"lodash": "^4.17.20",
+		"lokijs": "^1.5.11"
+	}
 }

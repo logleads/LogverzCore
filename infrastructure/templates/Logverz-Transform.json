@@ -120,7 +120,7 @@
 				"Role": {
 					"Fn::GetAtt": ["TransformRole", "Arn"]
 				},
-				"Runtime": "nodejs18.x",
+				"Runtime": "nodejs20.x",
 				"MemorySize":"256",
 				"Timeout": "15"
 			}

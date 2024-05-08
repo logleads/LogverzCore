@@ -2,14 +2,29 @@
 /* eslint-disable no-redeclare */
 /* eslint-disable no-var */
 /* eslint brace-style: ["error", "stroustrup"] */
-var AWS = require('aws-sdk')
-const path = require('path')
-var jwt = require('jsonwebtoken')
-var _ = require('lodash')
-var db = require('./db').db
-var MaximumCacheTime=process.env.MaximumCacheTime
 
+
+import { fileURLToPath } from 'url'
+import path from 'path'
+import fs from 'fs'
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+import _ from 'lodash';
+import jwt from 'jsonwebtoken';
+import loki from 'lokijs';
+
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, PutCommand, DeleteCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+
+var MaximumCacheTime=process.env.MaximumCacheTime
 console.log('start')
+if (typeof db === 'undefined') {
+  // the variable is defined
+  var db = new loki('db.json', {
+    autoupdate: true
+});
+}
+
 if (db.collections.length === 0) {
 
   if (MaximumCacheTime === undefined){
@@ -19,19 +34,22 @@ if (db.collections.length === 0) {
   var identity = db.addCollection('Logverz-Identities', {
     ttl: MaximumCacheTime * 60 * 1000
   })
+
   var queries = db.addCollection('Logverz-Queries', {
     ttl: 20 * 60 * 1000
   })
 }
 
-module.exports.handler = async function (event, context) {
+export const handler = async (event, context) => {
   
   if (process.env.Environment !== 'LocalDev') {
     // Prod lambda function settings
     var arnList = (context.invokedFunctionArn).split(':')
     var region = arnList[3]
-    var commonshared = require('./shared/commonshared')
-    var authenticationshared = require('./shared/authenticationshared')
+    var commonsharedpath=('file:///'+path.join(__dirname, './shared/commonsharedv3.js').replace(/\\/g, "/"))
+    var commonshared=await GetConfiguration(commonsharedpath,'*')
+    var authenticationsharedpath=('file:///'+path.join(__dirname, './shared/authenticationsharedv3.js').replace(/\\/g, "/"))
+    var authenticationshared=await GetConfiguration(authenticationsharedpath,'*')
     var cert = process.env.PublicKey
     var AllowedOrigins = process.env.AllowedOrigins
     var maskedevent = commonshared.masktoken(JSON.parse(JSON.stringify(event)))
@@ -40,7 +58,8 @@ module.exports.handler = async function (event, context) {
   }
   else {
     // Dev environment settings
-    const mydev = require(path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'nosql', 'mydev.js'))
+    var directory = path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'nosql', 'mydev.mjs')
+    const mydev = await import('file:///' + directory.replace(/\\/g, '/'))
     var region = mydev.region
     var commonshared = mydev.commonshared
     var authenticationshared = mydev.authenticationshared
@@ -49,11 +68,9 @@ module.exports.handler = async function (event, context) {
     var AllowedOrigins = mydev.AllowedOrigins
   }
 
-  AWS.config.update({
-    region
-  })
+  const ddclient = new DynamoDBClient({});
+  const docClient = DynamoDBDocumentClient.from(ddclient);
 
-  var docClient = new AWS.DynamoDB.DocumentClient()
   var tokenobject = commonshared.ValidateToken(jwt, event.headers, cert)
   var reply = {}
 
@@ -67,7 +84,7 @@ module.exports.handler = async function (event, context) {
     var userattributes = identity.chain().find(requestoridentity).collection.data[0]
 
     if (userattributes === undefined) {
-      var userattributes = await authenticationshared.getidentityattributes(commonshared, docClient, username, usertype)
+      var userattributes = await authenticationshared.getidentityattributes(docClient, QueryCommand, username, usertype)
       userattributes = userattributes.Items[0]
       identity.insert(userattributes)
     }
@@ -85,7 +102,7 @@ module.exports.handler = async function (event, context) {
         clientrequest.Payload = Payload
       }
 
-      var authorization = await authenticationshared.resourceaccessauthorization(_, commonshared, docClient, identity, queries, clientrequest, requestoridentity, region)
+      var authorization = await authenticationshared.resourceaccessauthorization(_, docClient, QueryCommand, identity, queries, clientrequest, requestoridentity, region)
     }
     else { // all other api call user based check
       // Performing request and token user name match if the two does not match than NASTY thing is happening.....
@@ -176,19 +193,20 @@ async function issuerequest (commonshared, authenticationshared, docClient, quer
       else {
         console.log('TODO: Generic DynamoDB delete.')
       }
-      // delete identity
-      var data = await commonshared.deleteDDB(docClient, params)
+      // delete identity      
+      const delcommand = new DeleteCommand(params)
+      var data = await docClient.send(delcommand)
       break
 
     case (Operation.match(/dynamodb:PutItem/) || {}).input:
 
       if (TableName === 'Logverz-Identities') {
         console.log('updating identities')
-        var data = await createupdateidentities(docClient, authenticationshared, commonshared, identity, Parameters, TableName)
+        var data = await createupdateidentities(docClient, authenticationshared, identity, Parameters, TableName)
       }
       else if (TableName === 'Logverz-Queries') {
         console.log('updating queries')
-        var data = await createupdatequeries(docClient, commonshared, queries, Parameters, TableName)
+        var data = await createupdatequeries(docClient, queries, Parameters, TableName)
       }
       else {
         console.log('TODO: Generic DynamoDB PUT item.')
@@ -199,7 +217,8 @@ async function issuerequest (commonshared, authenticationshared, docClient, quer
     case (Operation.match(/dynamodb:Query/) || {}).input:
 
       var params = AddQueryParams(Parameters, TableName)
-      var data = (await commonshared.queryDDB(docClient, params)).Items
+      const command = new QueryCommand(params)
+      var data = (await docClient.send(command)).Items
       var queryfilters = getqueryfilters(Parameters, 'PostQuery')
 
       if (queryfilters.length !== 0 && (queryfilters.map(f => f.FilterExpression.AttributeName === 'sharedquery').includes(true))) {
@@ -290,7 +309,7 @@ function postqueryfiltering (data, filterexpression) {
   return data
 }
 
-async function createupdatequeries (docClient, commonshared, queries, Parameters, TableName) {
+async function createupdatequeries (docClient, queries, Parameters, TableName) {
   var params = {
     TableName,
     Item: {}
@@ -330,18 +349,20 @@ async function createupdatequeries (docClient, commonshared, queries, Parameters
   Keys.map(k => params.Item[k] = HashandSort[k])
   // console.log(params)
 
-  var data = await commonshared.putJSONDDB(docClient, params)
+  const putcommand = new PutCommand(params)
+  const data = await docClient.send(putcommand)
   // remove table properties as it is now stale
   queries.chain().find(HashandSort).remove()
   return data
 }
 
-async function createupdateidentities (docClient, authenticationshared, commonshared, identity, Parameters, TableName) {
+async function createupdateidentities (docClient, authenticationshared, identity, Parameters, TableName) {
   var identity = getidentityparams(Parameters)
   var Payload = _.filter(Parameters, 'Payload')[0].Payload
   var params = AdduserParams(identity, Payload, TableName)
-  var params = await authenticationshared.AssociateUserPolicies(commonshared, docClient, params)
-  var data = await commonshared.putJSONDDB(docClient, params)
+  var params = await authenticationshared.AssociateUserPolicies(docClient, QueryCommand, params)
+  const putcommand = new PutCommand(params)
+  const data = await docClient.send(putcommand)
 
   return data
 }
@@ -588,6 +609,22 @@ function validateprovidedusername (commonshared, requestoridentity, event) {
     }
   }
 }
+
+async function GetConfiguration (directory, value) {
+  
+  //Kudos: https://stackoverflow.com/questions/71432755/how-to-use-dynamic-import-from-a-dependency-in-node-js
+  const moduleText = fs.readFileSync(fileURLToPath(directory), 'utf-8').toString();
+  const moduleBase64 = Buffer.from(moduleText).toString('base64');
+  const moduleDataURL = `data:text/javascript;base64,${moduleBase64}`;
+  if (value !=="*"){
+      var data = (await import(moduleDataURL))[value];
+  }
+  else{
+      var data = (await import(moduleDataURL));
+  }
+  return data
+}
+
 /*
 WORKING CLI:
 aws dynamodb query --table-name usertable --expression-attribute-names "#UN=UserName" --expression-attribute-values file://qstring.json --key-condition-expression "#UN = :username"

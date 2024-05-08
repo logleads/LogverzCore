@@ -1,23 +1,28 @@
 {
-  "name": "Logverz",
-  "version": "0.7.00",
-  "description": "Log Interpreter Serverless Application: Signal module",
-  "main": "signal.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://logleads@dev.azure.com/logleads/Logverz/_git/Logverz"
-  },
-  "author": "platformlead",
-  "license": "LogLeads License 1.0",
-  "dependencies": {
-    "aws-sdk": "^2.1599.0",
-    "axios": "^1.6.8",
-    "crypto-js": "^4.2.0",
-    "jsonwebtoken": "^9.0.2",
-    "lodash": "^4.17.21",
-    "qs": "^6.12.1"
-  }
+	"name": "Logverz",
+	"version": "0.7.00",
+	"description": "Log Interpreter Serverless Application: Signal module",
+	"main": "signal.js",
+	"scripts": {
+		"test": "echo \"Error: no test specified\" && exit 1"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://logleads@dev.azure.com/logleads/Logverz/_git/Logverz"
+	},
+	"type": "module",
+	"author": "platformlead",
+	"license": "LogLeads License 1.0",
+	"dependencies": {
+		"@aws-sdk/client-auto-scaling": "^3.569.0",
+		"@aws-sdk/client-cloudwatch": "^3.569.0",
+		"@aws-sdk/client-dynamodb": "^3.569.0",
+		"@aws-sdk/client-ec2": "^3.569.0",
+		"@aws-sdk/client-ssm": "^3.569.0",
+		"axios": "^1.6.8",
+		"crypto-js": "^4.2.0",
+		"jsonwebtoken": "^9.0.2",
+		"lodash": "^4.17.21",
+		"qs": "^6.12.1"
+	}
 }

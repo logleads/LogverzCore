@@ -4,31 +4,29 @@
 import { fileURLToPath } from 'url'
 import path from 'path'
 import fs from 'fs'
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
-import _ from 'lodash';
-import jwt from 'jsonwebtoken';
-import loki from 'lokijs';
+import _ from 'lodash'
+import jwt from 'jsonwebtoken'
+import loki from 'lokijs'
 
 import { SSMClient, GetParameterHistoryCommand, GetParameterCommand } from '@aws-sdk/client-ssm'
-import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
-import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
-//https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/dynamodb-example-dynamodb-utilities.html
+import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs'
+import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb'
+import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb'
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+// https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/dynamodb-example-dynamodb-utilities.html
 
-
-var MaximumCacheTime=process.env.MaximumCacheTime
+var MaximumCacheTime = process.env.MaximumCacheTime
 if (typeof db === 'undefined') {
   // the variable is defined
   var db = new loki('db.json', {
     autoupdate: true
-});
+  })
 }
 
 if (db.collections.length === 0) {
-
-  if (MaximumCacheTime === undefined){
-    MaximumCacheTime =1
+  if (MaximumCacheTime === undefined) {
+    MaximumCacheTime = 1
   }
 
   var identity = db.addCollection('Logverz-Identities', {
@@ -38,13 +36,12 @@ if (db.collections.length === 0) {
 }
 
 export const handler = async (event, context) => {
-
   if (process.env.Environment !== 'LocalDev' && event.hasOwnProperty('requestContext')) {
     // Prod lambda function - APiGW invocation
-    var commonsharedpath=('file:///'+path.join(__dirname, './shared/commonsharedv3.js').replace(/\\/g, "/"))
-    var commonshared=await GetConfiguration(commonsharedpath,'*')
-    var authenticationsharedpath=('file:///'+path.join(__dirname, './shared/authenticationsharedv3.js').replace(/\\/g, "/"))
-    var authenticationshared=await GetConfiguration(authenticationsharedpath,'*')
+    var commonsharedpath = ('file:///' + path.join(__dirname, './shared/commonsharedv3.js').replace(/\\/g, '/'))
+    var commonshared = await GetConfiguration(commonsharedpath, '*')
+    var authenticationsharedpath = ('file:///' + path.join(__dirname, './shared/authenticationsharedv3.js').replace(/\\/g, '/'))
+    var authenticationshared = await GetConfiguration(authenticationsharedpath, '*')
     var arnList = (context.invokedFunctionArn).split(':')
     var region = arnList[3]
     var request = JSON.parse(event.body)
@@ -70,10 +67,10 @@ export const handler = async (event, context) => {
   }
   else if (process.env.Environment !== 'LocalDev') {
     // Prod lambda function - CFN invocation
-    var commonsharedpath=('file:///'+path.join(__dirname, './shared/commonsharedv3.js').replace(/\\/g, "/"))
-    var commonshared=await GetConfiguration(commonsharedpath,'*')
-    var authenticationsharedpath=('file:///'+path.join(__dirname, './shared/authenticationsharedv3.js').replace(/\\/g, "/"))
-    var authenticationshared=await GetConfiguration(authenticationsharedpath,'*')
+    var commonsharedpath = ('file:///' + path.join(__dirname, './shared/commonsharedv3.js').replace(/\\/g, '/'))
+    var commonshared = await GetConfiguration(commonsharedpath, '*')
+    var authenticationsharedpath = ('file:///' + path.join(__dirname, './shared/authenticationsharedv3.js').replace(/\\/g, '/'))
+    var authenticationshared = await GetConfiguration(authenticationsharedpath, '*')
     var arnList = (context.invokedFunctionArn).split(':')
     var region = arnList[3]
     var JOBQueueURL = event.ResourceProperties.JOBQueueURL
@@ -120,19 +117,19 @@ export const handler = async (event, context) => {
     var apigateway = mydev.apigateway
   }
 
-  const sqsclient = new SQSClient({});
+  const sqsclient = new SQSClient({})
   const ddclient = new DynamoDBClient({
     region
-  });
-  const docClient = DynamoDBDocumentClient.from(ddclient);
-  const ssmclient = new SSMClient({});
+  })
+  const docClient = DynamoDBDocumentClient.from(ddclient)
+  const ssmclient = new SSMClient({})
 
   if (DataType !== '') {
     var message = 'ok' // regular or custom query types
   }
   else {
     var message = 'query type is not specified'
-    //var message = {'query type' :'is not specified'}
+    // var message = {'query type' :'is not specified'}
   }
 
   if (apigateway === true) {
@@ -184,7 +181,7 @@ export const handler = async (event, context) => {
       // user name who invoked the job is retrieved from Execution history
       console.log('Attempt ' + attempt + ' of retriving the user from execution history')
       // do try catch here
-    
+
       var executionhistory = await getallssmparameterhistory(commonshared, ssmclient, GetParameterHistoryCommand, ddclient, PutItemCommand, '/Logverz/Engine/ExecutionHistory')
 
       // result may not be the last item in case of frequent invocations hence the matching
@@ -302,13 +299,12 @@ export const handler = async (event, context) => {
     }
 
     var reply
-    var message = await sendSQSMessage(sqsclient, SendMessageCommand,JOBQueueURL, MessageAttributes)
+    var message = await sendSQSMessage(sqsclient, SendMessageCommand, JOBQueueURL, MessageAttributes)
     if (apigateway === false) {
-      console.log("CFN message1:")
+      console.log('CFN message1:')
       console.log(message)
 
       return await commonshared.newcfnresponse(event, context, 'SUCCESS', {})
-
     }
     else {
       reply = {
@@ -321,12 +317,12 @@ export const handler = async (event, context) => {
     }
   }
   else {
-    console.log("CFN message2:")
+    console.log('CFN message2:')
     console.log(message)
 
     if (apigateway === false) {
       console.log('done')
-      return await commonshared.newcfnresponse(event, context,'SUCCESS', {})
+      return await commonshared.newcfnresponse(event, context, 'SUCCESS', {})
     }
     else {
       reply = {
@@ -338,7 +334,6 @@ export const handler = async (event, context) => {
       return commonshared.apigatewayresponse(reply, event.headers, AllowedOrigins)
     }
   }
-
 }
 
 async function sendSQSMessage (sqsclient, SendMessageCommand, JOBQueueURL, MessageAttributes) {
@@ -386,9 +381,9 @@ async function sendSQSMessage (sqsclient, SendMessageCommand, JOBQueueURL, Messa
     requesttime: Date.now()
   })
 
-  const command = new SendMessageCommand(params);
-  try{
-    const response = await sqsclient.send(command);
+  const command = new SendMessageCommand(params)
+  try {
+    const response = await sqsclient.send(command)
     var today = new Date()
     var date = today.getFullYear() + '-' + (today.getMonth() + 1) + '-' + today.getDate()
     var time = today.getHours() + ':' + today.getMinutes() + ':' + today.getSeconds()
@@ -400,14 +395,13 @@ async function sendSQSMessage (sqsclient, SendMessageCommand, JOBQueueURL, Messa
     console.log('Error', err)
     return err
   }
-
 }
 
 async function getbatchofparametersHistory (ssmclient, GetParameterHistoryCommand, parametername, NextToken) {
   if (NextToken) {
     var params = {
       Name: parametername,
-      // required 
+      // required
       NextToken,
       MaxResults: 50,
       WithDecryption: false
@@ -422,18 +416,17 @@ async function getbatchofparametersHistory (ssmclient, GetParameterHistoryComman
     }
   }
 
-
-  const command = new GetParameterHistoryCommand(params);
-  try{
-    const data = await ssmclient.send(command);
-    var result={
+  const command = new GetParameterHistoryCommand(params)
+  try {
+    const data = await ssmclient.send(command)
+    var result = {
       Result: 'PASS',
       Data: data
     }
     return result
   }
-  catch(err) {
-    var result={
+  catch (err) {
+    var result = {
       Result: 'Fail',
       Data: err
     }
@@ -452,7 +445,7 @@ async function getallssmparameterhistory (commonshared, ssmclient, GetParameterH
       if (batchofparameters.Data.NextToken !== undefined) {
         NextToken = batchofparameters.Data.NextToken
       }
-    } 
+    }
     else {
       var ssmallparamhistoryresult = parametername + ':  SSM Parameter retrieval failed.Because ' + batchofparameters.Data
       var details = {
@@ -495,16 +488,15 @@ function timeout (ms) {
 }
 
 async function GetConfiguration (directory, value) {
-  
-  //Kudos: https://stackoverflow.com/questions/71432755/how-to-use-dynamic-import-from-a-dependency-in-node-js
-  const moduleText = fs.readFileSync(fileURLToPath(directory), 'utf-8').toString();
-  const moduleBase64 = Buffer.from(moduleText).toString('base64');
-  const moduleDataURL = `data:text/javascript;base64,${moduleBase64}`;
-  if (value !=="*"){
-      var data = (await import(moduleDataURL))[value];
+  // Kudos: https://stackoverflow.com/questions/71432755/how-to-use-dynamic-import-from-a-dependency-in-node-js
+  const moduleText = fs.readFileSync(fileURLToPath(directory), 'utf-8').toString()
+  const moduleBase64 = Buffer.from(moduleText).toString('base64')
+  const moduleDataURL = `data:text/javascript;base64,${moduleBase64}`
+  if (value !== '*') {
+    var data = (await import(moduleDataURL))[value]
   }
-  else{
-      var data = (await import(moduleDataURL));
+  else {
+    var data = (await import(moduleDataURL))
   }
   return data
 }

@@ -7,27 +7,25 @@ import { performance } from 'perf_hooks'
 import { fileURLToPath } from 'url'
 import path from 'path'
 import fs from 'fs'
-//import https from 'https'
-//import { NodeHttpHandler } from '@smithy/node-http-handler'
+// import https from 'https'
+// import { NodeHttpHandler } from '@smithy/node-http-handler'
 import _ from 'lodash'
-import pkg from 'tasktimer';
+import pkg from 'tasktimer'
 import { Sequelize } from 'sequelize'
-import { S3Client, SelectObjectContentCommand, SelectObjectContentEventStream  } from '@aws-sdk/client-s3'
-import { SQSClient, ReceiveMessageCommand, DeleteMessageCommand, SendMessageCommand, GetQueueAttributesCommand } from '@aws-sdk/client-sqs'
-import { SSMClient, GetParameterCommand} from '@aws-sdk/client-ssm'
+import { S3Client, SelectObjectContentCommand, SelectObjectContentEventStream } from '@aws-sdk/client-s3'
+import { SQSClient, ReceiveMessageCommand, DeleteMessageCommand } from '@aws-sdk/client-sqs'
+import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm'
 import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb'
-// import { time } from 'console'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
-const { TaskTimer } = pkg;
+const { TaskTimer } = pkg
 
 let rdsinsertsuccess = false
 let t0
-let sqsempty=0
+let sqsempty = 0
 
 export const handler = async (event, context) => {
-
   if (process.env.Environment !== 'LocalDev') {
     // Prod lambda function settings
     var commonsharedpath = ('file:///' + path.join(__dirname, 'shared', 'commonsharedv3.js').replace(/\\/g, '/'))
@@ -85,7 +83,7 @@ export const handler = async (event, context) => {
   const ddclient = new DynamoDBClient({})
   const s3client = new S3Client({})
 
-  const initialparameters = await initialseparameters(commonshared, Schema, DBFrendlyName, ssmclient, GetParameterCommand, ddclient, PutItemCommand)
+  const initialparameters = await initialseparameters(commonshared, Schema, QueryType, DBFrendlyName, ssmclient, GetParameterCommand, ddclient, PutItemCommand)
   const DBPassword = initialparameters.Password
   Schema = initialparameters.Schema
 
@@ -103,9 +101,6 @@ export const handler = async (event, context) => {
     console.error(e)
     process.exit()
   }
-
-  //for testing
-  //await FilteredS3data(s3client, s3selectV3testing, context, engineshared, commonshared, sequelize, Model, DBEngineType, type, header)
 
   t0 = performance.now()
   await loop(s3client, sqsclient, sequelize, context, TestingTimeout, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, type, header)
@@ -186,19 +181,15 @@ async function loop (s3client, sqsclient, sequelize, context, TestingTimeout, en
 
   console.log(`Reporting state of instance ${context.clientContext.invocationid} at ${new Date().toLocaleString()} : COMPLETED`)
   await sequelize.close()
-
 }
 
 async function Task (s3client, sqsclient, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header) {
   const sqsmessages = await commonshared.receiveSQSMessage(sqsclient, ReceiveMessageCommand, QueueURL, '3')
-  var result ={}
 
-  if (sqsmessages.Messages !== undefined){
+  if (sqsmessages.Messages !== undefined) {
     try {
       var prefixarray = _.flatten(sqsmessages.Messages.map(msg => JSON.parse(msg.Body)))
-      //JSON.parse(sqsmessages[0].Body)
       var ReceiptHandle = sqsmessages.Messages.map(msg => msg.ReceiptHandle)
-      //sqsmessages[0].ReceiptHandle
     }
     catch (e) {
       console.log('Error parsing Message retrieved from SQS. Further details: \n')
@@ -219,16 +210,15 @@ async function Task (s3client, sqsclient, engineshared, commonshared, S3SelectPa
       await deleteSQSMessage(sqsclient, QueueURL, ReceiptHandle, rdsinsertsuccess)
     }
   }
-  else if (sqsempty > 2){
-    console.log("\nQueue was empty for prolonged time stopping lambda function\n")
+  else if (sqsempty > 2) {
+    console.log('\nQueue was empty for prolonged time stopping lambda function\n')
     process.exit(0)
   }
   else {
-    console.log("\nQueue was empty waiting 1 second for new messages\n")
+    console.log('\nQueue was empty waiting 1 second for new messages\n')
     await timeout(1000)
     sqsempty++
   }
-
 }
 
 async function InsertData (sequelize, Model, SelectedModel, QueryType, DBTableName, Transformeddata) {
@@ -316,75 +306,73 @@ async function processS3data (s3client, prefixarray, S3SelectQuery, S3SelectPara
 }
 
 async function FilteredS3data (s3client, params, context, engineshared, commonshared, sequelize, Model, DBEngineType, type, header) {
-  
   const asyncIterableStreamToString = (asyncIterable) =>
-    new Promise(async(resolve, reject) => {
+    new Promise(async (resolve, reject) => {
       try {
-        const chunks = [new Uint8Array()];
+        const chunks = [new Uint8Array()]
         for await (const selectObjectContentEventStream of asyncIterable) {
           if (selectObjectContentEventStream.Records) {
             if (selectObjectContentEventStream.Records.Payload) {
-              chunks.push(selectObjectContentEventStream.Records.Payload);
+              chunks.push(selectObjectContentEventStream.Records.Payload)
             }
           }
 
           if (selectObjectContentEventStream.End) {
-            resolve(Buffer.concat(chunks).toString("utf8"))
+            resolve(Buffer.concat(chunks).toString('utf8'))
           }
         }
-      } catch (err) {
-        console.error(err);
-        reject();
+      }
+      catch (err) {
+        console.error(err)
+        reject(err)
       }
     }
-  );
+    )
 
   const command = new SelectObjectContentCommand(params)
   var result
   try {
     const response = await s3client.send(command)
 
-    if (response.$metadata.httpStatusCode == 200) {
+    if (response.$metadata.httpStatusCode === 200) {
       if (response.Payload) {
-        const body = await asyncIterableStreamToString(response.Payload);
-       
-            if (type === 'JSON') {
-              result=convertrawdata(body)
-            }
-            else if (type === 'CSV' && header === true) {
-              result=convertrawdata(body)
-            }
-            else if (type === 'CSV' && header === false) {
-              result ={
-                Result: 'PASS',
-                Data: body
-              }
-            }
-        //console.log(body)
-      } 
+        const body = await asyncIterableStreamToString(response.Payload)
+
+        if (type === 'JSON') {
+          result = convertrawdata(body)
+        }
+        else if (type === 'CSV' && header === true) {
+          result = convertrawdata(body)
+        }
+        else if (type === 'CSV' && header === false) {
+          result = {
+            Result: 'PASS',
+            Data: body
+          }
+        }
+        // console.log(body)
+      }
       else {
-        console.warn(`S3Select did not have payload for ${bucketName}/${key}`);
+        console.warn(`S3Select did not have payload for ${bucketName}/${key}`)
       }
     }
     else if (response.error !== null) {
       const errorstring = response.httpResponse.stream.req._header
       const file = errorstring.match(/POST.*?select.*/g)
-      const bucket = errorstring.match(/Host:.*/g) 
+      const bucket = errorstring.match(/Host:.*/g)
       // this is the compacted errormessage
       const errormessagedatabase = 'Error Processing request: \n' + file + '\n' + bucket + '\nReason:\n' + Buffer.from(response.httpResponse.body).toString('utf8')
       // this is the full errormessage:
       let errormessageconsole = 'Error Processing request: \n' + errorstring + '\n------------------------------------------------------------------\n'
       errormessageconsole += Buffer.from(response.httpResponse.body).toString('utf8')
       console.log(errormessageconsole)
-      result ={
+      result = {
         Result: 'Fail',
         Data: errormessagedatabase
       }
-
     }
-
   }
-  catch(e){
+  catch (e) {
     console.log(e)
   }
 
@@ -486,7 +474,7 @@ function DatatoSchemaTransformation (s3results, SelectedModel, S3SelectParameter
       const temparray = []
       let entries = []
       entries = onefile.split(S3SelectParameter.OutputSerialization.CSV.RecordDelimiter)
-      
+
       for (let i = 0; i < entries.length; i++) {
         if (S3SelectParameter.OutputSerialization.CSV.FieldDelimiter === ' ') {
           var oneentry = entries[i].match(/(?:[^\s"]+|"[^"]*")+/g)
@@ -508,11 +496,11 @@ function DatatoSchemaTransformation (s3results, SelectedModel, S3SelectParameter
       intermediatearray.push(temparray)
     })
     var intermediatearray = _.compact(_.flatten(intermediatearray))
-    //debug dump location 1:
-    //fs.writeFileSync(fileURLToPath("file:///C:\\...path...\\intermediatearray.json"), JSON.stringify(intermediatearray))
+    // debug dump location 1:
+    // fs.writeFileSync(fileURLToPath("file:///C:\\...path...\\intermediatearray.json"), JSON.stringify(intermediatearray))
     var finalarray = convertdatatosqlschema(intermediatearray, SelectedModel, DBEngineType)
-     //debug dump location 2:
-    //fs.writeFileSync(fileURLToPath("file:///C:\\...path...\\finalarray.json"), JSON.stringify(finalarray))
+    // debug dump location 2:
+    // fs.writeFileSync(fileURLToPath("file:///C:\\...path...\\finalarray.json"), JSON.stringify(finalarray))
   }
   else {
     console.log('Parquet filetype not yet supported')
@@ -526,14 +514,11 @@ function timeout (ms) {
 }
 
 async function deleteSQSMessage (sqsclient, QueueURL, ReceiptHandles, rdsinsertsuccess) {
-
-
   const promises = ReceiptHandles.map(ReceiptHandle => {
-
-      const deleteParams = {
+    const deleteParams = {
       QueueUrl: QueueURL,
       ReceiptHandle
-      }
+    }
 
     if (rdsinsertsuccess) {
       const command = new DeleteMessageCommand(deleteParams)
@@ -543,17 +528,15 @@ async function deleteSQSMessage (sqsclient, QueueURL, ReceiptHandles, rdsinserts
       }
       catch (e) {
         const response = e
-        console.error('Error:',JSON.stringify(response))
+        console.error('Error:', JSON.stringify(response))
       }
     }
     else {
       console.log('Database insert of the contents of the message failed not deleting sqs message')
     }
-
   }) // prefixarray.map
-  
+
   await Promise.all(promises)
-  
 }
 
 function convertdatatosqlschema (s3results, SelectedModel, DBEngineType) {
@@ -626,12 +609,7 @@ function convertrawdata (plainstring) {
   return result
 }
 
-async function initialseparameters (commonshared, Schema, DBFrendlyName, ssmclient, GetParameterCommand, ddclient, PutItemCommand) {
-  const details = {
-    source: 'worker.js:handler',
-    message: ''
-  }
-
+async function initialseparameters (commonshared, Schema, QueryType, DBFrendlyName, ssmclient, GetParameterCommand, ddclient, PutItemCommand) {
   if (Schema === '') {
     // It only retrieves schema parameter if the client context does not have it. Which happenes if the schema is big + query is big so the
     // total client context is close to or more than 3583bytes.https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html#API_Invoke_RequestSyntax

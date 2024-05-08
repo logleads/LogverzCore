@@ -1,20 +1,22 @@
 {
-  "name": "Logverz",
-  "version": "0.7.00",
-  "description": "Log Interpreter Serverless Application: master controller module",
-  "main": "init.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://logleads@dev.azure.com/logleads/Logverz/_git/Logverz"
-  },
-  "author": "platformlead",
-  "license": "LogLeads License 1.0",
-  "dependencies": {
-    "aws-sdk": "^2.1596.0",
-    "flatted": "^3.3.1",
-    "lodash": "^4.17.20"
-  }
+	"name": "Logverz",
+	"version": "0.7.00",
+	"description": "Log Interpreter Serverless Application: master controller module",
+	"main": "init.js",
+	"scripts": {
+		"test": "echo \"Error: no test specified\" && exit 1"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://logleads@dev.azure.com/logleads/Logverz/_git/Logverz"
+	},
+	"type": "module",
+	"author": "platformlead",
+	"license": "LogLeads License 1.0",
+	"dependencies": {
+		"@aws-sdk/client-codebuild": "^3.569.0",
+		"@aws-sdk/client-dynamodb": "^3.569.0",
+		"flatted": "^3.3.1",
+		"lodash": "^4.17.20"
+	}
 }

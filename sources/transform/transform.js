@@ -1,48 +1,50 @@
+/* eslint-disable array-callback-return */
 /* eslint-disable no-redeclare */
 /* eslint-disable no-var */
 /* eslint brace-style: ["error", "stroustrup"] */
-var AWS = require('aws-sdk')
-const s3 = new AWS.S3()
-var path = require('path')
-var jp = require('jsonpath')
-// const { toString, result } = require('lodash');
-var _ = require('lodash')
-const { filter } = require('lodash')
 
-module.exports.handler = async function (event, context) {
+import { fileURLToPath } from 'url'
+import path from 'path'
+import fs from 'fs'
+import _ from 'lodash'
+import jp from 'jsonpath'
+import { RDSClient, DescribeDBEngineVersionsCommand, DescribeOrderableDBInstanceOptionsCommand } from '@aws-sdk/client-rds'
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3'
+import { KMSClient, paginateListAliases } from '@aws-sdk/client-kms'
 
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+
+export const handler = async (event, context) => {
   if (process.env.Environment !== 'LocalDev') {
     // Prod lambda function settings
     console.log('REQUEST RECEIVED: \n' + JSON.stringify(context) + '\n\n')
     console.log('THE EVENT: \n' + JSON.stringify(event) + '\n\n')
     var arnList = (context.invokedFunctionArn).split(':')
     var region = arnList[3]
-    var commonshared = require('./shared/commonshared')
+    var commonsharedpath = ('file:///' + path.join(__dirname, 'shared', 'commonsharedv3.js').replace(/\\/g, '/'))
+    var commonshared = await GetConfiguration(commonsharedpath, '*')
     var InitBucket = process.env.InitBucket
     // var cert =process.env.PublicKey;
   }
   else {
     // Dev environment settings
-    const mydev = require(path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'transform', 'mydev.js'))
-    var region = mydev.region //"ap-south-2" hyderabad does not support serverless at present 
+
+    var directory = path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'transform', 'mydev.mjs')
+    const mydev = await import('file:///' + directory.replace(/\\/g, '/'))
+    var region = mydev.region // "ap-south-2" hyderabad does not support serverless at present
     var commonshared = mydev.commonshared
     var event = mydev.event
     var InitBucket = mydev.InitBucket
   }
 
-  var InfoPolicySid = "DenySSMSecureStringAccessUsingKMS" 
+  var InfoPolicySid = 'DenySSMSecureStringAccessUsingKMS'
 
-  AWS.config.update({
-    region
-  }) 
+  const kmsclient = new KMSClient({})
+  const rdsclient = new RDSClient({})
+  const s3client = new S3Client({})
 
-  var rds = new AWS.RDS({
-    apiVersion: '2014-10-31'
-  })
-
-  var kms = new AWS.KMS();
-
-  var template = await main(event, rds, kms, commonshared, InitBucket, InfoPolicySid)
+  var template = await main(event, s3client, rdsclient, kmsclient, commonshared, InitBucket, InfoPolicySid)
 
   var result = {
     requestId: event.requestId,
@@ -53,21 +55,20 @@ module.exports.handler = async function (event, context) {
   return result
 }
 
-async function main (event, rds, kms, commonshared, InitBucket,InfoPolicySid) {
+async function main (event, s3client, rdsclient, kmsclient, commonshared, InitBucket, InfoPolicySid) {
   console.log('main')
 
-  // TODO refactor/ parameterise use cases
   if (event.fragment.Metadata.stackname === 'Logverz-Engine') {
     var [enginecontent, customcontent] = await Promise.all([
-      await commonshared.S3GET(s3, InitBucket, 'templates/Logverz-Engine.json'),
-      await commonshared.S3GET(s3, InitBucket, 'templates/Logverz-CustomConfig.json')
+      await commonshared.S3GET(s3client, GetObjectCommand, InitBucket, 'templates/Logverz-Engine.json'),
+      await commonshared.S3GET(s3client, GetObjectCommand, InitBucket, 'templates/Logverz-CustomConfig.json')
     ])
 
-    var engine = JSON.parse(enginecontent.Body.toString('utf8'))
+    var engine = JSON.parse(Buffer.from(await enginecontent.Body.transformToByteArray()).toString('utf-8'))
     var engine = setcontrollersandqueue(event, engine)
 
     if (customcontent.code !== 'NoSuchKey') {
-      var customconfig = JSON.parse(customcontent.Body.toString('utf8'))
+      var customconfig = JSON.parse(Buffer.from(await customcontent.Body.transformToByteArray()).toString('utf-8'))
       if (customconfig.Metadata.Merge.LogverzEngine !== undefined) {
         var customconfigmerge = customconfig.Metadata.Merge.LogverzEngine
         var engine = mergecustomproperties(engine, customconfigmerge)
@@ -84,28 +85,25 @@ async function main (event, rds, kms, commonshared, InitBucket,InfoPolicySid) {
     return result
   }
   else if (event.fragment.Metadata.stackname === 'Logverz-Logic') {
-
-    var [logiccontent, customcontent,specifickeymskeys] = await Promise.all([
-      await commonshared.S3GET(s3, InitBucket, 'templates/Logverz-Logic.json'),
-      await commonshared.S3GET(s3, InitBucket, 'templates/Logverz-CustomConfig.json'),
-      await getspecifickeyalias(kms)
+    var [logiccontent, customcontent, specifickmskey] = await Promise.all([
+      await commonshared.S3GET(s3client, GetObjectCommand, InitBucket, 'templates/Logverz-Logic.json'),
+      await commonshared.S3GET(s3client, GetObjectCommand, InitBucket, 'templates/Logverz-CustomConfig.json'),
+      await getspecifickeyalias()
     ])
-    
-    //Looks up KMS default key for aws/ssm and set resource id in Logverz-Logic.json LogverzInfoPolicy resource:
-    //DenySSMSecureStringAccessUsingKMS sid. So that it only blocks that resource usage. 
 
-    var awsssmkey=specifickeymskeys.filter(a => a.AliasName === "alias/aws/ssm")[0]
-    var arn=awsssmkey.AliasArn.replace(awsssmkey.AliasName,"")+"key/"+awsssmkey.TargetKeyId
+    // Looks up KMS default key for aws/ssm and set resource id in Logverz-Logic.json LogverzInfoPolicy resource:
+    // DenySSMSecureStringAccessUsingKMS sid. So that it only blocks that resource usage. To ensure that users cannot read secrets.
+    var arn = specifickmskey.AliasArn.replace(specifickmskey.AliasName, '') + 'key/' + specifickmskey.TargetKeyId
 
-    var logic = JSON.parse(logiccontent.Body.toString('utf8'))
-    var InfoPolicystatements=logic.Resources.LogverzInfoPolicy.Properties.PolicyDocument.Statement
-    var DenySSMIndex = InfoPolicystatements.findIndex(x =>x.Sid ===InfoPolicySid)
-    var originalstatement=InfoPolicystatements[DenySSMIndex]
-        originalstatement.Resource = arn
-        logic.Resources.LogverzInfoPolicy.Properties.PolicyDocument.Statement[DenySSMIndex]=originalstatement
-    
+    var logic = JSON.parse(Buffer.from(await logiccontent.Body.transformToByteArray()).toString('utf-8'))
+    var InfoPolicystatements = logic.Resources.LogverzInfoPolicy.Properties.PolicyDocument.Statement
+    var DenySSMIndex = InfoPolicystatements.findIndex(x => x.Sid === InfoPolicySid)
+    var originalstatement = InfoPolicystatements[DenySSMIndex]
+    originalstatement.Resource = arn
+    logic.Resources.LogverzInfoPolicy.Properties.PolicyDocument.Statement[DenySSMIndex] = originalstatement
+
     if (customcontent.code !== 'NoSuchKey') {
-      var customconfig = JSON.parse(customcontent.Body.toString('utf8'))
+      var customconfig = JSON.parse(Buffer.from(await customcontent.Body.transformToByteArray()).toString('utf-8'))
 
       if (customconfig.Metadata.Merge.LogverzLogic !== undefined) {
         var customconfigmerge = customconfig.Metadata.Merge.LogverzLogic
@@ -123,24 +121,20 @@ async function main (event, rds, kms, commonshared, InitBucket,InfoPolicySid) {
     return result
   }
   else if (event.fragment.Metadata.stackname === 'Logverz-ExternalDB' || event.fragment.Metadata.stackname === 'Logverz-DefaultDB') {
-    
-
     var DBInstanceClass = event.templateParameterValues.DBInstanceClass
     var DBEngineType = event.templateParameterValues.DBEngineType
     var DBdeploymentMethod = event.templateParameterValues.DBDeploymentMethod
-    var DBPrincipalProperty=event.templateParameterValues.DBPrincipalProperty
+    var DBPrincipalProperty = event.templateParameterValues.DBPrincipalProperty
 
-    var dbconfig = await verifydeploymentconfigavailability(rds,event, DBdeploymentMethod, DBEngineType, DBInstanceClass, DBPrincipalProperty)
+    var dbconfig = await verifydeploymentconfigavailability(rdsclient, event, DBdeploymentMethod, DBEngineType, DBInstanceClass, DBPrincipalProperty)
 
     if (DBEngineType === 'postgres' || DBEngineType === 'mysql') {
- 
-      mergedbproperties(event,dbconfig)
-      
+      mergedbproperties(event, dbconfig)
+
       event.fragment.Transform = ['LogverzTransform', 'AWS::Serverless-2016-10-31']
       return event.fragment
     }
     else if (DBEngineType.match('sqlserver-')) {
-      
       var storagesize = event.templateParameterValues.DBAllocatedStorage
 
       if (storagesize < 20) {
@@ -148,7 +142,7 @@ async function main (event, rds, kms, commonshared, InitBucket,InfoPolicySid) {
         console.log('for MSSQL the minimum storage size is 20GB, bumping to 20GB')
       }
 
-      mergedbproperties(event,dbconfig)
+      mergedbproperties(event, dbconfig)
       event.templateParameterValues.DBAllocatedStorage = storagesize
       event.fragment.Transform = ['LogverzTransform', 'AWS::Serverless-2016-10-31']
       return event.fragment
@@ -157,17 +151,16 @@ async function main (event, rds, kms, commonshared, InitBucket,InfoPolicySid) {
       console.log('unknown case not postgres, sqlserver-XX, or mysql')
       return event.fragment
     }
-    
   }
   else if (event.fragment.Metadata.stackname === 'Logverz-TurnSrv') {
     var [adsrvcontent, customcontent] = await Promise.all([
-      await commonshared.S3GET(s3, InitBucket, 'templates/Logverz-TurnSrv.json'),
-      await commonshared.S3GET(s3, InitBucket, 'templates/Logverz-CustomConfig.json')
+      await commonshared.S3GET(s3client, GetObjectCommand, InitBucket, 'templates/Logverz-TurnSrv.json'),
+      await commonshared.S3GET(s3client, GetObjectCommand, InitBucket, 'templates/Logverz-CustomConfig.json')
     ])
 
-    var turnsrv = JSON.parse(adsrvcontent.Body.toString('utf8'))
+    var turnsrv = JSON.parse(Buffer.from(await adsrvcontent.Body.transformToByteArray()).toString('utf-8'))
     if (customcontent.code !== 'NoSuchKey') {
-      var customconfig = JSON.parse(customcontent.Body.toString('utf8'))
+      var customconfig = JSON.parse(Buffer.from(await customcontent.Body.transformToByteArray()).toString('utf-8'))
 
       if (customconfig.Metadata.Merge.LogverzTurn !== undefined) {
         var customconfigmerge = customconfig.Metadata.Merge.LogverzTurn
@@ -296,47 +289,9 @@ function setcontrollersandqueue (event, engine) {
   return engine
 }
 
-async function DescribeDBEngineVersions (rds, rdsParams) {
-  var promisedresult = new Promise((resolve, reject) => {
-    rds.describeDBEngineVersions(rdsParams, function (err, data) {
-      if (err) {
-        console.error(err)
-        reject(err)
-      }
-      else {
-        console.log('Successfully retrieved rds versions')
-        resolve(data)
-      }
-    })
-  })
-
-  var result = await promisedresult
-  return result
-}
-
-async function DescribeOrderableDBInstanceOptions (rds, rdsParams) {
-  var promisedresult = new Promise((resolve, reject) => {
-    rds.describeOrderableDBInstanceOptions(rdsParams, function(err, data) {
-      if (err) {
-        console.log(err, err.stack); // an error occurred
-        reject(err)
-      }
-      else{
-        //console.log(data);           // successful response
-        console.log('Successfully retrieved rds instance options')
-        resolve(data)
-      }
-    });
-  })
-
-  var result = await promisedresult
-  return result
-}
-
-async function getvalidmssqlconfig (rds, DBInstanceClass, DBEngineType) {
-
-  //Microsoft SQL server has various version and editions combined with various AWS AWS instance families and generations in each family results in a lot of exceptions. 
-  //Bellow are the cases found sofare.
+async function getvalidmssqlconfig (rdsclient, DBInstanceClass, DBEngineType) {
+  // Microsoft SQL server has various version and editions combined with various AWS AWS instance families and generations in each family results in a lot of exceptions.
+  // Bellow are the cases found sofare.
 
   switch (DBEngineType) {
     case 'sqlserver-ex':
@@ -345,13 +300,13 @@ async function getvalidmssqlconfig (rds, DBInstanceClass, DBEngineType) {
         case (DBInstanceClass.match(/db.t2.micro|db.t2.small|db.t2.medium/) || {}).input:
           console.log('Express edition on T2 micro/small/medium instances are only suported with SQL 2017, (not SQL 2019), setting SQL2017')
           console.log('https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_SQLServer.html#SQLServer.Concepts.General.VersionSupport')
-          
+
           var rdsParams = {
             DefaultOnly: true,
             Engine: DBEngineType,
             Filters: [
               {
-                Name: 'engine-version', 
+                Name: 'engine-version',
                 Values: [
                   '14.00'
                 ]
@@ -363,16 +318,16 @@ async function getvalidmssqlconfig (rds, DBInstanceClass, DBEngineType) {
 
           console.log('Express edition on T2 large and xlarge instances are not supported at all. switching to T3')
           console.log('https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_SQLServer.html#SQLServer.Concepts.General.VersionSupport')
-          
+
           var rdsParams = {
             DefaultOnly: true, // || false
             Engine: DBEngineType
           }
           var DBInstanceClass = DBInstanceClass.replace('t2', 't3')
-          
+
           break
         case (DBInstanceClass.match(/db.t3.micro|db.t3.small|db.t3.medium|db.t3.large|db.t3.2xlarge/) || {}).input:
-          
+
           if (DBInstanceClass.match('db.t3.2xlarge')) {
             var DBInstanceClass = DBInstanceClass.replace('2xlarge', 'large')
             console.log('instance size 2xlarge is not supported with express edition, demoting to large')
@@ -397,13 +352,13 @@ async function getvalidmssqlconfig (rds, DBInstanceClass, DBEngineType) {
             console.log('Web edition only support T2 small/medium instances with SQL 2017, (not SQL 2019) setting SQL 2017')
             console.log('https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_SQLServer.html#SQLServer.Concepts.General.VersionSupport')
           }
-  
+
           var rdsParams = {
             DefaultOnly: true,
             Engine: DBEngineType,
             Filters: [
               {
-                Name: 'engine-version', 
+                Name: 'engine-version',
                 Values: [
                   '14.00'
                 ]
@@ -433,230 +388,231 @@ async function getvalidmssqlconfig (rds, DBInstanceClass, DBEngineType) {
             DefaultOnly: true,
             Engine: DBEngineType
           }
-          
+
           break
-    }
-    break
+      }
+      break
     case (DBEngineType.match(/sqlserver-se|sqlserver-ee/ || {})).input:
 
       switch (DBInstanceClass) {
         case (DBInstanceClass.match(/db.t2.*/) || DBInstanceClass.match(/db.t3.micro|db.t3.small|db.t3.medium|db.t3.large/)).input:
           console.log('instance size less than t3.xlarge is not supported by this edition, upgrading to t3.xlarge')
           console.log('https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_SQLServer.html#SQLServer.Concepts.General.VersionSupport')
-          
-          DBInstanceClass="t3.xlarge"
+
+          DBInstanceClass = 't3.xlarge'
 
           var rdsParams = {
             DefaultOnly: true,
             Engine: DBEngineType
           }
 
-        break
+          break
       }
       break
   }
 
-  var engineversions = await DescribeDBEngineVersions(rds,rdsParams)
+  const command = new DescribeDBEngineVersionsCommand(rdsParams)
+  var engineversions = await rdsclient.send(command)
   var latestengineversion = engineversions.DBEngineVersions[0].EngineVersion
   console.log(latestengineversion)
-  
+
   var conf = {
-    "EngineVersion": latestengineversion,
-    "DBInstanceClass": DBInstanceClass,
+    EngineVersion: latestengineversion,
+    DBInstanceClass
   }
 
   return conf
 }
 
-async function verifydeploymentconfigavailability (rds, event, DBdeploymentMethod, DBEngineType, DBInstanceClass, DBPrincipalProperty) {
+async function verifydeploymentconfigavailability (rdsclient, event, DBdeploymentMethod, DBEngineType, DBInstanceClass, DBPrincipalProperty) {
+  var validconfig = false
 
-  var validconfig=false
-  
-  do{
-  
-    //trying to get regular config
-    if (DBdeploymentMethod === "Serverless" && DBEngineType === "mysql"){
-      var DBEngineType = "aurora-mysql"
-      
+  do {
+    // trying to get regular config
+    if (DBdeploymentMethod === 'Serverless' && DBEngineType === 'mysql') {
+      var DBEngineType = 'aurora-mysql'
+
       var rdsParams = {
-        DefaultOnly: true, //true || false
+        DefaultOnly: true, // true || false
         Engine: DBEngineType,
-        IncludeAll: false, //true || false,
+        IncludeAll: false, // true || false,
         Filters: [
           {
-            Name: 'engine-version', /* required engine-version '8.0.mysql_aurora.3.02.2' n*/ 
+            Name: 'engine-version', /* required engine-version '8.0.mysql_aurora.3.02.2' n */
             Values: [ /* required */
               '8.0'
             ]
           }
         ]
       }
-      
-      var latestengineversion = await DescribeDBEngineVersions(rds, rdsParams)
-      latestengineversion=latestengineversion.DBEngineVersions[0].EngineVersion
+
+      const command = new DescribeDBEngineVersionsCommand(rdsParams)
+      var latestengineversion = await rdsclient.send(command)
+      latestengineversion = latestengineversion.DBEngineVersions[0].EngineVersion
       console.log('Latest version: ' + latestengineversion)
 
       var rdsInstanceParams = {
-        Engine: DBEngineType,      
-        EngineVersion: latestengineversion,
-        DBInstanceClass: "db.serverless"
-      };
-      var instances = await DescribeOrderableDBInstanceOptions(rds, rdsInstanceParams)
-      
-      if (latestengineversion.length > 0 && instances.OrderableDBInstanceOptions.length > 0){
-        validconfig=true
-      }
-      
-    }
-    else if (DBdeploymentMethod === "Serverless" && DBEngineType === "postgres"){
-      var DBEngineType = "aurora-postgresql"
-      var rdsParams = {
-        DefaultOnly: true, //true || false
         Engine: DBEngineType,
-        IncludeAll: false //true || false,
+        EngineVersion: latestengineversion,
+        DBInstanceClass: 'db.serverless'
       }
-      var latestengineversion = await DescribeDBEngineVersions(rds, rdsParams)
-      latestengineversion=latestengineversion.DBEngineVersions[0].EngineVersion
+
+      const DescribeOrderableDBInstanceOptions = new DescribeOrderableDBInstanceOptionsCommand(rdsInstanceParams)
+      var instances = await rdsclient.send(DescribeOrderableDBInstanceOptions)
+
+      if (latestengineversion.length > 0 && instances.OrderableDBInstanceOptions.length > 0) {
+        validconfig = true
+      }
+    }
+    else if (DBdeploymentMethod === 'Serverless' && DBEngineType === 'postgres') {
+      var DBEngineType = 'aurora-postgresql'
+      var rdsParams = {
+        DefaultOnly: true, // true || false
+        Engine: DBEngineType,
+        IncludeAll: false // true || false,
+      }
+
+      const command = new DescribeDBEngineVersionsCommand(rdsParams)
+      var latestengineversion = await rdsclient.send(command)
+      latestengineversion = latestengineversion.DBEngineVersions[0].EngineVersion
       console.log('Latest version: ' + latestengineversion)
 
       var rdsInstanceParams = {
-        Engine: DBEngineType,      
+        Engine: DBEngineType,
         EngineVersion: latestengineversion,
-        DBInstanceClass: "db.serverless"
-      };
-      var instances = await DescribeOrderableDBInstanceOptions(rds, rdsInstanceParams)
-      
-      if (latestengineversion.length > 0 && instances.OrderableDBInstanceOptions.length > 0){
-        validconfig=true
+        DBInstanceClass: 'db.serverless'
       }
 
-    }
-    else if (DBdeploymentMethod === "Server" && DBEngineType === 'postgres'){
+      const DescribeOrderableDBInstanceOptions = new DescribeOrderableDBInstanceOptionsCommand(rdsInstanceParams)
+      var instances = await rdsclient.send(DescribeOrderableDBInstanceOptions)
 
+      if (latestengineversion.length > 0 && instances.OrderableDBInstanceOptions.length > 0) {
+        validconfig = true
+      }
+    }
+    else if (DBdeploymentMethod === 'Server' && DBEngineType === 'postgres') {
       var rdsParams = {
         DefaultOnly: true, // || false
         Engine: event.templateParameterValues.DBEngineType
       }
 
-      if (DBInstanceClass.match('db.t2..*') !== null){
+      if (DBInstanceClass.match('db.t2..*') !== null) {
         // check if parameters match if so change engine type to postgres 12.X as db.t2.XXX is not supported on postgres 13.X and newer
-        rdsParams['EngineVersion']='12'
+        rdsParams.EngineVersion = '12'
       }
-      var latestengineversion = await DescribeDBEngineVersions(rds, rdsParams)
-      //var latestengineversion = result.DBEngineVersions.map(dbe => dbe.EngineVersion)[0]
-      latestengineversion=latestengineversion.DBEngineVersions[0].EngineVersion
+
+      const command = new DescribeDBEngineVersionsCommand(rdsParams)
+      var latestengineversion = await rdsclient.send(command)
+      // var latestengineversion = result.DBEngineVersions.map(dbe => dbe.EngineVersion)[0]
+      latestengineversion = latestengineversion.DBEngineVersions[0].EngineVersion
       console.log('Latest version: ' + latestengineversion)
-      if (latestengineversion.length > 0){
-        validconfig=true
+      if (latestengineversion.length > 0) {
+        validconfig = true
       }
-
     }
-    else if (DBdeploymentMethod === "Server" && DBEngineType.match('sqlserver-')){
+    else if (DBdeploymentMethod === 'Server' && DBEngineType.match('sqlserver-')) {
+      // https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_SQLServer.html#SQLServer.Concepts.General.VersionSupport
+      var supportedconfig = await getvalidmssqlconfig(rdsclient, DBInstanceClass, DBEngineType)
 
-        // https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_SQLServer.html#SQLServer.Concepts.General.VersionSupport
-        var supportedconfig = await getvalidmssqlconfig(rds, DBInstanceClass, DBEngineType)
+      var latestengineversion = supportedconfig.EngineVersion
+      var DBInstanceClass = supportedconfig.DBInstanceClass
 
-        var latestengineversion = supportedconfig.EngineVersion
-        var DBInstanceClass = supportedconfig.DBInstanceClass
-
-        if (latestengineversion.length > 0){
-          validconfig=true
-        }
+      if (latestengineversion.length > 0) {
+        validconfig = true
+      }
     }
-    else if (DBdeploymentMethod === "Server" && DBEngineType === 'mysql'){
-      
+    else if (DBdeploymentMethod === 'Server' && DBEngineType === 'mysql') {
       var rdsParams = {
         DefaultOnly: true, // || false
         Engine: event.templateParameterValues.DBEngineType
       }
 
-      var latestengineversion = await DescribeDBEngineVersions(rds, rdsParams)
-      latestengineversion=latestengineversion.DBEngineVersions[0].EngineVersion
+      const command = new DescribeDBEngineVersionsCommand(rdsParams)
+      var latestengineversion = await rdsclient.send(command)
+
+      latestengineversion = latestengineversion.DBEngineVersions[0].EngineVersion
       console.log('Latest version: ' + latestengineversion)
-      if (latestengineversion.length > 0){
-        validconfig=true
+      if (latestengineversion.length > 0) {
+        validconfig = true
       }
-
     }
-    else{
-      console.log("unhandled case unsupported/incorrect parameters")
+    else {
+      console.log('unhandled case unsupported/incorrect parameters')
     }
 
-    //if getting config fails, no enginetype/deployment method combo exists
-    if (validconfig === false){
-      // The requested deployment method engine type combination was not available so modifying input parameters according to DB principal property. 
+    // if getting config fails, no enginetype/deployment method combo exists
+    if (validconfig === false) {
+      // The requested deployment method engine type combination was not available so modifying input parameters according to DB principal property.
       switch (DBPrincipalProperty) {
         case 'EngineType':
-          //if engine type is the most important (and requested deployment method was not available) than we need to change deployment method
-          if( DBdeploymentMethod === "Serverless"){
-            DBdeploymentMethod = "Server"
+          // if engine type is the most important (and requested deployment method was not available) than we need to change deployment method
+          if (DBdeploymentMethod === 'Serverless') {
+            DBdeploymentMethod = 'Server'
           }
-          else if(DBdeploymentMethod === "Server"){
-            DBdeploymentMethod = "Serverless"
+          else if (DBdeploymentMethod === 'Server') {
+            DBdeploymentMethod = 'Serverless'
           }
           break
 
         case 'DeploymentMethod':
-          //if deploymentmethod is the most important (and requested engine type was not available) than we need to change engine type
-          
-          if( DBEngineType === "aurora-mysql"){
-            //Validating the available instance types, aurora-mysql was not available so checking aurora-postgresql.
-         
-            DBEngineType = "aurora-postgresql"
+          // if deploymentmethod is the most important (and requested engine type was not available) than we need to change engine type
+
+          if (DBEngineType === 'aurora-mysql') {
+            // Validating the available instance types, aurora-mysql was not available so checking aurora-postgresql.
+
+            DBEngineType = 'aurora-postgresql'
             var rdsInstanceParams = {
-              Engine: DBEngineType,      
-              DBInstanceClass: "db.serverless"
-            };
-            var instances = await DescribeOrderableDBInstanceOptions(rds, rdsInstanceParams)
-            
-            // if Serverless instances are not available at all change deployment method and to server irrespective of client selecting prefering serverless.
-            if  (instances.OrderableDBInstanceOptions.length === 0 ){
-              DBEngineType="mysql"
-              DBdeploymentMethod="Server"
-              DBInstanceClass="t3.medium"
+              Engine: DBEngineType,
+              DBInstanceClass: 'db.serverless'
             }
 
-          }
-          else if(DBEngineType === "aurora-postgresql"){
-            //Validating the available instance types, aurora-postgresql was not available so checking aurora-mysql.
-            DBEngineType = "aurora-mysql"
-            var rdsInstanceParams = {
-              Engine: DBEngineType,      
-              DBInstanceClass: "db.serverless"
-            };
-            var instances = await DescribeOrderableDBInstanceOptions(rds, rdsInstanceParams)
-            
+            const DescribeOrderableDBInstanceOptions = new DescribeOrderableDBInstanceOptionsCommand(rdsInstanceParams)
+            var instances = await rdsclient.send(DescribeOrderableDBInstanceOptions)
             // if Serverless instances are not available at all change deployment method and to server irrespective of client selecting prefering serverless.
-            if  (instances.OrderableDBInstanceOptions.length === 0 ){
-              DBEngineType="postgres"
-              DBdeploymentMethod="Server"
-              DBInstanceClass="t3.medium"
+            if (instances.OrderableDBInstanceOptions.length === 0) {
+              DBEngineType = 'mysql'
+              DBdeploymentMethod = 'Server'
+              DBInstanceClass = 't3.medium'
+            }
+          }
+          else if (DBEngineType === 'aurora-postgresql') {
+            // Validating the available instance types, aurora-postgresql was not available so checking aurora-mysql.
+            DBEngineType = 'aurora-mysql'
+            var rdsInstanceParams = {
+              Engine: DBEngineType,
+              DBInstanceClass: 'db.serverless'
             }
 
+            const DescribeOrderableDBInstanceOptions = new DescribeOrderableDBInstanceOptionsCommand(rdsInstanceParams)
+            var instances = await rdsclient.send(DescribeOrderableDBInstanceOptions)
+
+            // if Serverless instances are not available at all change deployment method and to server irrespective of client selecting prefering serverless.
+            if (instances.OrderableDBInstanceOptions.length === 0) {
+              DBEngineType = 'postgres'
+              DBdeploymentMethod = 'Server'
+              DBInstanceClass = 't3.medium'
+            }
           }
-          else if(DBEngineType.match('sqlserver-')){
-            DBEngineType = "postgres"
+          else if (DBEngineType.match('sqlserver-')) {
+            DBEngineType = 'postgres'
           }
           break
       }
-
-
     }
+  } while (validconfig === false)
 
-  }while (validconfig === false) 
-
-  var config={
-   "EngineVersion": latestengineversion,   //
-   "DBEngineType": DBEngineType,          //
-   "DBInstanceClass": DBInstanceClass,    //
-   "DBdeploymentMethod": DBdeploymentMethod //
+  var config = {
+    EngineVersion: latestengineversion, //
+    DBEngineType, //
+    DBInstanceClass, //
+    DBdeploymentMethod //
   }
 
   return config
 }
 
-function mergedbproperties(event,dbconfig){
-  //set DB configuration to equal generated values also set cloudformation database type condition to appopiate DB type
+function mergedbproperties (event, dbconfig) {
+  // set DB configuration to equal generated values also set cloudformation database type condition to appopiate DB type
 
   var EngineVerProperty = {
     EngineVersion: dbconfig.EngineVersion
@@ -666,18 +622,18 @@ function mergedbproperties(event,dbconfig){
     Engine: dbconfig.DBEngineType
   }
 
-  if (dbconfig.DBdeploymentMethod === "Server"){
+  if (dbconfig.DBdeploymentMethod === 'Server') {
     _.merge(event.fragment.Resources.LogverzDB.Properties, EngineVerProperty)
     _.merge(event.fragment.Resources.LogverzDB.Properties, EngineTypeProperty)
-    event.fragment.Mappings.DeploymentType.Serverless.Value = "false"
-    event.fragment.Mappings.DeploymentType.Server.Value = "true" 
+    event.fragment.Mappings.DeploymentType.Serverless.Value = 'false'
+    event.fragment.Mappings.DeploymentType.Server.Value = 'true'
   }
-  else if (dbconfig.DBdeploymentMethod === "Serverless"){
+  else if (dbconfig.DBdeploymentMethod === 'Serverless') {
     _.merge(event.fragment.Resources.LogverzDBServerless.Properties, EngineVerProperty)
     _.merge(event.fragment.Resources.LogverzDBServerless.Properties, EngineTypeProperty)
-    event.fragment.Resources.LogverzDBServerlessInstance.Properties.Engine=dbconfig.DBEngineType
-    event.fragment.Mappings.DeploymentType.Serverless.Value = "true"
-    event.fragment.Mappings.DeploymentType.Server.Value = "false" 
+    event.fragment.Resources.LogverzDBServerlessInstance.Properties.Engine = dbconfig.DBEngineType
+    event.fragment.Mappings.DeploymentType.Serverless.Value = 'true'
+    event.fragment.Mappings.DeploymentType.Server.Value = 'false'
   }
 
   event.templateParameterValues.DBInstanceClass = dbconfig.DBInstanceClass
@@ -685,73 +641,41 @@ function mergedbproperties(event,dbconfig){
   return event
 }
 
-async function getspecifickeyalias(kms){
-
-  var filterconfig={
-    "keys":[
-      //"alias/aws/acm",
-      "alias/aws/ssm"
-    ]
-  }
-  var specifickmskeyalias = []
-  var NextMarker
-
-  do {
-    var kmskeyaliasespartial = await getkmskeyaliasbatch(kms, NextMarker)
-    
-    kmskeyaliasespartial.Aliases.filter (a => {
-      
-      if (filterconfig.keys.includes(a.AliasName)){
-        specifickmskeyalias.push(a)
-        
-        if (specifickmskeyalias.length === filterconfig.keys.length) {
-          //removing NextMarker property, finishing cycle
-          Reflect.deleteProperty(kmskeyaliasespartial, "NextMarker")
-        }
-
-      }
-    })
-
-    if (kmskeyaliasespartial.NextMarker !== undefined) {
-      NextMarker = kmskeyaliasespartial.NextMarker
-    }
-
-  } while (kmskeyaliasespartial.NextMarker !== undefined)
-
-  //console.log(specifickmskeyalias.length)
-  return  specifickmskeyalias
-
-}
-
-async function getkmskeyaliasbatch (kms, NextMarker) {
-
-  if (NextMarker) {
-    var params = {
-      "Marker": NextMarker
-      //,Limit: 4
-    }
-  }
-  else {
-    var params = {
-      //Limit: 4
-    }
+async function getspecifickeyalias () {
+  const paginatorConfig = {
+    client: new KMSClient({}),
+    pageSize: 100
   }
 
-  return new Promise(function (resolve, reject) {
-    kms.listAliases(params, function (err, data) {
-      if (err) {
-        console.log(err, err.stack)
-        reject(err)
-        // an error occurred
-      } else resolve(data) // successful response
-    })
-  })
+  const paginator = paginateListAliases(paginatorConfig, {})
+  const KMSkeylistArray = []
+  for await (const onebatch of paginator) {
+    KMSkeylistArray.push(...onebatch.Aliases)
+  }
+
+  var specifickmskeyalias = KMSkeylistArray.filter(a => a.AliasName === 'alias/aws/ssm')[0]
+
+  return specifickmskeyalias
 }
 
 function customizer (objValue, srcValue) {
   if (_.isArray(objValue)) {
     return objValue.concat(srcValue)
   }
+}
+
+async function GetConfiguration (directory, value) {
+  // Kudos: https://stackoverflow.com/questions/71432755/how-to-use-dynamic-import-from-a-dependency-in-node-js
+  const moduleText = fs.readFileSync(fileURLToPath(directory), 'utf-8').toString()
+  const moduleBase64 = Buffer.from(moduleText).toString('base64')
+  const moduleDataURL = `data:text/javascript;base64,${moduleBase64}`
+  if (value !== '*') {
+    var data = (await import(moduleDataURL))[value]
+  }
+  else {
+    var data = (await import(moduleDataURL))
+  }
+  return data
 }
 
 // update one value
