@@ -218,7 +218,7 @@ async function GetFile (url, cookie) {
     console.error(message)
     // TODO add error to Dynamo DB.
     response.message = message
-    response.status = err.code
+    response.status = err.Code
   }
 
   return response
@@ -276,7 +276,7 @@ async function S3Process (s3client, GetObjectCommand, event, commonshared, Provi
   }
 
   var content = await commonshared.S3GET(s3client, GetObjectCommand, requestbucket, requestedfile)
-  if (content.code === 'NoSuchKey') {
+  if (content.Code === 'NoSuchKey') {
     var response = {
       statusCode: 404,
       headers: {

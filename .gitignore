@@ -104,3 +104,4 @@ scratch
 sources/webrtcproxy/landingpage/bundle.js
 sources/webrtcproxy/gotable.exe
 /infrastructure/public.key
+.VSCodeCounter

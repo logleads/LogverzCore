@@ -50,11 +50,11 @@
 						"Image": "aws/codebuild/standard:7.0",
 						"EnvironmentVariables": [
 							{
-							  "Name": "MaximumCacheTime",
-							  "Type": "PLAINTEXT",
-							  "Value": { "Ref" : "MaximumCacheTime" }
+								"Name": "MaximumCacheTime",
+								"Type": "PLAINTEXT",
+								"Value": { "Ref" : "MaximumCacheTime" }
 							}
-						  ]
+						]
 					},
 					"Source": {
 						"Type": "S3",
@@ -264,6 +264,7 @@
 							"s3:GetObject",
 							"s3:GetObjectVersion",
 							"s3:ListBucket",
+							"s3:GetBucketLocation",
 							"cloudwatch:GetMetricData",
 							"servicequotas:GetServiceQuota"
 						],
@@ -290,8 +291,7 @@
 							"s3:GetObject",
 							"s3:GetObjectVersion",
 							"s3:List*",
-							"s3:CreateBucket",
-							"s3:GetBucketLocation"
+							"s3:CreateBucket"							
 						],
 						"Effect": "Allow",
 						"Resource": [
@@ -1064,7 +1064,7 @@
 			"Properties": {
 				"Name": "/Logverz/Engine/Schemas/CloudTrail",
 				"Type": "String",
-				"Value": "{\n\"Schema\":[\n\"'eventVersion':{type: Sequelize.STRING},\",\n\"'userIdentity':{type: Sequelize.JSON},\",\n\"'eventTime':{type: Sequelize.DATE},\",\n\"'eventSource':{type: Sequelize.STRING},\",\n\"'eventName':{type: Sequelize.STRING},\",\n\"'awsRegion':{type: Sequelize.STRING},\",\n\"'sourceIPAddress':{type: Sequelize.STRING},\",\n\"'userAgent':{type: Sequelize.STRING},\",\n\"'errorCode':{type: Sequelize.STRING},\",\n\"'errorMessage':{type: Sequelize.STRING(8192)},\",\n\"'requestParameters':{type: Sequelize.JSON},\",\n\"'responseElements':{type: Sequelize.JSON},\",\n\"'additionalEventData':{type: Sequelize.JSON},\",\n\"'requestID':{type: Sequelize.STRING},\",\n\"'eventID':{type: Sequelize.STRING},\",\n\"'eventType':{type: Sequelize.STRING},\",\n\"'recipientAccountId':{type: Sequelize.STRING},\",\n\"'vpcEndpointId':{type: Sequelize.STRING},\",\n\"'serviceEventDetails': {type: Sequelize.STRING},\",\n\"'readOnly':{type: Sequelize.STRING},\",\n\"'resources': {type: Sequelize.JSON}\"],\n\"S3SelectParameters\":{\n  \"IO\":{\n    \"InputSerialization\":{\n      \"Compression\":\"GZIP\",\n      \"JsonType\":\"LINES\",\n      \"RootElement\":\"Records\"\n    }\n  },\n  \"Cast\":{\n      \"eventTime\": {\n        \"format\": \"TBD\",\n        \"postfix\": \"Z\"\n      }\n    }\n},\n\"Views\": [{\n  \"Default\":[\n    \"eventTime\",\n    \"sourceIPAddress\",\n    \"eventName\",\n    \"errorCode\"\n]},{\n  \"Origin\":[\n    \"eventTime\",\n    \"eventSource\",\n    \"userAgent\",\n    \"eventName\",\n    \"errorMessage\"\n]}],\n\"Indexes\": [],\n\"TransForms\": []\n}",
+				"Value": "{\n\"Schema\":[\n\"'eventVersion':{type: Sequelize.STRING},\",\n\"'userIdentity':{type: Sequelize.JSON},\",\n\"'eventTime':{type: Sequelize.DATE},\",\n\"'eventSource':{type: Sequelize.STRING},\",\n\"'eventName':{type: Sequelize.STRING},\",\n\"'awsRegion':{type: Sequelize.STRING},\",\n\"'sourceIPAddress':{type: Sequelize.STRING},\",\n\"'userAgent':{type: Sequelize.STRING(512)},\",\n\"'errorCode':{type: Sequelize.STRING},\",\n\"'errorMessage':{type: Sequelize.STRING(8192)},\",\n\"'requestParameters':{type: Sequelize.JSON},\",\n\"'responseElements':{type: Sequelize.JSON},\",\n\"'additionalEventData':{type: Sequelize.JSON},\",\n\"'requestID':{type: Sequelize.STRING},\",\n\"'eventID':{type: Sequelize.STRING},\",\n\"'eventType':{type: Sequelize.STRING},\",\n\"'recipientAccountId':{type: Sequelize.STRING},\",\n\"'vpcEndpointId':{type: Sequelize.STRING},\",\n\"'serviceEventDetails': {type: Sequelize.JSON},\",\n\"'readOnly':{type: Sequelize.STRING},\",\n\"'resources': {type: Sequelize.JSON}\"],\n\"S3SelectParameters\":{\n  \"IO\":{\n    \"InputSerialization\":{\n      \"Compression\":\"GZIP\",\n      \"JsonType\":\"LINES\",\n      \"RootElement\":\"Records\"\n    }\n  },\n  \"Cast\":{\n      \"eventTime\": {\n        \"format\": \"TBD\",\n        \"postfix\": \"Z\"\n      }\n    }\n},\n\"Views\": [{\n  \"Default\":[\n    \"eventTime\",\n    \"sourceIPAddress\",\n    \"eventName\",\n    \"errorCode\"\n]},{\n  \"Origin\":[\n    \"eventTime\",\n    \"eventSource\",\n    \"userAgent\",\n    \"eventName\",\n    \"errorMessage\"\n]}],\n\"Indexes\": [],\n\"TransForms\": []\n}",
 				"Description": "Logverz CloudTrail DataSource Schema definition."
 			}
 		},

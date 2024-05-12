@@ -442,24 +442,6 @@ const S3GET = async (s3client, GetObjectCommand, requestbucket, requestedfile) =
   // PS: API GW has a 10MB limit for payload.
 }
 
-const S3PUT = async (s3, destinationbucket, destinationkey, data) => {
-  var putparams = {
-    Body: data,
-    Bucket: destinationbucket,
-    Key: destinationkey
-  }
-
-  try {
-    var data = await s3.putObject(putparams).promise()
-  }
-  catch (e) {
-    var data = e
-  }
-  return data
-
-  // s3.upload... in s3copytet.js
-}
-
 const s3putdependencies = async (LocalPath, DstBucket, s3client, PutObjectCommand, fs, fileURLToPath, FileName) => {
   var content = fs.readFileSync(fileURLToPath(LocalPath))
 
@@ -669,23 +651,24 @@ const getbuildstatus = async (cbclient, BatchGetBuildsCommand, buildid) => {
   return buildresult
 }
 
-const walkfolders = async (_, s3client, ListObjectsV2Command, ddclient, PutItemCommand, commonshared, tobeprocessed, subfolderlist, getCommonPrefixes, callerid) => {
+const walkfolders = async (_, ListObjectsV2Command, ddclient, PutItemCommand, commonshared, tobeprocessed, subfolderlist, getCommonPrefixes, callerid,jobid) => {
   for (const item of tobeprocessed) {
     var folder = item[0]
     var bucket = item[1]
     var delimiter = item[2]
     var maxdepth = item[3]
+    var region= item[4]
     var currentdepth = folder.split('/').length - 1
     // dontgo deeper than maxdepth
     if (currentdepth === maxdepth) {
       // subfolderlist.push(item)
       delimiter = '*'
-      subfolderlist.push([folder, bucket, delimiter, maxdepth])
+      subfolderlist.push([folder, bucket, delimiter, maxdepth, region])
       _.pull(tobeprocessed, item)
       continue
     }
 
-    const subfolder = await getCommonPrefixes(callerid, ddclient, PutItemCommand, commonshared, s3client, ListObjectsV2Command, {
+    const subfolder = await getCommonPrefixes(currentdepth, region, jobid, callerid, ddclient, PutItemCommand, commonshared, ListObjectsV2Command, {
       Bucket: bucket,
       Prefix: folder,
       Delimiter: delimiter
@@ -699,15 +682,16 @@ const walkfolders = async (_, s3client, ListObjectsV2Command, ddclient, PutItemC
         _.pull(tobeprocessed, object)
       }
       else {
-        tobeprocessed.push([prfx, bucket, '/', maxdepth]) // delim
+        tobeprocessed.push([prfx, bucket, '/', maxdepth, region]) // delim
       }
     })
     _.pull(tobeprocessed, item)
   } // for
 }
 
-const TransformInputValues = (S3Folders, S3EnumerationDepth, _) => {
+const TransformInputValues = async (s3client, GetBucketLocationCommand, S3Folders, S3EnumerationDepth, _) => {
   var Patharray = []
+  var extendedpatharray=[]
   var delimiter = '/'
 
   if (S3Folders.includes(';')) {
@@ -729,7 +713,14 @@ const TransformInputValues = (S3Folders, S3EnumerationDepth, _) => {
     var maxdepth = parseInt(S3EnumerationDepth) + currentdepth
     Patharray.push([prefix, bucket, delimiter, maxdepth])
   }
-  return Patharray
+
+  for await (const onepath of Patharray) {
+    const bucketLocationcommand = new GetBucketLocationCommand({"Bucket": onepath[1]})
+    let result= await s3client.send(bucketLocationcommand)
+    extendedpatharray.push([onepath[0],onepath[1],onepath[2],onepath[3],result.LocationConstraint])
+  }
+
+  return extendedpatharray
 }
 
 const ASGstatus = async (AutoScalingClient, paginateDescribeAutoScalingGroups, AutoScalingGroupNames) => {
@@ -883,7 +874,7 @@ const maskcredentials = (mevent) => {
 export {
   getssmparameter, setssmparameter, receiveSQSMessage, makeid, timeConverter, AddDDBEntry, SelectDBfromRegistry, 
   DBpropertylookup, ValidateToken, apigatewayresponse, newcfnresponse, getquerystringparameter,
-  eventpropertylookup, propertyvaluelookup, getcookies, S3GET, S3PUT, s3putdependencies, emptybucket,
+  eventpropertylookup, propertyvaluelookup, getcookies, S3GET, s3putdependencies, emptybucket,
   GroupAsgInstances, GetEC2InstancesMetrics, GetRDSInstancesMetrics, CreatePeriod, average, getbuildstatus,
   walkfolders, TransformInputValues, ASGstatus, deactivatequery, masktoken, maskcredentials
 }

@@ -1,3 +1,4 @@
+/* eslint-disable array-callback-return */
 /* eslint-disable no-redeclare */
 /* eslint-disable no-var */
 /* eslint brace-style: ["error", "stroustrup"] */
@@ -15,7 +16,7 @@ const allowdenyaction = (_, statements, userrequest) => {
       denystatments.push(denystatement)
     }
   })
-  
+
   const matchingdenyaction = getmatchingaction(_, denystatments, userrequest)
 
   if (matchingdenyaction.length !== 0) {
@@ -23,7 +24,7 @@ const allowdenyaction = (_, statements, userrequest) => {
       status: 'Deny',
       Reason: matchingdenyaction
     }
-  } 
+  }
   else {
     // there where no matching denies, first check if there is allow action
     const matchingallowaction = getmatchingaction(_, statements, userrequest)
@@ -268,7 +269,6 @@ function checkmatch (action, one, sid, PolicyName, requestedservice, requestedac
 }
 
 const getidentityattributes = async (docClient, QueryCommand, identityname, identitytype) => {
-
   if ((identityname === 'root') && (identitytype === 'UserAWS')) {
     var data = {}
     data.Count = 1
@@ -295,8 +295,8 @@ const getidentityattributes = async (docClient, QueryCommand, identityname, iden
         ':type': identitytype
       }
     }
-    const command = new QueryCommand(params);
-    //var data = (await docClient.send(command)).Items[0];
+    const command = new QueryCommand(params)
+    // var data = (await docClient.send(command)).Items[0];
     var data = await docClient.send(command)
 
     if (data.Count === 0) {
@@ -430,7 +430,7 @@ const UptadeAssociatedUserPolicy = async (_, docClient, QueryCommand, PutCommand
 
     const command = new QueryCommand(originalparams)
     var userproperties = await docClient.send(command)
-    
+
     console.log('User properties befor change:\n' + JSON.stringify(userproperties))
     const removeitemslist = _.compact(_.map(updateidentities, (u) => {
       if (u.Name === username & u.Operator !== '+') {
@@ -579,7 +579,6 @@ const authorizeS3access = (_, commonshared, userattributes, S3Foldersarray) => {
 }
 
 const retrieveresourcepolicy = async (docClient, QueryCommand, clientrequest, mode) => {
-
   if (clientrequest.TableName !== undefined && clientrequest.DatabaseName !== undefined) { // && clientrequest.DataType!==null
     var params = {
       TableName: 'Logverz-Queries',
@@ -610,8 +609,8 @@ const retrieveresourcepolicy = async (docClient, QueryCommand, clientrequest, mo
       }
     }
   }
-  else{
-    console.error("parameters missing in the client request")
+  else {
+    console.error('parameters missing in the client request')
   }
 
   const command = new QueryCommand(params)
@@ -833,7 +832,6 @@ const getresourcepolicy = async (docClient, QueryCommand, queries, clientrequest
 }
 
 const setIAMresource = (apicall, parameters, region, accountnumber) => {
-  
   if (apicall.match('ListBucket')) {
     var resource = 'arn:aws:s3:::' + JSON.parse(parameters).Path.replace('s3://', '')
   }
@@ -851,7 +849,7 @@ const setIAMresource = (apicall, parameters, region, accountnumber) => {
     var resource = `arn:aws:rds:${region}:${accountnumber}:db:` + ssmparameter
   }
   else if (apicall.match('StartDBCluster') || apicall.match('StopDBCluster')) {
-    //arn:aws:rds:ap-southeast-2:accountnumber:cluster:logverz-serverlessdb
+    // arn:aws:rds:ap-southeast-2:accountnumber:cluster:logverz-serverlessdb
     var ssmparameter = (JSON.parse(parameters)).DBClusterIdentifier
     var resource = `arn:aws:rds:${region}:${accountnumber}:cluster:` + ssmparameter
   }
@@ -867,15 +865,14 @@ const setIAMresource = (apicall, parameters, region, accountnumber) => {
   return resource
 }
 
-export { 
+export {
   getidentityattributes, authorize, AssociateUserPolicies, UptadeAssociatedUserPolicy, getuserstatements, allowdenyaction,
   retriveIAMidentities, retrieveresourcepolicy, authorizeS3access, resourceaccessauthorization, admincheck, powerusercheck,
   usercheck, setIAMresource
 }
 
-
-// export { 
+// export {
 //   getidentityattributes
 // }
-  // refactor httprelay to remove getuserstatements
- // refactor httprelay to remove allowdenyaction
+// refactor httprelay to remove getuserstatements
+// refactor httprelay to remove allowdenyaction

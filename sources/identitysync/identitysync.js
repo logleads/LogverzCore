@@ -1,26 +1,36 @@
+/* eslint-disable array-callback-return */
 /* eslint-disable no-redeclare */
 /* eslint-disable no-var */
-var AWS = require('aws-sdk')
-const fs = require('fs')
-const path = require('path')
-var _ = require('lodash')
-// var jsonDiff = require('json-diff');
-var iam = new AWS.IAM({
-  apiVersion: '2010-05-08'
-})
-const s3 = new AWS.S3()
+/* eslint brace-style: ["error", "stroustrup"] */
+import { fileURLToPath } from 'url'
+import path from 'path'
+import fs from 'fs'
+import _ from 'lodash'
+import jwt from 'jsonwebtoken'
+import loki from 'lokijs'
+
+import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb'
+import { DynamoDBDocumentClient, QueryCommand, DeleteCommand, PutCommand } from '@aws-sdk/lib-dynamodb'
+import { IAMClient, paginateGetAccountAuthorizationDetails } from '@aws-sdk/client-iam'
+import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 var TableName = 'Logverz-Identities'
 var updateidentities = []
 var filename = 'AccountAuthorizationDetails.json'
 var currentfilename = filename.replace('.json', 'Current.json')
-var jwt = require('jsonwebtoken')
-var db = require('./db').db
-var MaximumCacheTime=process.env.MaximumCacheTime
+
+var MaximumCacheTime = process.env.MaximumCacheTime
+if (typeof db === 'undefined') {
+  // the variable is defined
+  var db = new loki('db.json', {
+    autoupdate: true
+  })
+}
 
 if (db.collections.length === 0) {
-
-  if (MaximumCacheTime === undefined){
-    MaximumCacheTime =1
+  if (MaximumCacheTime === undefined) {
+    MaximumCacheTime = 1
   }
 
   var identity = db.addCollection('Logverz-Identities', {
@@ -28,15 +38,17 @@ if (db.collections.length === 0) {
   })
 }
 
-module.exports.handler = async function (event, context) {
+export const handler = async (event, context) => {
   if (process.env.Environment !== 'LocalDev') {
     // Prod lambda function settings
     var arnList = (context.invokedFunctionArn).split(':')
     var region = arnList[3]
-    var commonshared = require('./shared/commonshared')
-    var authenticationshared = require('./shared/authenticationshared')
+    var commonsharedpath = ('file:///' + path.join(__dirname, './shared/commonsharedv3.js').replace(/\\/g, '/'))
+    var commonshared = await GetConfiguration(commonsharedpath, '*')
+    var authenticationsharedpath = ('file:///' + path.join(__dirname, './shared/authenticationsharedv3.js').replace(/\\/g, '/'))
+    var authenticationshared = await GetConfiguration(authenticationsharedpath, '*')
     var bucketname = process.env.InitBucket
-    var currentDB = `/tmp/${currentfilename}`
+    var currentDB = `file:///tmp/${currentfilename}`
     var cert = process.env.PublicKey
     // var invokedFunctionArn=context.invokedFunctionArn;
     var RestApiId = process.env.RestApiId
@@ -45,15 +57,17 @@ module.exports.handler = async function (event, context) {
     var maskedevent = commonshared.masktoken(JSON.parse(JSON.stringify(event)))
     console.log('REQUEST RECEIVED: \n' + JSON.stringify(context) + '\n\n')
     console.log('THE EVENT: \n' + JSON.stringify(maskedevent) + '\n\n')
-  } else {
+  }
+  else {
     // Dev environment settings
-    const mydev = require(path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'identitysync', 'mydev.js'))
+    var directory = path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'identitysync', 'mydev.mjs')
+    const mydev = await import('file:///' + directory.replace(/\\/g, '/'))
     var region = mydev.region
     var commonshared = mydev.commonshared
     var authenticationshared = mydev.authenticationshared
     var event = mydev.event
     var bucketname = mydev.bucketname
-    var currentDB = path.join(__dirname, currentfilename)
+    var currentDB = 'file:///' + path.join(__dirname, currentfilename)
     var cert = mydev.cert
     var context = mydev.context
     var RestApiId = mydev.RestApiId
@@ -61,19 +75,17 @@ module.exports.handler = async function (event, context) {
     var AllowedOrigins = mydev.AllowedOrigins
   }
 
-  AWS.config.update({
-    region
-  })
-
-  var docClient = new AWS.DynamoDB.DocumentClient()
-  var dynamodb = new AWS.DynamoDB()
+  const ddclient = new DynamoDBClient({})
+  const docClient = DynamoDBDocumentClient.from(ddclient)
+  const s3client = new S3Client({})
   var message = 'ok'
   var reply = {}
 
   if (event.source === 'aws.events' || Object.keys(event).length === 0) {
     // empty event is for lambda execution, identiy sync post deployment case
     var apigateway = false
-  } else if (event.resource === '/Start/IdentitySync') {
+  }
+  else if (event.resource === '/Start/IdentitySync') {
     var apigateway = true
     var tokenobject = commonshared.ValidateToken(jwt, event.headers, cert)
     console.log(tokenobject)
@@ -86,7 +98,7 @@ module.exports.handler = async function (event, context) {
       }).collection.data[0] // ?.data()
 
       if (userattributes === undefined) {
-        var userattributes = await authenticationshared.getidentityattributes(commonshared, docClient, username, usertype)
+        var userattributes = await authenticationshared.getidentityattributes(docClient, QueryCommand, username, usertype)
         userattributes = userattributes.Items[0]
         identity.insert(userattributes)
       }
@@ -107,7 +119,8 @@ module.exports.handler = async function (event, context) {
         console.log(message)
       }
       // else message remains oke and execution continues;
-    } else {
+    }
+    else {
       // invalid token
       message = tokenobject.value
     }
@@ -116,8 +129,9 @@ module.exports.handler = async function (event, context) {
   if (message === 'ok') {
     // its comming from authorized source: aws events or api gateway
     console.log('Calling Main')
-    var result = await Main(dynamodb, docClient, commonshared, authenticationshared, currentDB, bucketname, region)
-  } else {
+    var result = await Main(s3client, ddclient, docClient, commonshared, authenticationshared, currentDB, bucketname, region)
+  }
+  else {
     // its invalid token or unauthorized;
     console.error(message)
     var result = message
@@ -128,14 +142,16 @@ module.exports.handler = async function (event, context) {
   if (apigateway === false) {
     // context.succeed(result);
     return result
-  } else if (message !== 'ok') {
+  }
+  else if (message !== 'ok') {
     reply = {
       status: 400,
       data: message,
       header: {}
     }
     return commonshared.apigatewayresponse(reply, event.headers, AllowedOrigins)
-  } else {
+  }
+  else {
     reply = {
       status: 200,
       data: result,
@@ -145,24 +161,26 @@ module.exports.handler = async function (event, context) {
   }
 }
 
-async function Main (dynamodb, docClient, commonshared, authenticationshared, currentDB, bucketname, region) {
+async function Main (s3client, ddclient, docClient, commonshared, authenticationshared, currentDB, bucketname, region) {
   console.log('main Executed')
   // filename="temp/AAD.json" // remove once finished.
-  var content = await commonshared.S3GET(s3, bucketname, filename)
-  if (content.code === 'NoSuchKey') {
+  var content = await commonshared.S3GET(s3client, GetObjectCommand, bucketname, filename)
+  if (content.Code === 'NoSuchKey') {
     // for new runs when there is no previousDB data.
     var oldIAMDB = {
       GroupDetailList: {},
       Policies: {},
       UserDetailList: {}
     }
-  } else {
+  }
+  else {
     // var oldIAMDB= createlocalIAMDB(fs.readFileSync(previousDB, "utf8"));
-    var oldIAMDB = createlocalIAMDB(content.Body.toString('utf-8'))
+    var bodycontent = Buffer.from(await content.Body.transformToByteArray()).toString('utf-8')
+    var oldIAMDB = createlocalIAMDB(bodycontent)
   }
 
   await createiamidentitiesfile(currentDB)
-  var newIAMDB = createlocalIAMDB(fs.readFileSync(currentDB, 'utf8'))
+  var newIAMDB = createlocalIAMDB(fs.readFileSync(fileURLToPath(currentDB), 'utf-8'))
   // var diff = jsonDiff.diffString(oldIAMDB, newIAMDB)
 
   var diffedresult = await rundiff(oldIAMDB, newIAMDB)
@@ -172,11 +190,11 @@ async function Main (dynamodb, docClient, commonshared, authenticationshared, cu
   console.log(JSON.stringify(diffedresult.neworchanged, null, 4))
   console.log('\n\n')
 
-  await processidentitiesneworchanged(authenticationshared, commonshared, dynamodb, docClient, TableName, newIAMDB, diffedresult, region)
-  await processidentitiesremoved(authenticationshared, commonshared, dynamodb, docClient, TableName, newIAMDB, diffedresult)
+  await processidentitiesneworchanged(authenticationshared, commonshared, ddclient, docClient, TableName, newIAMDB, diffedresult, region)
+  await processidentitiesremoved(authenticationshared, commonshared, ddclient, docClient, TableName, newIAMDB, diffedresult)
 
   // TODO perform reverse sync by comparing All AWS entries (in Dynamo DB) with entries in retrieved AccountAuthorizationDetails.json and remove orphaned items.
-  await commonshared.S3PUT(s3, bucketname, filename, fs.readFileSync(currentDB, 'utf8'))
+  await commonshared.s3putdependencies(currentDB, bucketname, s3client, PutObjectCommand, fs, fileURLToPath, filename)
 
   updateidentities = _.flatten(updateidentities)
   // https://medium.com/@xinyustudio/javascript-get-unique-array-elements-of-objects-remove-duplicates-in-one-line-code-yes-f54867ae2dd2
@@ -186,7 +204,7 @@ async function Main (dynamodb, docClient, commonshared, authenticationshared, cu
 
   // udate non aws users if changed occured in the associated groups or policies.
   if (Object.keys(updateidentities).length !== 0) {
-    await authenticationshared.UptadeAssociatedUserPolicy(_, commonshared, docClient, updateidentities)
+    await authenticationshared.UptadeAssociatedUserPolicy(_, docClient, QueryCommand, PutCommand, updateidentities)
   }
 
   var message = 'Finished IdentitySync'
@@ -195,11 +213,11 @@ async function Main (dynamodb, docClient, commonshared, authenticationshared, cu
     message
   }
   var loglevel = 'Info'
-  await commonshared.AddDDBEntry(dynamodb, 'Logverz-Invocations', 'IdentitySync', loglevel, 'Infra', details, 'API')
+  await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'IdentitySync', loglevel, 'Infra', details, 'API')
   return message
 }
 
-async function processidentitiesremoved (authenticationshared, commonshared, dynamodb, docClient, TableName, newIAMDB, diffedresult) {
+async function processidentitiesremoved (authenticationshared, commonshared, ddclient, docClient, TableName, newIAMDB, diffedresult) {
   for (var i = 0; i < Object.keys(diffedresult.removed).length; i++) {
     var propertyname = Object.keys(diffedresult.removed)[i]
     var propertyvalue = diffedresult.removed[propertyname]
@@ -213,34 +231,36 @@ async function processidentitiesremoved (authenticationshared, commonshared, dyn
         }
         if (UserObject !== null) {
           // user object is null if its not eligible for syncing see syncablecheck for more details
-          await PersistAWSUserChange(commonshared, dynamodb, docClient, TableName, UserObject, operator)
+          await PersistAWSUserChange(ddclient, docClient, TableName, UserObject, operator)
         }
       }
-    } else if (propertyname === 'Policies') {
+    }
+    else if (propertyname === 'Policies') {
       for (var k = 0; k < propertyvalue.length; k++) {
         var Policyentry = propertyvalue[k]
         var PolicyObject = {
           Name: Policyentry.PolicyName
         }
-        var changedidentites = await getlinkedidentities(_, commonshared, authenticationshared, docClient, 'IAMPolicies', Policyentry.PolicyName, operator, newIAMDB)
+        var changedidentites = await getlinkedidentities(_, authenticationshared, docClient, 'IAMPolicies', Policyentry.PolicyName, operator, newIAMDB)
         updateidentities.push(changedidentites)
-        await PersistAWSPolicyChange(commonshared, dynamodb, docClient, TableName, PolicyObject, operator)
+        await PersistAWSPolicyChange(ddclient, docClient, TableName, PolicyObject, operator)
       }
-    } else if (propertyname === 'GroupDetailList') {
+    }
+    else if (propertyname === 'GroupDetailList') {
       for (var l = 0; l < propertyvalue.length; l++) {
         var Groupentry = propertyvalue[l]
         var GroupObject = {
           Name: Groupentry.GroupName
         }
-        var changedidentites = await getlinkedidentities(_, commonshared, authenticationshared, docClient, 'IAMGroups', Groupentry.GroupName, operator, newIAMDB)
+        var changedidentites = await getlinkedidentities(_, authenticationshared, docClient, 'IAMGroups', Groupentry.GroupName, operator, newIAMDB)
         updateidentities.push(changedidentites)
-        await PersistAWSGroupChange(commonshared, dynamodb, docClient, TableName, GroupObject, operator)
+        await PersistAWSGroupChange(ddclient, docClient, TableName, GroupObject, operator)
       }
     }
   }
 }
 
-async function processidentitiesneworchanged (authenticationshared, commonshared, dynamodb, docClient, TableName, newIAMDB, diffedresult, region) {
+async function processidentitiesneworchanged (authenticationshared, commonshared, ddclient, docClient, TableName, newIAMDB, diffedresult, region) {
   for (var i = 0; i < Object.keys(diffedresult.neworchanged).length; i++) {
     var propertyname = Object.keys(diffedresult.neworchanged)[i]
     var propertyvalue = diffedresult.neworchanged[propertyname]
@@ -252,40 +272,42 @@ async function processidentitiesneworchanged (authenticationshared, commonshared
         var UserObject = createUserObject(newIAMDB, Userentry.UserName, region)
         if (UserObject !== null) {
           // user object is null if its not eligible for syncing see syncablecheck for more details
-          await PersistAWSUserChange(commonshared, dynamodb, docClient, TableName, UserObject, operator)
+          await PersistAWSUserChange(ddclient, docClient, TableName, UserObject, operator)
         }
       }
-    } else if (propertyname === 'Policies') {
+    }
+    else if (propertyname === 'Policies') {
       for (var k = 0; k < propertyvalue.length; k++) {
         var Policyentry = propertyvalue[k]
         var PolicyObject = createPolicyObject(Policyentry)
-        var changedidentites = await getlinkedidentities(_, commonshared, authenticationshared, docClient, 'IAMPolicies', Policyentry.PolicyName, operator, newIAMDB)
+        var changedidentites = await getlinkedidentities(_, authenticationshared, docClient, 'IAMPolicies', Policyentry.PolicyName, operator, newIAMDB)
         if (changedidentites !== null) {
           var externalusers = changedidentites.filter(c => c.Type !== 'UserAWS')
           updateidentities.push(externalusers)
           var awsusers = changedidentites.filter(c => c.Type === 'UserAWS' && c.Operator === '+')
           for await (var oneuser of awsusers) {
             var UserObject = createUserObject(newIAMDB, oneuser.Name, region)
-            await PersistAWSUserChange(commonshared, dynamodb, docClient, TableName, UserObject, operator)
+            await PersistAWSUserChange(ddclient, docClient, TableName, UserObject, operator)
           }
         }
-        await PersistAWSPolicyChange(commonshared, dynamodb, docClient, TableName, PolicyObject, operator)
+        await PersistAWSPolicyChange(ddclient, docClient, TableName, PolicyObject, operator)
       }
-    } else if (propertyname === 'GroupDetailList') {
+    }
+    else if (propertyname === 'GroupDetailList') {
       for (var l = 0; l < propertyvalue.length; l++) {
         var Groupentry = propertyvalue[l]
         var GroupObject = createGroupObject(newIAMDB, Groupentry)
-        var changedidentites = await getlinkedidentities(_, commonshared, authenticationshared, docClient, 'IAMGroups', Groupentry.GroupName, operator, newIAMDB)
+        var changedidentites = await getlinkedidentities(_, authenticationshared, docClient, 'IAMGroups', Groupentry.GroupName, operator, newIAMDB)
         if (changedidentites !== null) {
           updateidentities.push(changedidentites)
         }
-        await PersistAWSGroupChange(commonshared, dynamodb, docClient, TableName, GroupObject, operator)
+        await PersistAWSGroupChange(ddclient, docClient, TableName, GroupObject, operator)
       }
     }
   } // for
 }
 
-async function PersistAWSGroupChange (commonshared, dynamodb, docClient, TableName, GroupObject, operator) {
+async function PersistAWSGroupChange (ddclient, docClient, TableName, GroupObject, operator) {
   if (operator === '+') {
     var params = {
       TableName,
@@ -293,8 +315,10 @@ async function PersistAWSGroupChange (commonshared, dynamodb, docClient, TableNa
     }
     params.Item = GroupObject.Item
 
-    var dynamodbresult = await commonshared.putDDB(dynamodb, params)
-  } else if (operator === '-') {
+    const command = new PutItemCommand(params)
+    var dynamodbresult = await ddclient.send(command)
+  }
+  else if (operator === '-') {
     var params = {
       TableName,
       Key: {
@@ -302,12 +326,14 @@ async function PersistAWSGroupChange (commonshared, dynamodb, docClient, TableNa
         Type: 'GroupAWS'
       }
     }
-    var dynamodbresult = await commonshared.deleteDDB(docClient, params)
+
+    const delcommand = new DeleteCommand(params)
+    var dynamodbresult = await docClient.send(delcommand)
   }
   return dynamodbresult
 }
 
-async function PersistAWSPolicyChange (commonshared, dynamodb, docClient, TableName, PolicyObject, operator) {
+async function PersistAWSPolicyChange (ddclient, docClient, TableName, PolicyObject, operator) {
   if (operator === '+') {
     var params = {
       TableName,
@@ -315,8 +341,10 @@ async function PersistAWSPolicyChange (commonshared, dynamodb, docClient, TableN
     }
     params.Item = PolicyObject.Item
 
-    var dynamodbresult = await commonshared.putDDB(dynamodb, params)
-  } else if (operator === '-') {
+    const command = new PutItemCommand(params)
+    var dynamodbresult = await ddclient.send(command)
+  }
+  else if (operator === '-') {
     var params = {
       TableName,
       Key: {
@@ -324,12 +352,14 @@ async function PersistAWSPolicyChange (commonshared, dynamodb, docClient, TableN
         Type: 'PolicyAWS'
       }
     }
-    var dynamodbresult = await commonshared.deleteDDB(docClient, params)
+
+    const delcommand = new DeleteCommand(params)
+    var dynamodbresult = await docClient.send(delcommand)
   }
   return dynamodbresult
 }
 
-async function PersistAWSUserChange (commonshared, dynamodb, docClient, TableName, UserObject, operator) {
+async function PersistAWSUserChange (ddclient, docClient, TableName, UserObject, operator) {
   if (operator === '+') {
     // this is a new Logverz user or an updated user,we can replace whole record as source of truth is in IAM.
     var params = {
@@ -338,8 +368,10 @@ async function PersistAWSUserChange (commonshared, dynamodb, docClient, TableNam
     }
     params.Item = UserObject.Item
 
-    var dynamodbresult = await commonshared.putDDB(dynamodb, params)
-  } else if (operator === '-') {
+    const command = new PutItemCommand(params)
+    var dynamodbresult = await ddclient.send(command)
+  }
+  else if (operator === '-') {
     var params = {
       TableName,
       Key: {
@@ -348,7 +380,8 @@ async function PersistAWSUserChange (commonshared, dynamodb, docClient, TableNam
       }
     }
 
-    var dynamodbresult = await commonshared.deleteDDB(docClient, params)
+    const delcommand = new DeleteCommand(params)
+    var dynamodbresult = await docClient.send(delcommand)
   }
 
   return dynamodbresult
@@ -390,7 +423,8 @@ async function rundiff (oldIAMDB, newIAMDB) {
 
       if (entrychanged) {
         somechangedentries.push(newitem)
-      } else if (entryexists === false) {
+      }
+      else if (entryexists === false) {
         somenewentries.push(newitem)
       }
     } // i
@@ -557,7 +591,8 @@ function createUserObject (localIAMDB, IamUserName, region) {
     }
 
     return params
-  } else {
+  }
+  else {
     return null
   }
 }
@@ -576,7 +611,8 @@ function syncablecheck (UserAttachedPolicies, GroupsAttachedPolicies, UsersGroup
 
   if (adminuser === true || adminGmember === true || LogverzUsersGmember === true || LogverzPowerUsersGmember === true) {
     syncable = true
-  } else {
+  }
+  else {
     syncable = false
   }
 
@@ -685,11 +721,13 @@ function createPolicyObject (Policyentry) {
       PropertyValue = {
         S: p
       }
-    } else if (PropertyName === 'IsDefaultVersion') {
+    }
+    else if (PropertyName === 'IsDefaultVersion') {
       PropertyValue = {
         BOOL: LatestVersion[PropertyName]
       }
-    } else {
+    }
+    else {
       PropertyValue = {
         S: LatestVersion[PropertyName]
       }
@@ -699,39 +737,19 @@ function createPolicyObject (Policyentry) {
   return params
 }
 
-function getiamidentitiessegment (Marker) {
-  if (Marker) {
-    var params = {
-      Marker
-    }
-  } else {
-    var params = {}
-  }
-  return new Promise(function (resolve, reject) {
-    iam.getAccountAuthorizationDetails(params, function (err, data) {
-      if (err) {
-        console.log(err, err.stack)
-        reject(err)
-        // an error occurred
-      } else resolve(data) // successful response
-    })
-  })
-}
-
 async function createiamidentitiesfile (FileName) {
-  // review for improvement, example resursive calls.
-  var accountdetailsarray = []
-  var Marker
+  const paginatorConfig = {
+    client: new IAMClient({}),
+    pageSize: 250 // default 100 max 1000
+  }
 
-  do {
-    var accountdetailspartial = await getiamidentitiessegment(Marker)
-    if (accountdetailspartial.Marker !== undefined) {
-      Marker = accountdetailspartial.Marker
-    }
-    accountdetailsarray.push(accountdetailspartial) //= JSON.stringify(accountdetailspartial)
-    // console.log(accountdetailsarray.length)
-  } while (accountdetailspartial.Marker !== undefined)
-  fs.writeFileSync(FileName, (JSON.stringify(accountdetailsarray, 'utf8')))
+  const paginator = paginateGetAccountAuthorizationDetails(paginatorConfig, { })
+  const accountdetailsarray = []
+  for await (const accountdetailspartial of paginator) {
+    accountdetailsarray.push(accountdetailspartial)
+  }
+
+  fs.writeFileSync(fileURLToPath(FileName), (JSON.stringify(accountdetailsarray, 'utf8')))
   return accountdetailsarray
 }
 
@@ -816,9 +834,9 @@ function getawsmanagedpolicies (PolicyList, localIAMDB) {
   return result
 }
 
-async function getlinkedidentities (_, commonshared, authenticationshared, docClient, identitytype, idetityvalue, operator, newIAMDB) {
+async function getlinkedidentities (_, authenticationshared, docClient, identitytype, idetityvalue, operator, newIAMDB) {
   var result = []
-  var data = await authenticationshared.retriveIAMidentities(_, commonshared, docClient, identitytype, idetityvalue, newIAMDB)
+  var data = await authenticationshared.retriveIAMidentities(_, docClient, QueryCommand, identitytype, idetityvalue, newIAMDB)
 
   if (data.length > 0) {
     for (var g = 0; g < Object.keys(data).length; g++) {
@@ -834,7 +852,8 @@ async function getlinkedidentities (_, commonshared, authenticationshared, docCl
           Type: item.Type,
           Operator: operator
         })
-      } else {
+      }
+      else {
         result.push({
           Name: item.Name,
           Type: item.Type,
@@ -844,11 +863,26 @@ async function getlinkedidentities (_, commonshared, authenticationshared, docCl
         })
       }
     }
-  } else {
+  }
+  else {
     var result = null
   }
 
   return result
+}
+
+async function GetConfiguration (directory, value) {
+  // Kudos: https://stackoverflow.com/questions/71432755/how-to-use-dynamic-import-from-a-dependency-in-node-js
+  const moduleText = fs.readFileSync(fileURLToPath(directory), 'utf-8').toString()
+  const moduleBase64 = Buffer.from(moduleText).toString('base64')
+  const moduleDataURL = `data:text/javascript;base64,${moduleBase64}`
+  if (value !== '*') {
+    var data = (await import(moduleDataURL))[value]
+  }
+  else {
+    var data = (await import(moduleDataURL))
+  }
+  return data
 }
 
 // function timeout (ms) {

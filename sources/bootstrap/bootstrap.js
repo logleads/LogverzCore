@@ -56,7 +56,7 @@ export const handler = async (event, context) => {
     // params.myKeyPair="";
     environment.BootStrapBucket = process.env.BootStrapBucket
     environment.CFNRole = process.env.CFNRole
-    var maskedevent = maskcredentials(JSON.parse(JSON.stringify(event)))
+    var maskedevent = commonshared.maskcredentials(JSON.parse(JSON.stringify(event)))
     console.log('THE EVENT: \n' + JSON.stringify(maskedevent) + '\n\n')
     console.log('context RECEIVED: ' + JSON.stringify(context))
   }
@@ -172,7 +172,7 @@ async function cfnoperation (event, cfnclient, s3client, ListObjectVersionsComma
       TemplateURL: 'https://' + environment.BootStrapBucket + '.s3.' + region + '.amazonaws.com/' + environment.templatename,
       TimeoutInMinutes: '20'
     }
-    var maskedcfn = maskcredentials(JSON.parse(JSON.stringify(cfnparams)))
+    var maskedcfn = commonshared.maskcredentials(JSON.parse(JSON.stringify(cfnparams)))
     console.log('THE  CFN params: \n' + JSON.stringify(maskedcfn) + '\n\n')
 
     const command = new CreateStackCommand(cfnparams);

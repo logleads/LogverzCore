@@ -43,7 +43,7 @@ module.exports.handler = async function (event, context) {
     // Prod lambda function settings
     var arnList = (context.invokedFunctionArn).split(':')
     var region = arnList[3]
-    var commonshared = require('./shared/commonshared')
+    var commonshared = require('./shared/commonshared.js')
     var LogverzDBSecretRef = requestpropertylookup(event, 'LogverzDBSecretRef')
     var Mode = requestpropertylookup(event, 'Mode')
     var RegistryNewValue = requestpropertylookup(event, 'RegistryNewValue')

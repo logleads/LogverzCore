@@ -785,7 +785,7 @@ async function VerifyASGDesiredState (asgclient, SetDesiredCapacityCommand, Auto
         AutoScalingGroupName: asg.AutoScalingGroupName,
         DesiredCapacity: SpecificIdleSettings.StartDesiredCount
       }
-      const command = new SetDesiredCapacityCommand(JSON.parse(asgparams))
+      const command = new SetDesiredCapacityCommand(asgparams)
       var result = asgclient.send(command)
       return result
     }

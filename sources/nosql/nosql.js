@@ -3,32 +3,30 @@
 /* eslint-disable no-var */
 /* eslint brace-style: ["error", "stroustrup"] */
 
-
 import { fileURLToPath } from 'url'
 import path from 'path'
 import fs from 'fs'
+import _ from 'lodash'
+import jwt from 'jsonwebtoken'
+import loki from 'lokijs'
+
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
+import { DynamoDBDocumentClient, PutCommand, DeleteCommand, QueryCommand } from '@aws-sdk/lib-dynamodb'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
-import _ from 'lodash';
-import jwt from 'jsonwebtoken';
-import loki from 'lokijs';
 
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand, DeleteCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
-
-var MaximumCacheTime=process.env.MaximumCacheTime
+var MaximumCacheTime = process.env.MaximumCacheTime
 console.log('start')
 if (typeof db === 'undefined') {
   // the variable is defined
   var db = new loki('db.json', {
     autoupdate: true
-});
+  })
 }
 
 if (db.collections.length === 0) {
-
-  if (MaximumCacheTime === undefined){
-    MaximumCacheTime =1
+  if (MaximumCacheTime === undefined) {
+    MaximumCacheTime = 1
   }
 
   var identity = db.addCollection('Logverz-Identities', {
@@ -41,15 +39,14 @@ if (db.collections.length === 0) {
 }
 
 export const handler = async (event, context) => {
-  
   if (process.env.Environment !== 'LocalDev') {
     // Prod lambda function settings
     var arnList = (context.invokedFunctionArn).split(':')
     var region = arnList[3]
-    var commonsharedpath=('file:///'+path.join(__dirname, './shared/commonsharedv3.js').replace(/\\/g, "/"))
-    var commonshared=await GetConfiguration(commonsharedpath,'*')
-    var authenticationsharedpath=('file:///'+path.join(__dirname, './shared/authenticationsharedv3.js').replace(/\\/g, "/"))
-    var authenticationshared=await GetConfiguration(authenticationsharedpath,'*')
+    var commonsharedpath = ('file:///' + path.join(__dirname, './shared/commonsharedv3.js').replace(/\\/g, '/'))
+    var commonshared = await GetConfiguration(commonsharedpath, '*')
+    var authenticationsharedpath = ('file:///' + path.join(__dirname, './shared/authenticationsharedv3.js').replace(/\\/g, '/'))
+    var authenticationshared = await GetConfiguration(authenticationsharedpath, '*')
     var cert = process.env.PublicKey
     var AllowedOrigins = process.env.AllowedOrigins
     var maskedevent = commonshared.masktoken(JSON.parse(JSON.stringify(event)))
@@ -68,8 +65,8 @@ export const handler = async (event, context) => {
     var AllowedOrigins = mydev.AllowedOrigins
   }
 
-  const ddclient = new DynamoDBClient({});
-  const docClient = DynamoDBDocumentClient.from(ddclient);
+  const ddclient = new DynamoDBClient({})
+  const docClient = DynamoDBDocumentClient.from(ddclient)
 
   var tokenobject = commonshared.ValidateToken(jwt, event.headers, cert)
   var reply = {}
@@ -193,7 +190,7 @@ async function issuerequest (commonshared, authenticationshared, docClient, quer
       else {
         console.log('TODO: Generic DynamoDB delete.')
       }
-      // delete identity      
+      // delete identity
       const delcommand = new DeleteCommand(params)
       var data = await docClient.send(delcommand)
       break
@@ -611,16 +608,15 @@ function validateprovidedusername (commonshared, requestoridentity, event) {
 }
 
 async function GetConfiguration (directory, value) {
-  
-  //Kudos: https://stackoverflow.com/questions/71432755/how-to-use-dynamic-import-from-a-dependency-in-node-js
-  const moduleText = fs.readFileSync(fileURLToPath(directory), 'utf-8').toString();
-  const moduleBase64 = Buffer.from(moduleText).toString('base64');
-  const moduleDataURL = `data:text/javascript;base64,${moduleBase64}`;
-  if (value !=="*"){
-      var data = (await import(moduleDataURL))[value];
+  // Kudos: https://stackoverflow.com/questions/71432755/how-to-use-dynamic-import-from-a-dependency-in-node-js
+  const moduleText = fs.readFileSync(fileURLToPath(directory), 'utf-8').toString()
+  const moduleBase64 = Buffer.from(moduleText).toString('base64')
+  const moduleDataURL = `data:text/javascript;base64,${moduleBase64}`
+  if (value !== '*') {
+    var data = (await import(moduleDataURL))[value]
   }
-  else{
-      var data = (await import(moduleDataURL));
+  else {
+    var data = (await import(moduleDataURL))
   }
   return data
 }

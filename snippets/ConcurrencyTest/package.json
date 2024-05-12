@@ -1,6 +1,6 @@
 {
   "name": "concurrencytest",
-  "version": "0.7.00",
+  "version": "0.9.0",
   "description": "Concurrency Test to validate lambda Postgres SQL connection",
   "main": "concurrencytestclient.js",
   "scripts": {

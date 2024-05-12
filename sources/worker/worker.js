@@ -81,7 +81,6 @@ export const handler = async (event, context) => {
   const sqsclient = new SQSClient({})
   const ssmclient = new SSMClient({})
   const ddclient = new DynamoDBClient({})
-  const s3client = new S3Client({})
 
   const initialparameters = await initialseparameters(commonshared, Schema, QueryType, DBFrendlyName, ssmclient, GetParameterCommand, ddclient, PutItemCommand)
   const DBPassword = initialparameters.Password
@@ -103,7 +102,7 @@ export const handler = async (event, context) => {
   }
 
   t0 = performance.now()
-  await loop(s3client, sqsclient, sequelize, context, TestingTimeout, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, type, header)
+  await loop(sqsclient, sequelize, context, TestingTimeout, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, type, header)
 
   return {
     statusCode: 200,
@@ -111,13 +110,13 @@ export const handler = async (event, context) => {
   }
 } // module exports
 
-async function loop (s3client, sqsclient, sequelize, context, TestingTimeout, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, type, header) {
+async function loop (sqsclient, sequelize, context, TestingTimeout, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, type, header) {
   // two actions are run in parallel:
   // 1.) reporting lambda state to sql database,
   // 2.) processing sqs messages via TASK function
   let i = 0
 
-  const timer = new TaskTimer(3000)
+  const timer = new TaskTimer(5000)
   timer.on('tick', () => {
     console.log(`Reporting state of instance ${context.clientContext.invocationid} at ${new Date().toLocaleString()} : RUNNING`)
 
@@ -143,7 +142,7 @@ async function loop (s3client, sqsclient, sequelize, context, TestingTimeout, en
         await timeout(TestingTimeout) // for testing log running lambdas
       }
       const t1 = performance.now()
-      await Task(s3client, sqsclient, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header)
+      await Task(sqsclient, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header)
       const t2 = performance.now()
       const processingtime = (t2 - t1)
       const ellipsedtime = (t2 - t0)
@@ -180,10 +179,10 @@ async function loop (s3client, sqsclient, sequelize, context, TestingTimeout, en
   }, conditions)
 
   console.log(`Reporting state of instance ${context.clientContext.invocationid} at ${new Date().toLocaleString()} : COMPLETED`)
-  await sequelize.close()
+
 }
 
-async function Task (s3client, sqsclient, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header) {
+async function Task (sqsclient, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header) {
   const sqsmessages = await commonshared.receiveSQSMessage(sqsclient, ReceiveMessageCommand, QueueURL, '3')
 
   if (sqsmessages.Messages !== undefined) {
@@ -197,7 +196,7 @@ async function Task (s3client, sqsclient, engineshared, commonshared, S3SelectPa
       process.exit()
     }
 
-    const s3results = await processS3data(s3client, prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, sequelize, Model, type, header)
+    const s3results = await processS3data(prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, sequelize, Model, type, header)
     const Transformeddata = DatatoSchemaTransformation(s3results, SelectedModel, S3SelectParameter, DBEngineType, type, header)
 
     // Only call InsertData if Transformed data is not null;
@@ -211,6 +210,7 @@ async function Task (s3client, sqsclient, engineshared, commonshared, S3SelectPa
     }
   }
   else if (sqsempty > 2) {
+    await sequelize.close()
     console.log('\nQueue was empty for prolonged time stopping lambda function\n')
     process.exit(0)
   }
@@ -249,7 +249,7 @@ async function InsertData (sequelize, Model, SelectedModel, QueryType, DBTableNa
   }) // return sequlize
 } // insert data function
 
-async function processS3data (s3client, prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, sequelize, Model, type, header) {
+async function processS3data (prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, sequelize, Model, type, header) {
   // source: https://docs.aws.amazon.com/AWSJavaScriptSDK/latest/AWS/S3.html#selectObjectContent-property
 
   const s3parameters = {
@@ -284,15 +284,19 @@ async function processS3data (s3client, prefixarray, S3SelectQuery, S3SelectPara
     console.log('Parquet support to be done!')
   }
 
+
   const promises = prefixarray.map(prefix => {
     s3parameters.Key = prefix[0]
     s3parameters.Bucket = prefix[1]
+    let region = prefix[2]
     const params = s3parameters
+    const s3client = new S3Client({region})
     return FilteredS3data(s3client, params, context, engineshared, commonshared, sequelize, Model, DBEngineType, type, header)
   }) // prefixarray.map
 
   const resolved = await Promise.all(promises)
   let results = _.compact(_.flatten(resolved))
+  console.log('Number of events ' + results.length + ' \n')
 
   if ((S3SelectParameter.InputSerialization.RootElement !== undefined) && (typeof results[0][S3SelectParameter.InputSerialization.RootElement] === 'object')) {
     // its a list of elements
@@ -301,7 +305,7 @@ async function processS3data (s3client, prefixarray, S3SelectQuery, S3SelectPara
     results = _.flatten(combined)
   }
 
-  console.log('Number of files ' + results.length + ' \n')
+  console.log('Number of events ' + results.length + ' \n')
   return results
 }
 
@@ -659,3 +663,14 @@ async function GetConfiguration (directory, value) {
   }
   return data
 }
+
+//After initiate connection
+  // var prefixarray=[
+  //   [
+  //       "key",
+  //       "bucket"
+  //     ]
+  // ]
+  // var s3results = await processS3data(prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, sequelize, Model, type, header)
+  // var Transformeddata = DatatoSchemaTransformation(s3results, SelectedModel, S3SelectParameter, DBEngineType, type, header)
+  // await InsertData(sequelize, Model, SelectedModel, QueryType, DBTableName, Transformeddata)

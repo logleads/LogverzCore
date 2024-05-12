@@ -67,7 +67,7 @@ async function main (event, s3client, rdsclient, kmsclient, commonshared, InitBu
     var engine = JSON.parse(Buffer.from(await enginecontent.Body.transformToByteArray()).toString('utf-8'))
     var engine = setcontrollersandqueue(event, engine)
 
-    if (customcontent.code !== 'NoSuchKey') {
+    if (customcontent.Code !== 'NoSuchKey') {
       var customconfig = JSON.parse(Buffer.from(await customcontent.Body.transformToByteArray()).toString('utf-8'))
       if (customconfig.Metadata.Merge.LogverzEngine !== undefined) {
         var customconfigmerge = customconfig.Metadata.Merge.LogverzEngine
@@ -102,7 +102,7 @@ async function main (event, s3client, rdsclient, kmsclient, commonshared, InitBu
     originalstatement.Resource = arn
     logic.Resources.LogverzInfoPolicy.Properties.PolicyDocument.Statement[DenySSMIndex] = originalstatement
 
-    if (customcontent.code !== 'NoSuchKey') {
+    if (customcontent.Code !== 'NoSuchKey') {
       var customconfig = JSON.parse(Buffer.from(await customcontent.Body.transformToByteArray()).toString('utf-8'))
 
       if (customconfig.Metadata.Merge.LogverzLogic !== undefined) {
@@ -159,7 +159,7 @@ async function main (event, s3client, rdsclient, kmsclient, commonshared, InitBu
     ])
 
     var turnsrv = JSON.parse(Buffer.from(await adsrvcontent.Body.transformToByteArray()).toString('utf-8'))
-    if (customcontent.code !== 'NoSuchKey') {
+    if (customcontent.Code !== 'NoSuchKey') {
       var customconfig = JSON.parse(Buffer.from(await customcontent.Body.transformToByteArray()).toString('utf-8'))
 
       if (customconfig.Metadata.Merge.LogverzTurn !== undefined) {

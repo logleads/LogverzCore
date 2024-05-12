@@ -13,7 +13,7 @@ import { Sequelize, Op } from 'sequelize'
 import Bottleneck from 'bottleneck'
 import { NodeHttpHandler } from '@smithy/node-http-handler'
 
-import { S3Client, ListObjectsV2Command } from '@aws-sdk/client-s3'
+import { S3Client, ListObjectsV2Command, GetBucketLocationCommand  } from '@aws-sdk/client-s3'
 import { CodeBuildClient, BatchGetBuildsCommand } from '@aws-sdk/client-codebuild'
 import { SQSClient, SendMessageCommand, GetQueueAttributesCommand } from '@aws-sdk/client-sqs'
 import { SSMClient, GetParameterCommand, DeleteParameterCommand, PutParameterCommand } from '@aws-sdk/client-ssm'
@@ -99,7 +99,7 @@ if (PreferedWorkerNumber === 'auto') {
   var socketnumber = 500 // default 50
 }
 else {
-  var socketnumber = Math.round(PreferedWorkerNumber * 1.2)
+  var socketnumber = Math.max(100, Math.round(PreferedWorkerNumber * 1.2))
 }
 
 // Limits the number of subfolders queried parallel.
@@ -109,7 +109,7 @@ const s3limiter = new Bottleneck({
 
 const sqslimiter = new Bottleneck({
   // minTime: 2000 //for testing rate limitting sending to queue one every 2 seconds
-  minTime: 5 // sqs fifo max request count per sec is 300. Configuring 5 milisec between calls, allows max 200 calls/sec
+  minTime: 4 // sqs fifo max request count per sec is 300. Configuring 5 milisec between calls, allows max 250 calls/sec
 })
 
 // https://aws.amazon.com/premiumsupport/knowledge-center/lambda-function-retry-timeout-sdk/
@@ -132,7 +132,6 @@ var config = {
   requestTimeout: lambdatimeout
 }
 
-const s3client = new S3Client(config)
 const cbclient = new CodeBuildClient(config)
 const sqsclient = new SQSClient(config)
 const ssmclient = new SSMClient(config)
@@ -144,10 +143,10 @@ const cwclient = new CloudWatchClient(config)
 
 /* End of Initializing Environment */
 
-main(s3client, cbclient, sqsclient, ssmclient, ddclient, docClient, scclient, Sequelize, cwclient, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber)
+main(cbclient, sqsclient, ssmclient, ddclient, docClient, scclient, Sequelize, cwclient, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber)
 
-async function main (s3client, cbclient, sqsclient, ssmclient, ddclient, docClient, scclient, Sequelize, cwclient, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber) {
-  console.log('PreferedWorkerNumber: ' + PreferedWorkerNumber + '\n')
+async function main (cbclient, sqsclient, ssmclient, ddclient, docClient, scclient, Sequelize, cwclient, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber) {
+  console.log('PreferedWorkerNumber: ' + PreferedWorkerNumber + '\n'+'(note each lambda uses 2 connections to the database)\n\n')
 
   if (PreferedWorkerNumber !== 'auto' && (Number.isNaN(Number(PreferedWorkerNumber)) === true)) {
     // validate if input is not auto and not a number. Than change PreferedWorkerNumber 'auto'
@@ -285,10 +284,11 @@ async function main (s3client, cbclient, sqsclient, ssmclient, ddclient, docClie
 
   console.log('2.) Starting walk folders, ellipsed time from the beginning is ' + (z1 - z0) / 1000)
   // TODO: CACHE MODE which  SAVE sallKeys to S3 than read it from there
-  tobeprocessed = commonshared.TransformInputValues(S3Folders, S3EnumerationDepth, _)
+  const s3client = new S3Client({})
+  tobeprocessed = await commonshared.TransformInputValues(s3client, GetBucketLocationCommand , S3Folders, S3EnumerationDepth, _)
 
   do {
-    await commonshared.walkfolders(_, s3client, ListObjectsV2Command, ddclient, PutItemCommand, commonshared, tobeprocessed, subfolderlist, getCommonPrefixes, 'controller.js')
+    await commonshared.walkfolders(_, ListObjectsV2Command, ddclient, PutItemCommand, commonshared, tobeprocessed, subfolderlist, getCommonPrefixes, 'controller.js',jobid)
   }
   while (((subfolderlist.length + tobeprocessed.length) !== 0) && (tobeprocessed.length !== 0))
   const z2 = performance.now()
@@ -296,7 +296,7 @@ async function main (s3client, cbclient, sqsclient, ssmclient, ddclient, docClie
 
   const alltasksresolved = await s3limiter.schedule(() => {
     const allTasks = subfolderlist.map(
-      subfolderarrayitem => getAllKeys(s3client, ListObjectsV2Command, {
+      subfolderarrayitem => getAllKeys(subfolderarrayitem[4],{
         Bucket: subfolderarrayitem[1],
         Prefix: subfolderarrayitem[0],
         Delimiter: subfolderarrayitem[2]
@@ -411,37 +411,37 @@ async function EnvironmentMaxWokerCount (commonshared, scclient, cwclient, dbins
 
   if ((maxactiveconnection !== 0)) { // there are database performance metrics available for further decisions.
     if (PreferedWorkerNumber === 'auto') {
-      var NumberofWorkers = parseInt(Math.min(...maxworkercount))
-      console.log('The determined worker count equals to the lowest environment limit (' + NumberofWorkers + ').\n')
+      var NumberofWorkers = parseInt((Math.min(...maxworkercount)/2) * 0.4) //1 lambda creats 2 connecttions hence we take half of the lowest workercount, and use 40% of it
+      console.log('The determined worker count equals to 40% of the lowest environment limit \'s '+ NumberofWorkers+' ,taking into account that each lambda has 2 active connections to the DB.\n')
     }
-    else if ((Math.min(...maxworkercount) > PreferedWorkerNumber) && (PreferedWorkerNumber > maxactiveconnection)) {
+    else if (((Math.min(...maxworkercount)/2) > PreferedWorkerNumber) && (PreferedWorkerNumber > maxactiveconnection)) {
       console.log(warning)
       var NumberofWorkers = parseInt(PreferedWorkerNumber)
       console.log('The prefered (' + PreferedWorkerNumber + ') worker count is under the environment limits, hence it will be used. However the connections memory requirement is more than the available free memory, \n')
       console.log('If its significantly higher the database will start to **SWAP** and execution will be significantly slower or fail, if current number (' + NumberofWorkers + ') of Lambda workers are needed a larger capacity DB instance is advised.\n')
     }
-    else if ((Math.min(...maxworkercount) > PreferedWorkerNumber) && (PreferedWorkerNumber < maxactiveconnection)) {
+    else if (((Math.min(...maxworkercount)/2) > PreferedWorkerNumber) && (PreferedWorkerNumber < maxactiveconnection)) {
       var NumberofWorkers = parseInt(PreferedWorkerNumber)
       console.log('The prefered (' + PreferedWorkerNumber + ') worker count is under the environment limits and memory requirement, hence it will be used.\n')
     }
     else {
-      var NumberofWorkers = parseInt(Math.ceil(Math.min(...maxworkercount) * 0.8))
-      console.log('The prefered (' + PreferedWorkerNumber + ') worker count is over the lowest environment limit, 80% of the limit (' + NumberofWorkers + ') is going to be used.\n')
+      var NumberofWorkers = parseInt(Math.ceil((Math.min(...maxworkercount)/2) * 0.6))
+      console.log('The prefered (' + PreferedWorkerNumber + ') worker count is over the lowest environment limit, 60% of the limit (' + NumberofWorkers + ') is going to be used.\n')
     }
   }
   else {
     // bellow doing the determination without database performance metrics
     if (PreferedWorkerNumber === 'auto') {
-      var NumberofWorkers = parseInt(Math.min(...maxworkercount) * 0.8)
-      console.log('The determined worker count is ' + NumberofWorkers + ', 80% of the lowest environment limit (' + Math.min(...maxworkercount) + ').\n')
+      var NumberofWorkers = parseInt((Math.min(...maxworkercount) / 2) * 0.4) //1 lambda creats 2 connecttions hence we take half of the lowest workercount, and use 40% of it.
+      console.log('The determined worker count is ' + NumberofWorkers + ', 40% of the lowest environment limit (' + Math.min(...maxworkercount) + ').\n')
     }
-    else if ((Math.min(...maxworkercount) > PreferedWorkerNumber)) {
+    else if (((Math.min(...maxworkercount)/2) > PreferedWorkerNumber)) {
       var NumberofWorkers = parseInt(PreferedWorkerNumber)
       console.log('The determined worker count is ' + NumberofWorkers + ', as the prefered worker count (' + PreferedWorkerNumber + ') is lower the lowest environment limit ' + Math.min(...maxworkercount) + '.\n')
     }
-    else if ((Math.min(...maxworkercount) < PreferedWorkerNumber)) {
-      var NumberofWorkers = parseInt(Math.ceil(Math.min(...maxworkercount) * 0.8))
-      console.log('The determined worker count is ' + NumberofWorkers + ',  80% of the lowest environment limit (' + Math.min(...maxworkercount) + '). As the prefered worker count (' + PreferedWorkerNumber + ') is over the lowest environment limit. \n')
+    else if (((Math.min(...maxworkercount)/2) < PreferedWorkerNumber)) {
+      var NumberofWorkers = parseInt(Math.ceil((Math.min(...maxworkercount)/2) * 0.6))
+      console.log('The determined worker count is ' + NumberofWorkers + ',  60% of the lowest environment limit (' + Math.min(...maxworkercount) + '), taking into account that each lambda has 2 active connections to the DB. \n')
     }
     else {
       console.log('something went wrong, there should have been a decision made earlier, stopping execution')
@@ -458,7 +458,7 @@ async function controllambdajobs (workerlimiter, ddclient, PutItemCommand, ssmcl
   await new Promise((resolve, reject) => setTimeout(resolve, 3000)) // wait a bit so that sqs queue is not empty at later check
 
   const throttledlambdajob = workerlimiter.wrap(lambdajob)
-  const initialqueuelength = await getSQSqueueProperties(QueueURL)
+  const initialqueuelength = (await getSQSqueueProperties(QueueURL)).ApproximateNumberOfMessages
   console.log('Initialqueue SQS length ' + initialqueuelength)
 
   if (initialqueuelength !== 0) { // checks for initial queue length if SQS is empty at start, than no need to start worker lambdas.
@@ -484,9 +484,10 @@ async function controllambdajobs (workerlimiter, ddclient, PutItemCommand, ssmcl
           } // last update was less than X seconds ago. Meaning not stuck.
         }
       })
-      console.log('SQS queue length: ' + queuelength + ' running lambdas count: ' + counts.EXECUTING + '\n' + 'internal queue' + JSON.stringify(counts) + '\n\n\n')
 
-      if (queuelength <= (Math.ceil(NumberofWorkers * 0.25)) && SQSQUEUENOTNULL) {
+      console.log('SQS queue length: ' + queuelength.ApproximateNumberOfMessages +' messages in flight '+queuelength.ApproximateNumberOfMessagesNotVisible +'. Running lambdas count: ' + counts.EXECUTING + '\n' + ' controller\'s internal queue' + JSON.stringify(counts) + '\n\n\n')
+
+      if (queuelength.ApproximateNumberOfMessages <= (Math.ceil(NumberofWorkers * 0.10)) && queuelength.ApproximateNumberOfMessagesNotVisible <= (Math.ceil(NumberofWorkers * 0.10)) && SQSQUEUENOTNULL) {
         SQSQUEUENOTNULL = false // when sqs approx length is less than 25% SQSQUEUENOTNULL=false
         console.log('Finished processing the SQS queue. ' + counts.EXECUTING + ' Lambdas are finishing up.')
       }
@@ -510,7 +511,7 @@ async function controllambdajobs (workerlimiter, ddclient, PutItemCommand, ssmcl
 
     // wait  some time for the lambdas to finish..
     // TODO check queue state here instead of timeout. Finish when the queue is empty.
-    await timeout(10000)
+    await timeout(5000)
   } // if queue length !==0
 
   // Check if QueryType is "Temporary/jobid", than delete it.
@@ -683,18 +684,21 @@ async function getSQSqueueProperties (QueueURL) {
     QueueUrl: QueueURL,
     /* required */
     AttributeNames: [
-      'ApproximateNumberOfMessages'
+      'ApproximateNumberOfMessages',
+      'MaximumMessageSize',
+      'ApproximateNumberOfMessagesNotVisible'
     ]
   }
 
   const command = new GetQueueAttributesCommand(params)
   const numofsqs = await sqsclient.send(command)
-  return numofsqs.Attributes.ApproximateNumberOfMessages
+  return numofsqs.Attributes
 }
 
-const getCommonPrefixes = async (callerid, ddclient, PutItemCommand, commonshared, s3client, ListObjectsV2Command, params, allKeys = [], jobid) => {
+const getCommonPrefixes = async (currentdepth, region, jobid, callerid, ddclient, PutItemCommand, commonshared, ListObjectsV2Command, params, allKeys = []) => {
   // https://stackoverflow.com/questions/42394429/aws-sdk-s3-best-way-to-list-all-keys-with-listobjectsv2
 
+  const s3client = new S3Client({ region }) //region: "us-west-2"
   try {
     const command = new ListObjectsV2Command(params)
     var data = await s3client.send(command)
@@ -725,27 +729,29 @@ const getCommonPrefixes = async (callerid, ddclient, PutItemCommand, commonshare
     if (response.CommonPrefixes !== undefined) {
       // folders with more subfolders to be scanned
       var delimiter = '*'
-      response.CommonPrefixes.forEach(obj => allKeys.push([obj.Prefix, params.Bucket, delimiter]))
+      response.CommonPrefixes.forEach(obj => allKeys.push([obj.Prefix, params.Bucket, delimiter, currentdepth, region]))
     }
     else {
       // folders with no more subfolders to be scanned
       var delimiter = '/'
-      allKeys.push([response.Prefix, params.Bucket, delimiter])
+      allKeys.push([response.Prefix, params.Bucket, delimiter, currentdepth, region])
     }
   }
 
   return allKeys
 }
 
-async function getAllKeys (s3client, ListObjectsV2Command, params, allKeys = []) {
+async function getAllKeys (region, params, allKeys = []) {
   // https://stackoverflow.com/questions/42394429/aws-sdk-s3-best-way-to-list-all-keys-with-listobjectsv2
+
+  const s3client = new S3Client({ region })
   const command = new ListObjectsV2Command(params)
   const response = await s3client.send(command)
-  response.Contents.forEach(obj => allKeys.push([obj.Key, params.Bucket]))
+  response.Contents.forEach(obj => allKeys.push([obj.Key, params.Bucket, region]))
 
   if (response.NextContinuationToken) {
     params.ContinuationToken = response.NextContinuationToken
-    await getAllKeys(s3client, ListObjectsV2Command, params, allKeys) // RECURSIVE CALL
+    await getAllKeys(region, params, allKeys) // RECURSIVE CALL
   }
   return allKeys
 }

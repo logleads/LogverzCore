@@ -21,8 +21,6 @@ export const handler = async (event, context) => {
     var commonshared = await GetConfiguration(commonsharedpath, '*')
     var arnList = (context.invokedFunctionArn).split(':')
     var region = arnList[3]
-    var buildspecoverride = fs.readFileSync('./buildspec.yml', 'utf8')
-    // var JobsQueueURL= process.env.JobsQueueURL;
     var SQSMessageQueues = process.env.SQSMessageQueues
     var WorkerFunction = process.env.WorkerFunction
     console.log('REQUEST RECEIVED: ' + JSON.stringify(event))
@@ -34,8 +32,6 @@ export const handler = async (event, context) => {
     const mydev = await import('file:///' + directory.replace(/\\/g, '/'))
     var region = mydev.region
     var commonshared = mydev.commonshared
-    var buildspecoverride = mydev.buildspecoverride
-    // var JobsQueueURL= mydev.JobsQueueURL;
     var SQSMessageQueues = mydev.SQSMessageQueues
     var WorkerFunction = mydev.WorkerFunction
     var event = mydev.event
@@ -56,7 +52,7 @@ export const handler = async (event, context) => {
   var selectedcontroller = selectcontroller(availablecontrollers, specifiedenvironment, specifiedstrategy)
 
   var messagequeueurl = selectmessagequeue(SQSMessageQueues, selectedcontroller)
-  var buildresult = await startbuild(cbclient, selectedcontroller, buildspecoverride, onejob, ComputeEnvironment, messagequeueurl, WorkerFunction) // QueryType
+  var buildresult = await startbuild(cbclient, selectedcontroller, onejob, ComputeEnvironment, messagequeueurl, WorkerFunction) // QueryType
 
   await RecordQuery(ddclient, commonshared, onejob, selectedcontroller)
 
@@ -402,12 +398,11 @@ async function getlastbuildID (cbclient, CBProjectName) {
   return buildprojectids
 }
 
-async function startbuild (cbclient, selectedcontroller, buildspecoverride, onejob, ComputeEnvironment, messagequeueurl, WorkerFunction) {
+async function startbuild (cbclient, selectedcontroller, onejob, ComputeEnvironment, messagequeueurl, WorkerFunction) {
   var S3Properties = JSON.parse(onejob.S3Properties.stringValue)
   var ComputeEnvironment = JSON.parse(onejob.ComputeEnvironment.stringValue)
   var buildparams = {
     projectName: selectedcontroller,
-    // buildspecOverride: buildspecoverride, //lets try without this one
     environmentVariablesOverride: [{
       name: 'DatabaseParameters',
       value: onejob.DatabaseParameters.stringValue,

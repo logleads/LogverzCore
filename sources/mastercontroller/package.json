@@ -1,6 +1,6 @@
 {
 	"name": "Logverz",
-	"version": "0.7.00",
+	"version": "0.9.0",
 	"description": "Log Interpreter Serverless Application: master controller module",
 	"main": "init.js",
 	"scripts": {

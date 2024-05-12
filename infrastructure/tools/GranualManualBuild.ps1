@@ -37,7 +37,7 @@ create-Bundle -zipfilename "transform.zip" `
               -projectpath $projectpath `
               -componentpath "\sources\transform"`
               -files "transform.js","package.json","package-lock.json"`
-              -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\package.json"
+              -extrafiles "\sources\shared\commonsharedv3.js"
                    
 update-lambda -lambdafunctionname "Logverz-Transform"`
               -projectpath $projectpath `
@@ -48,7 +48,7 @@ create-Bundle -zipfilename "signal.zip" `
               -projectpath $projectpath `
               -componentpath "\sources\signal"`
               -files "signal.js","package.json","package-lock.json"`
-              -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\package.json"
+              -extrafiles "\sources\shared\commonsharedv3.js"
                    
 update-lambda -lambdafunctionname "Logverz-WebRTCSignal"`
               -projectpath $projectpath `
@@ -72,7 +72,7 @@ create-Bundle -zipfilename "setconnectionparamsdns.zip" `
               -projectpath $projectpath `
               -componentpath "\sources\setconnectionparamsdns"`
               -files "setconnectionparamsdns.js","package.json","package-lock.json"`
-              -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\package.json"
+              -extrafiles "\sources\shared\commonsharedv3.js"
                    
 update-lambda -lambdafunctionname "Logverz-SetConnectionParamsDNS"`
               -projectpath $projectpath `
@@ -84,7 +84,7 @@ create-Bundle -zipfilename "controller.zip" `
               -projectpath $projectpath `
               -componentpath "\sources\controller"`
               -files "controller.js","package.json","package-lock.json","DbInstanceClasses.csv"`
-              -extrafiles "\infrastructure\buildspec.yml","\sources\shared\enginesharedv3.mjs","\sources\shared\commonsharedv3.js","\sources\shared\authenticationsharedv3.js","\sources\shared\package.json"
+              -extrafiles "\infrastructure\buildspec.yml","\sources\shared\enginesharedv3.mjs","\sources\shared\commonsharedv3.js","\sources\shared\authenticationsharedv3.js"
               $projectpath=$projectpath
               cd $($projectpath+"\sources\controller\build\package")
                    
@@ -96,7 +96,7 @@ create-Bundle -zipfilename "worker.zip" `
               -projectpath $projectpath `
               -componentpath "\sources\worker"`
               -files "worker.js","package.json","package-lock.json"`
-              -extrafiles "\sources\shared\enginesharedv3.mjs","\sources\shared\commonsharedv3.js","\sources\shared\package.json"
+              -extrafiles "\sources\shared\enginesharedv3.mjs","\sources\shared\commonsharedv3.js"
 
 update-lambda -lambdafunctionname "Logverz-Worker"`
               -projectpath $projectpath `
@@ -128,7 +128,7 @@ create-Bundle -zipfilename "jobproducer.zip" `
               -projectpath $projectpath `
               -componentpath "\sources\jobproducer"`
               -files "jobproducer.js","package.json","package-lock.json"`
-              -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\package.json","\sources\shared\authenticationsharedv3.js"
+              -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\authenticationsharedv3.js"
 
 
 update-lambda -lambdafunctionname "Logverz-JobProducer"`
@@ -140,7 +140,7 @@ create-Bundle -zipfilename "httprelay.zip" `
                     -projectpath $projectpath `
                     -componentpath "\sources\httprelay"`
                     -files "httprelay.js","package.json","package-lock.json"`
-                    -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\package.json","\sources\shared\authenticationsharedv3.js"
+                    -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\authenticationsharedv3.js"
 
 update-lambda -lambdafunctionname "Logverz-HTTPRelay"`
               -projectpath $projectpath `
@@ -152,8 +152,8 @@ update-lambda -lambdafunctionname "Logverz-HTTPRelay"`
 create-Bundle -zipfilename "identitysync.zip" `
                     -projectpath $projectpath `
                     -componentpath "\sources\identitysync"`
-                    -files "db.js","identitysync.js","package.json","package-lock.json"`
-                    -extrafiles "\sources\shared\commonshared.js","\sources\shared\package.json","\sources\shared\authenticationshared.js"
+                    -files "identitysync.js","package.json","package-lock.json"`
+                    -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\authenticationsharedv3.js"
 
 update-lambda -lambdafunctionname "Logverz-IdentitySync"`
               -projectpath $projectpath `
@@ -180,7 +180,7 @@ create-Bundle -zipfilename "nosql.zip" `
                     -projectpath $projectpath `
                     -componentpath "\sources\nosql"`
                     -files "nosql.js","package.json","package-lock.json"`
-                    -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\package.json","\sources\shared\authenticationsharedv3.js"
+                    -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\authenticationsharedv3.js"
 
 update-lambda -lambdafunctionname "Logverz-NoSQL"`
               -projectpath $projectpath `
@@ -192,7 +192,7 @@ create-Bundle -zipfilename "mastercontroller.zip" `
                     -projectpath $projectpath `
                     -componentpath "\sources\mastercontroller"`
                     -files "mastercontroller.js","package.json","package-lock.json"`
-                    -extrafiles "\infrastructure\buildspec.yml","\sources\shared\commonsharedv3.js","\sources\shared\package.json"
+                    -extrafiles "\sources\shared\commonsharedv3.js"
 
 update-lambda -lambdafunctionname "Logverz-MasterController"`
               -projectpath $projectpath `
@@ -215,7 +215,7 @@ create-Bundle -zipfilename "scale.zip" `
               -projectpath $projectpath `
               -componentpath "\sources\scale"`
               -files "scale.js","package.json","package-lock.json"`
-              -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\package.json","\sources\shared\authenticationsharedv3.js"
+              -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\authenticationsharedv3.js"
                    
 update-lambda -lambdafunctionname "Logverz-Scale"`
               -projectpath $projectpath `

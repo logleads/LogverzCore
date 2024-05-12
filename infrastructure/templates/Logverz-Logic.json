@@ -223,7 +223,7 @@
 							"Action":[
 								"codebuild:BatchGetProjects",
 								"codebuild:ListBuildsForProject",
-								"codebuild:ListBuildBatchesForProject", 
+								"codebuild:ListBuildBatchesForProject",
 								"codebuild:BatchGetBuilds"
 							],
 							"Effect": "Allow",
@@ -2581,7 +2581,7 @@
 					"Fn::GetAtt": ["LogverzIdentitySyncRole", "Arn"]
 				},
 				"ReservedConcurrentExecutions":"1",
-				"Runtime": "nodejs18.x",
+				"Runtime": "nodejs20.x",
 				"Timeout": "60",
 				"MemorySize":"512"
 			}

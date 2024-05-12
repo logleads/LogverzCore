@@ -1,6 +1,6 @@
 {
   "name": "Logverz",
-  "version": "0.7.00",
+  "version": "0.9.0",
   "description": "bridge between client and sqlserver using webrtc",
   "main": "proxyserver.js",
   "scripts": {
