@@ -1,34 +1,72 @@
+/* eslint-disable array-callback-return */
 /* eslint-disable no-redeclare */
 /* eslint-disable no-var */
-const _ = require('lodash')
-const app = require('express')()
-const express = require('express')
-const bodyParser = require('body-parser')
-const cookieParser = require('cookie-parser')
-const http = require('http').createServer(app)
-const p2pconnection = require('./p2pconnection')
-const path = require('path')
-const fs = require('fs')
-const AWS = require('aws-sdk')
-const jwt = require('jsonwebtoken')
-const db = require('./db').db
+/* eslint brace-style: ["error", "stroustrup"] */
+
+import { fileURLToPath } from 'url'
+import path from 'path'
+import fs from 'fs'
+import _ from 'lodash'
+import jwt from 'jsonwebtoken'
+import loki from 'lokijs'
+
+import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm'
+import { AutoScalingClient, paginateDescribeAutoScalingGroups } from '@aws-sdk/client-auto-scaling'
+import { CloudWatchClient, GetMetricDataCommand } from '@aws-sdk/client-cloudwatch'
+import { DynamoDBDocumentClient, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb'
+import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb'
+import { NodeHttpHandler } from '@smithy/node-http-handler'
+
+import express from 'express'
+import bodyParser from 'body-parser'
+import cookieParser from 'cookie-parser'
+import http from 'http'
+import https from 'https'
+
+import Peer from 'simple-peer'
+// optionallly change to @roamhq/wrtc
+import wrtc from 'wrtc'
+import CryptoJS from 'crypto-js'
+import { XMLParser } from 'fast-xml-parser'
+import { exec as execCb } from 'node:child_process'
+import { promisify } from 'node:util'
+
+import axios from 'axios'
+import { Sequelize, QueryTypes, Op } from 'sequelize'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+
+var db = new loki('db.json', {
+  autoupdate: true
+})
+
+const app = express()
+http.createServer(app)
+var sqlproxypath = ('file:///' + path.join(__dirname, './sqlproxy.mjs').replace(/\\/g, '/'))
+var sqlproxy = await GetConfiguration(sqlproxypath, '*')
+const execFile = promisify(execCb)
 const portnumber = 80
 
 if (process.env.Environment !== 'LocalDev') {
   // Prod lambda function settings
-  var commonshared = require('./shared/commonshared')
-  var authenticationshared = require('./shared/authenticationshared')
-  var engineshared = require('./shared/engineshared')
+  var commonsharedpath = ('file:///' + path.join(__dirname, './shared/commonsharedv3.js').replace(/\\/g, '/'))
+  var commonshared = await GetConfiguration(commonsharedpath, '*')
+  var authenticationsharedpath = ('file:///' + path.join(__dirname, './shared/authenticationsharedv3.js').replace(/\\/g, '/'))
+  var authenticationshared = await GetConfiguration(authenticationsharedpath, '*')
+  var enginesharedpath = ('file:///' + path.join(__dirname, 'shared', 'enginesharedv3.mjs').replace(/\\/g, '/'))
+  var engineshared = await GetConfiguration(enginesharedpath, '*')
   var region = process.env.AWS_REGION
   var heartbeatlocation = '/usr/src/app/build/heartbeat.json'
   var ASGNAME = fs.readFileSync('/usr/src/app/build/ASGName').toString().replace(/\r|\n/g, '')
   var instanceId = JSON.parse(fs.readFileSync('/usr/src/app/build/identitydocument').toString().replace(/\r|\n/g, '')).instanceId
   var privateIp = JSON.parse(fs.readFileSync('/usr/src/app/build/identitydocument').toString().replace(/\r|\n/g, '')).privateIp
   var loglocation = '/usr/src/app/build/startupdelayorerror'
-  var mssqlqueryplanspath = '/usr/src/app/mssqlqueryplanspath/'
   var gotablepath = '/usr/src/app/gotable'
-} else {
-  const mydev = require(path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'webrtcproxy', 'mydev.js'))
+}
+else {
+  var directory = path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'webrtcproxy', 'mydev.mjs')
+  const mydev = await import('file:///' + directory.replace(/\\/g, '/'))
   var engineshared = mydev.engineshared
   var authenticationshared = mydev.authenticationshared
   var commonshared = mydev.commonshared
@@ -39,26 +77,39 @@ if (process.env.Environment !== 'LocalDev') {
   var heartbeatlocation = mydev.heartbeatlocation
   var loglocation = mydev.loglocation
   var gotablepath = mydev.gotablepath
-  var mssqlqueryplanspath = mydev.mssqlqueryplanspath
 }
+
+const p2path = ('file:///' + path.join(__dirname, 'p2pconnection.js').replace(/\\/g, '/'))
+const p2pconnection = await GetConfiguration(p2path, '*')
 
 const localheartbeatfrequency = 1 // 1 min
 let i = -1
 const serverstarttime = Date.now()
 console.log('Region: ' + region)
-AWS.config.update({
+
+// https://aws.amazon.com/premiumsupport/knowledge-center/lambda-function-retry-timeout-sdk/
+const lambdatimeout = 3600000
+
+const agentOptions = {
+  keepAlive: false,
+  maxSockets: 100
+}
+
+const httpsAgent = new https.Agent(agentOptions)
+
+var config = {
   region,
   maxRetries: 2,
-  httpOptions: {
-    timeout: 3600000 // https://aws.amazon.com/premiumsupport/knowledge-center/lambda-function-retry-timeout-sdk/
-  }
-})
+  requestHandler: new NodeHttpHandler({
+    httpsAgent
+  }),
+  requestTimeout: lambdatimeout
+}
 
-const SSM = new AWS.SSM()
-const dynamodb = new AWS.DynamoDB()
-const autoscaling = new AWS.AutoScaling()
-const cloudwatch = new AWS.CloudWatch()
-const docClient = new AWS.DynamoDB.DocumentClient()
+const ddclient = new DynamoDBClient(config)
+const ssmclient = new SSMClient(config)
+const docClient = DynamoDBDocumentClient.from(ddclient)
+const cwclient = new CloudWatchClient(config)
 
 app.locals.identities = db.addCollection('Logverz-Identities', {
   ttl: 20 * 60 * 1000
@@ -66,14 +117,33 @@ app.locals.identities = db.addCollection('Logverz-Identities', {
 app.locals.queries = db.addCollection('Logverz-Queries', {
   ttl: 20 * 60 * 1000
 })
+
 app.locals.user = db.addCollection('User') // webrtc channel user mapping info.
 app.locals.commonshared = commonshared
 app.locals.authenticationshared = authenticationshared
 app.locals.engineshared = engineshared
 app.locals.docClient = docClient
-app.locals.dynamodb = dynamodb
-app.locals.SSM = SSM
-
+app.locals.ddclient = ddclient
+app.locals.PutItemCommand = PutItemCommand
+app.locals.Peer = Peer
+app.locals.wrtc = wrtc
+app.locals.CryptoJS = CryptoJS
+app.locals.XMLParser = XMLParser
+app.locals.execFile = execFile
+app.locals.jwt = jwt
+app.locals.sqlproxy = sqlproxy
+app.locals.axios = axios
+app.locals.Sequelize = Sequelize
+app.locals.QueryTypes = QueryTypes
+app.locals.Op = Op
+app.locals.QueryCommand = QueryCommand
+app.locals.UpdateCommand = UpdateCommand
+app.locals.lodash = _
+app.locals.GetParameterCommand = GetParameterCommand
+app.locals.ssmclient = ssmclient
+app.locals.fs = fs
+app.locals.path = path
+app.locals.promisify = promisify
 runmain().catch(error => console.error(error.stack))
 
 async function runmain () {
@@ -85,23 +155,31 @@ async function runmain () {
     message: ''
   }
 
+  const params1 = {
+    Name: '/Logverz/Settings/IdleTime',
+    WithDecryption: false
+  }
+
+  const params2 = {
+    Name: '/Logverz/Logic/WebRTCProxyKey',
+    WithDecryption: true
+  }
+
+  const params3 = {
+    Name: '/Logverz/Logic/PublicKey',
+    WithDecryption: true
+  }
+
+  const params4 = {
+    Name: '/Logverz/Database/Registry',
+    WithDecryption: false
+  }
+
   const [idletime, WebRTCProxyKey, cert, DBRegistry] = await Promise.all([
-    commonshared.getssmparameter(SSM, {
-      Name: '/Logverz/Settings/IdleTime',
-      WithDecryption: false
-    }, dynamodb, details),
-    commonshared.getssmparameter(SSM, {
-      Name: '/Logverz/Logic/WebRTCProxyKey',
-      WithDecryption: true
-    }, dynamodb, details),
-    commonshared.getssmparameter(SSM, {
-      Name: '/Logverz/Logic/PublicKey',
-      WithDecryption: true
-    }, dynamodb, details),
-    commonshared.getssmparameter(SSM, {
-      Name: '/Logverz/Database/Registry',
-      WithDecryption: false
-    }, dynamodb, details)
+    commonshared.getssmparameter(ssmclient, GetParameterCommand, params1, ddclient, PutItemCommand, details),
+    commonshared.getssmparameter(ssmclient, GetParameterCommand, params2, ddclient, PutItemCommand, details),
+    commonshared.getssmparameter(ssmclient, GetParameterCommand, params3, ddclient, PutItemCommand, details),
+    commonshared.getssmparameter(ssmclient, GetParameterCommand, params4, ddclient, PutItemCommand, details)
   ])
 
   await StartHeartBeat(db, ASGNAME, idletime.Parameter.Value)
@@ -110,12 +188,14 @@ async function runmain () {
     // Kudos: https://stackoverflow.com/questions/30005587/is-it-possible-to-use-validation-with-express-static-routes
     if (req.cookies.LogverzAuthToken === undefined) {
       res.send(401, '<br>LogverzAuthToken missing!<br><br> <i>To acces the site you need to provide a valid authentication token you can set that in developertools=>console=><br>document.cookie="LogverzAuthToken=valueoftoken" </i>')
-    } else {
+    }
+    else {
       const tokenobject = commonshared.ValidateToken(jwt, req, cert.Parameter.Value)
 
       if (tokenobject.state === true) {
         next()
-      } else {
+      }
+      else {
         res.send(401, 'LogverzAuthToken invalid')
       }
     }
@@ -152,7 +232,6 @@ async function runmain () {
   app.set('DBRegistry', DBRegistry)
   app.set('region', region)
   app.set('gotablepath', gotablepath)
-  app.set('mssqlqueryplanspath', mssqlqueryplanspath)
 
   app.get('/', (req, res) => {
     // eslint-disable-next-line n/no-path-concat
@@ -173,7 +252,7 @@ async function runmain () {
 
   app.post('/WebRTC/Signal', p2pconnection.p2pconnection) // /WebRTC/Signal
 
-  http.listen(portnumber, () => {
+  app.listen(portnumber, () => {
     const newDate = new Date()
     newDate.setTime(serverstarttime)
     var dateString = newDate.toUTCString()
@@ -201,9 +280,13 @@ async function heartbeatFunc (db, ASGName, idletime, heartbeatlocation) {
 
   // check if user collection === 0, if true that means that are no connected users, initgrace period after instance started no users connected.
   if ((userscollection.data.length === 0) && (initgraceperiod < currentunixtime)) {
-    const asgsettings = await commonshared.GetAsgSettings(autoscaling, {
-      AutoScalingGroupNames: [ASGName]
-    })
+    var AutoScalingGroupNames = [ASGName]
+    const asgsettings = await commonshared.ASGstatus(AutoScalingClient, paginateDescribeAutoScalingGroups, AutoScalingGroupNames)
+
+    // const asgsettings = await commonshared.GetAsgSettings(autoscaling, {
+    //   AutoScalingGroupNames: [ASGName]
+    // })
+
     const asgminimum = asgsettings.AutoScalingGroups[0].Instances.length === (asgsettings.AutoScalingGroups[0].MinSize)
     var contentobject = updateHearthbeatfilecontent(heartbeatlocation, instanceId, userscollection, asgminimum)
 
@@ -211,11 +294,13 @@ async function heartbeatFunc (db, ASGName, idletime, heartbeatlocation) {
       console.log(instanceId + " @C: Autoscaling group Instance count is at the minium can't stop instance to scale back further.")
       i = ++i
       await writeHBfile(heartbeatlocation, contentobject)
-    } else {
+    }
+    else {
       if (asgsettings.AutoScalingGroups[0].Instances.length === (asgsettings.AutoScalingGroups[0].MinSize + 1)) {
         // determine if instance is the last downscalable instance (mincount+1) or not. If last the scaledown time can be longer.
         var idletimecontainer = timeagominutes(idletime.WebRTCProxy.LastContainer)
-      } else {
+      }
+      else {
         var idletimecontainer = timeagominutes(idletime.WebRTCProxy.Container)
       }
       // check last connection was more than X minutes (ssm idle time) ago if yes than idle time has passed.
@@ -223,10 +308,11 @@ async function heartbeatFunc (db, ASGName, idletime, heartbeatlocation) {
 
       if (idletimecontainer > instanceproperties.LastUserConnection) {
         // TODO handle non burstable instances with no CPU credit balance.
-
-        const cwmetrics = await commonshared.GetEC2InstancesMetrics(cloudwatch, [{
+        const instances = [{
           InstanceId: instanceId
-        }], 10) // in minutes
+        }]
+
+        const cwmetrics = await commonshared.GetEC2InstancesMetrics(cwclient, GetMetricDataCommand, instances, 10) // in minutes
         const CreditBalanceCollectionNumber = _.findKey(cwmetrics.MetricDataResults, function (cwm) {
           return cwm.Label === (instanceId + ':' + 'CPUCreditBalance')
         })
@@ -239,18 +325,21 @@ async function heartbeatFunc (db, ASGName, idletime, heartbeatlocation) {
           fs.appendFileSync(loglocation, 'StopServer\n', {
             encoding: 'utf8'
           })
-        } else {
+        }
+        else {
           console.log(instanceId + ' @D: cpu credit balance low, waiting for it to replenish')
           i = ++i
           await writeHBfile(heartbeatlocation, contentobject)
         }
-      } else {
+      }
+      else {
         i = ++i
         await writeHBfile(heartbeatlocation, contentobject)
         console.log(instanceId + ' @B: No user connected, however last Connected time was less than the specified ' + idletimecontainer + ' idle time.')
       }
     }
-  } else {
+  }
+  else {
     i = ++i
     var contentobject = updateHearthbeatfilecontent(heartbeatlocation, instanceId, userscollection, null)
     await writeHBfile(heartbeatlocation, contentobject)
@@ -272,7 +361,8 @@ function updateHearthbeatfilecontent (heartbeatlocation, instanceId, userscollec
       encoding: 'utf8',
       flag: 'r'
     }))
-  } catch (error) {
+  }
+  catch (error) {
     var contentobject = {
       Instances: [{
         Name: instanceId,
@@ -289,11 +379,14 @@ function updateHearthbeatfilecontent (heartbeatlocation, instanceId, userscollec
 
   if (userscollection.data.length !== 0) {
     var lastconnection = lastupdate
-  } else if (instancelocation !== undefined) {
+  }
+  else if (instancelocation !== undefined) {
     var lastconnection = contentobject.Instances[instancelocation].LastUserConnection
-  } else if (instancelocation === undefined) {
+  }
+  else if (instancelocation === undefined) {
     var lastconnection = serverstarttime
-  } else {
+  }
+  else {
     console.error('unknown condition')
     console.log('usercollectionnumber: ' + userscollection.data.length + '\n' + 'Contentobject: ' + JSON.stringify(contentobject.Instances) + '\n' + 'Instanceid: ' + instanceId + '\n')
   }
@@ -307,7 +400,8 @@ function updateHearthbeatfilecontent (heartbeatlocation, instanceId, userscollec
       LastUserConnection: lastconnection,
       ASGMinimum: asgminimum
     })
-  } else {
+  }
+  else {
     // update instance
     contentobject.Instances[instancelocation] = {
       Name: instanceId,
@@ -326,10 +420,11 @@ function updateHearthbeatfilecontent (heartbeatlocation, instanceId, userscollec
 
 async function writeHBfile (heartbeatlocation, contentobject) {
   // put heartbeat file to /usr/src/app/build
-  fs.writeFileSync(heartbeatlocation, JSON.stringify(contentobject), {
+  var config = {
     encoding: 'utf8',
     flag: 'w'
-  })
+  }
+  fs.writeFileSync(fileURLToPath(heartbeatlocation), JSON.stringify(contentobject), config)
 }
 
 function timeout (ms) {
@@ -345,4 +440,16 @@ function timeagominutes (number) {
   return agounix
 }
 
-// document.cookie="LogverzAuthToken=eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiQVdTOmFwcGVsbG8xIiwiaWF0IjoxNjE0MDI0NDM1LCJleHAiOjE2MTQwNTMyMzV9.AvNkGZmq0DWY5COlsSt_79JhOtL3lai_pT71tVjc-R-g-F4LHH9UNY9wAd8aK3S5z6A-5SOTfyqn-fYP4dBdu6aDr9VZYkwsIhzpyhVdnz9bC2N9PomxplM43m0XUmSAO4kP3RA6TALp-jRDpp-CTmWNanxB9soaI32E-r0fXqEA2PApS7oW75oh6MJlQoSh0XoPuHy74wWBftnaqyJfGeWrpi8qZhXpdJG89xtADntp5348M6UvNyjLvj1ZKtzJBEiiH7FyvDMGF93OiJOfnJExIR30qs9ANIKd7TEbE3e72mtu9Hn1g504rv3Xj5xOHpz_kmjf_sUoCZ-5-1hHG1YDF3eWWQkzBI15kB6P4SfKKpJyF28cmCfSgxwE-eKqROGOOz2kXsgJVry5I5wOQXk1LKysH5pX1NQ5o87YoS50f-2RIHxw1N4aJ1g5OjEcImb7UKC36MXdoLCc1Hsjxz0IcmCP4C3Jre76PbIgIA82vpXaMnrJSFnhidItTEb-xBCttM7WOQVCbGq_-XlsnkMTfrta0rNR4sYxyGBI8JTVaKnE0_htNYyDTqM8cUJEEMfLOykNqSi-vF19s5ooFDBjaeqRYka2lKBSoBEtWjpMNp5dGqdXBY16-kFyPi8zlAfd_2-_lm65LRkZeTSuF9dcQov6xIANCvpUUs-fkBA; Path=/V3;"
+async function GetConfiguration (directory, value) {
+  // Kudos: https://stackoverflow.com/questions/71432755/how-to-use-dynamic-import-from-a-dependency-in-node-js
+  const moduleText = fs.readFileSync(fileURLToPath(directory), 'utf-8').toString()
+  const moduleBase64 = Buffer.from(moduleText).toString('base64')
+  const moduleDataURL = `data:text/javascript;base64,${moduleBase64}`
+  if (value !== '*') {
+    var data = (await import(moduleDataURL))[value]
+  }
+  else {
+    var data = (await import(moduleDataURL))
+  }
+  return data
+}

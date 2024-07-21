@@ -193,49 +193,6 @@ const SelectSQLTable = async (sequelize, Model, SelectedModel, QueryType, DBTabl
   // Todo: add here "raw" mode for regular sql queries
 }
 
-const InitiateSQLConnection = async (sequelize, DBEngineType, connectionstring, DBName) => {
-  if (DBEngineType === 'mssql') {
-    // by default mssql does not have a Logverz database, so at first execution it needs to be created.
-
-    sequelize.options.validateBulkLoadParameters = true
-    sequelize.options.loginTimeout = 15
-
-    try {
-      await sequelize.authenticate()
-    }
-    catch (err) {
-      if (err.name === 'SequelizeAccessDeniedError') {
-        await sequelize.close()
-        // At first execution Logverz DB is not present need to connect to a different db to verify credentials
-        // than create  Logverz DB and if successfull return authenticated true.
-        var sequelize = new Sequelize(connectionstring)
-        sequelize.connectionManager.config.database = 'master'
-        sequelize.options.logging = false
-
-        // trying to authenticate a 2nd time either works (case of 1st execution) or errors (wrong credential).
-        // This error is caught in the main try catch
-        await sequelize.authenticate()
-
-        // connection succeeded creating mssql database
-        await sequelize.query('CREATE DATABASE ' + DBName)
-        await sequelize.close()
-        // connectioning to newly created DB
-        var sequelize = new Sequelize(connectionstring)
-        var result = await sequelize.authenticate()
-      }
-      else {
-        console.log(err)
-      }
-    }
-  }
-  else {
-    // non mssql DB
-    var result = await sequelize.authenticate()
-  }
-
-  return result
-}
-
 const CloseSQLConnection = async (sequelize) => {
   var result
   try {
@@ -272,6 +229,6 @@ const ConfigureSequalize = (DBEngineType) => {
 }
 
 export {
-  constructmodel, AddSqlEntry, UpdateSqlEntry, SelectSQLTable, InitiateSQLConnection,
-  CloseSQLConnection, InvocationsModel, ProcessingErrorsModel, convertschema, ConfigureSequalize
+  constructmodel, AddSqlEntry, UpdateSqlEntry, SelectSQLTable, CloseSQLConnection, 
+  InvocationsModel, ProcessingErrorsModel, convertschema, ConfigureSequalize
 }

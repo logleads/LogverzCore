@@ -12,7 +12,7 @@ import fs from 'fs'
 import _ from 'lodash'
 import pkg from 'tasktimer'
 import { Sequelize } from 'sequelize'
-import { S3Client, SelectObjectContentCommand, SelectObjectContentEventStream } from '@aws-sdk/client-s3'
+import { S3Client, SelectObjectContentCommand, PutObjectCommand } from '@aws-sdk/client-s3'
 import { SQSClient, ReceiveMessageCommand, DeleteMessageCommand } from '@aws-sdk/client-sqs'
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm'
 import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb'
@@ -36,6 +36,8 @@ export const handler = async (event, context) => {
     var region = arnList[3]
     var FileName = ('file:///' + path.join('tmp', 'SelectedModel.mjs').replace(/\\/g, '/')) // '/tmp/SelectedModel.js'
     var TestingTimeout = process.env.TestingTimeout
+    var DebugInsert = process.env.DebugInsert
+    var EngineBucket = process.env.EngineBucket
     console.log('REQUEST RECEIVED: ' + JSON.stringify(context))
   }
   else {
@@ -48,6 +50,8 @@ export const handler = async (event, context) => {
     var FileName = mydev.FileName
     var context = mydev.context
     var TestingTimeout = mydev.TestingTimeout
+    var DebugInsert = mydev.DebugInsert
+    var EngineBucket = mydev.EngineBucket
   }
 
   const DBName = 'Logverz'
@@ -102,7 +106,7 @@ export const handler = async (event, context) => {
   }
 
   t0 = performance.now()
-  await loop(sqsclient, sequelize, context, TestingTimeout, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, type, header)
+  await loop(sqsclient, sequelize, context, TestingTimeout, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, type, header,DebugInsert,EngineBucket, region, FileName)
 
   return {
     statusCode: 200,
@@ -110,7 +114,7 @@ export const handler = async (event, context) => {
   }
 } // module exports
 
-async function loop (sqsclient, sequelize, context, TestingTimeout, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, type, header) {
+async function loop (sqsclient, sequelize, context, TestingTimeout, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, type, header, DebugInsert, EngineBucket, region, FileName) {
   // two actions are run in parallel:
   // 1.) reporting lambda state to sql database,
   // 2.) processing sqs messages via TASK function
@@ -142,7 +146,7 @@ async function loop (sqsclient, sequelize, context, TestingTimeout, engineshared
         await timeout(TestingTimeout) // for testing log running lambdas
       }
       const t1 = performance.now()
-      await Task(sqsclient, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header)
+      await Task(sqsclient, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header, DebugInsert, EngineBucket, region, FileName)
       const t2 = performance.now()
       const processingtime = (t2 - t1)
       const ellipsedtime = (t2 - t0)
@@ -182,7 +186,7 @@ async function loop (sqsclient, sequelize, context, TestingTimeout, engineshared
 
 }
 
-async function Task (sqsclient, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header) {
+async function Task (sqsclient, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header, DebugInsert, EngineBucket, region, FileName) {
   const sqsmessages = await commonshared.receiveSQSMessage(sqsclient, ReceiveMessageCommand, QueueURL, '3')
 
   if (sqsmessages.Messages !== undefined) {
@@ -201,7 +205,7 @@ async function Task (sqsclient, engineshared, commonshared, S3SelectParameter, Q
 
     // Only call InsertData if Transformed data is not null;
     if (Transformeddata.length !== 0) {
-      await InsertData(sequelize, Model, SelectedModel, QueryType, DBTableName, Transformeddata)
+      await InsertData(commonshared, sequelize, Model, SelectedModel, QueryType, DBTableName, Transformeddata, DebugInsert, EngineBucket, region, FileName)
       await deleteSQSMessage(sqsclient, QueueURL, ReceiptHandle, rdsinsertsuccess)
     }
     else {
@@ -221,7 +225,7 @@ async function Task (sqsclient, engineshared, commonshared, S3SelectParameter, Q
   }
 }
 
-async function InsertData (sequelize, Model, SelectedModel, QueryType, DBTableName, Transformeddata) {
+async function InsertData (commonshared, sequelize, Model, SelectedModel, QueryType, DBTableName, Transformeddata, DebugInsert, EngineBucket, region, FileName) {
   return sequelize.transaction(t => {
     class Entry extends Model {}
     Entry.init(SelectedModel, {
@@ -240,11 +244,29 @@ async function InsertData (sequelize, Model, SelectedModel, QueryType, DBTableNa
         // Transaction has been committed
         // result is whatever the result of the promise chain returned to the transaction callback
       }).catch(err => {
-        console.log(err)
-        rdsinsertsuccess = false
-        // Transaction has been rolled back
-        // err is whatever rejected the promise chain returned to the transaction callback
-        t.rollback()
+        console.log(err.message, "\nline: ",err.original.line)
+        if (DebugInsert === 1){
+
+          let filenamepart=Date.now() /1000+"_error.txt"
+          let newfilefullname=FileName.replace("SelectedModel.mjs",filenamepart)
+          fs.writeFileSync(fileURLToPath(newfilefullname), err.sql)
+          const s3client = new S3Client({region})
+          console.log('Starting SQL commands debug file upload')
+          commonshared.s3putdependencies(newfilefullname, EngineBucket, s3client, PutObjectCommand, fs, fileURLToPath, 'DebugInsert/'+filenamepart)
+          setTimeout(function () {
+
+              rdsinsertsuccess = false
+              // Transaction has been rolled back
+              // err is whatever rejected the promise chain returned to the transaction callback
+              t.rollback()
+          }, 1500);
+        }
+        else{
+          rdsinsertsuccess = false
+          // Transaction has been rolled back
+          // err is whatever rejected the promise chain returned to the transaction callback
+          t.rollback()
+        }
       })
   }) // return sequlize
 } // insert data function
@@ -377,7 +399,7 @@ async function FilteredS3data (s3client, params, context, engineshared, commonsh
     }
   }
   catch (e) {
-    console.log(e)
+    console.log("S3Error:",e.message,'\n(Note: the line number is +1 or +2 depending on weather the file has header line or not)\nBucket:',e.$response.body.req.host,"\nFile:",e.$response.body.req.path.split('?')[0])
   }
 
   if (result.Result === 'PASS') {
@@ -664,13 +686,15 @@ async function GetConfiguration (directory, value) {
   return data
 }
 
-//After initiate connection
+  // Testing setup: After initiate connection, before loop:
   // var prefixarray=[
   //   [
   //       "key",
-  //       "bucket"
+  //       "bucket",
+  //       "region"
   //     ]
   // ]
   // var s3results = await processS3data(prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, sequelize, Model, type, header)
   // var Transformeddata = DatatoSchemaTransformation(s3results, SelectedModel, S3SelectParameter, DBEngineType, type, header)
-  // await InsertData(sequelize, Model, SelectedModel, QueryType, DBTableName, Transformeddata)
+  // await InsertData(commonshared, sequelize, Model, SelectedModel, QueryType, DBTableName, Transformeddata, DebugInsert, EngineBucket, region, FileName)
+  // await timeout(2000)

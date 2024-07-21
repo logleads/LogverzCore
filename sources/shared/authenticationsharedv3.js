@@ -653,6 +653,10 @@ const resourceaccessauthorization = async (_, docClient, QueryCommand, identitie
       userpermissionlookup(_, docClient, QueryCommand, Access, identities, requestoridentity)
     ])
   }
+  else {
+    var messagetablemissing = ' ' + clientrequest.TableName + ' tablename for ' + clientrequest.DatabaseName + ' database server, does not exists in the permission database.'
+    // TODO add message to events that there is a table in the database that is not present in the permission db. stale or manually created etc.
+  }
 
   if (isowner === false && clientrequest.Operation !== 'dynamodb:Query') {
     var [isadmin, ispoweruser] = await Promise.all([
@@ -669,19 +673,25 @@ const resourceaccessauthorization = async (_, docClient, QueryCommand, identitie
   if ((clientrequest.Operation === 'dynamodb:Query') && (hasaccess || isowner || isadmin || ispoweruser)) {
     return {
       status: 'Allow',
-      Reason: JSON.stringify(requestoridentity) + ' is owner,admin or poweruser or hasaccess to entry matching ' + JSON.stringify(clientrequest) + ' on TableName ' + TableName
+      Reason: JSON.stringify(requestoridentity) + ' is owner,admin or poweruser or hasaccess to entry matching ' + JSON.stringify(clientrequest) + ' on TableName ' + TableName,
+      TableName: clientrequest.TableName,
+      DBName: clientrequest.DatabaseName
     }
   }
   else if ((clientrequest.Operation === 'dynamodb:DeleteItem' || clientrequest.Operation === 'dynamodb:PutItem') && (isowner || isadmin || ispoweruser)) {
     return {
       status: 'Allow',
-      Reason: JSON.stringify(requestoridentity) + ' is owner, admin or poweruser to entry matching ' + JSON.stringify(clientrequest) + ' on TableName ' + TableName
+      Reason: JSON.stringify(requestoridentity) + ' is owner, admin or poweruser to entry matching ' + JSON.stringify(clientrequest) + ' on TableName ' + TableName,
+      TableName: clientrequest.TableName,
+      DBName: clientrequest.DatabaseName
     }
   }
   else {
     return {
       status: 'Deny',
-      Reason: JSON.stringify(requestoridentity) + '  not owner,admin,poweruser or hasaccess to entry matching ' + JSON.stringify(clientrequest) + ' on TableName ' + TableName
+      Reason: JSON.stringify(requestoridentity) + '  not owner,admin,poweruser or hasaccess to entry matching the following request: ' + JSON.stringify(clientrequest) + '.' + messagetablemissing,
+      TableName: clientrequest.TableName,
+      DBName: clientrequest.DatabaseName
     }
   }
 }

@@ -12,8 +12,7 @@ import _ from 'lodash'
 import { Sequelize, Op } from 'sequelize'
 import Bottleneck from 'bottleneck'
 import { NodeHttpHandler } from '@smithy/node-http-handler'
-
-import { S3Client, ListObjectsV2Command, GetBucketLocationCommand  } from '@aws-sdk/client-s3'
+import { S3Client, ListObjectsV2Command, GetBucketLocationCommand } from '@aws-sdk/client-s3'
 import { CodeBuildClient, BatchGetBuildsCommand } from '@aws-sdk/client-codebuild'
 import { SQSClient, SendMessageCommand, GetQueueAttributesCommand } from '@aws-sdk/client-sqs'
 import { SSMClient, GetParameterCommand, DeleteParameterCommand, PutParameterCommand } from '@aws-sdk/client-ssm'
@@ -143,10 +142,10 @@ const cwclient = new CloudWatchClient(config)
 
 /* End of Initializing Environment */
 
-main(cbclient, sqsclient, ssmclient, ddclient, docClient, scclient, Sequelize, cwclient, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber)
+main(cbclient, sqsclient, ssmclient, ddclient, docClient, scclient, cwclient, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber)
 
-async function main (cbclient, sqsclient, ssmclient, ddclient, docClient, scclient, Sequelize, cwclient, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber) {
-  console.log('PreferedWorkerNumber: ' + PreferedWorkerNumber + '\n'+'(note each lambda uses 2 connections to the database)\n\n')
+async function main (cbclient, sqsclient, ssmclient, ddclient, docClient, scclient, cwclient, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber) {
+  console.log('PreferedWorkerNumber: ' + PreferedWorkerNumber + '\n' + '(note each lambda uses 2 connections to the database)\n\n')
 
   if (PreferedWorkerNumber !== 'auto' && (Number.isNaN(Number(PreferedWorkerNumber)) === true)) {
     // validate if input is not auto and not a number. Than change PreferedWorkerNumber 'auto'
@@ -173,6 +172,7 @@ async function main (cbclient, sqsclient, ssmclient, ddclient, docClient, scclie
   const DBSecretRef = DBAvalue.filter(s => s.includes('LogverzDBSecretRef'))[0].split('=')[1]
   const DBTableName = TableParameters.split('<!!>').filter(s => s.includes('TableName'))[0].split('=')[1]
   const DBInstanceClass = DBAvalue.filter(s => s.includes('LogverzDBInstanceClass'))[0].split('=')[1]
+        DBEngineType = (DBEngineType.match('sqlserver-') ? 'mssql' : DBEngineType)
 
   var details = {
     source: 'controller.js:main/getssmparameter',
@@ -222,17 +222,17 @@ async function main (cbclient, sqsclient, ssmclient, ddclient, docClient, scclie
   }
 
   DBPassword = DBPassword.Parameter.Value
-  DBEngineType = (DBEngineType.match('sqlserver-') ? 'mssql' : DBEngineType)
+
   Schema = engineshared.convertschema(Schema, DBEngineType)
   fs.writeFileSync(fileURLToPath(SelectedModelPath), engineshared.constructmodel(Schema, 'controller'))
   const DBName = 'Logverz'
   const connectionstring = `${DBEngineType}://${DBUserName}:${DBPassword}@${DBEndpointName}:${DBEndpointPort}/${DBName}`
   const sequaliseconfig = engineshared.ConfigureSequalize(DBEngineType)
-  const sequelize = new Sequelize(connectionstring, sequaliseconfig)
+  let sequelize = new Sequelize(connectionstring, sequaliseconfig)
   sequelize.options.logging = false // Disable logging
 
   try {
-    await engineshared.InitiateSQLConnection(sequelize, DBEngineType, connectionstring, DBName)
+    await InitiateSQLConnection(sequelize, DBEngineType, connectionstring, DBName)
     console.log('Connection has been established successfully.\n')
   }
   catch (e) {
@@ -254,7 +254,7 @@ async function main (cbclient, sqsclient, ssmclient, ddclient, docClient, scclie
     await commonshared.deactivatequery(docClient, QueryCommand, UpdateCommand, DatabaseName, DBTableName, jobid)
   }
 
-  // Verify that Invocations table exists, if not create it and the Error messages table,
+  // Verify that Invocations table exists, if not create it and the processing errors table,
   try {
     const initatequery = initiatetablesquery(DBEngineType)
     await sequelize.query(initatequery)
@@ -285,10 +285,10 @@ async function main (cbclient, sqsclient, ssmclient, ddclient, docClient, scclie
   console.log('2.) Starting walk folders, ellipsed time from the beginning is ' + (z1 - z0) / 1000)
   // TODO: CACHE MODE which  SAVE sallKeys to S3 than read it from there
   const s3client = new S3Client({})
-  tobeprocessed = await commonshared.TransformInputValues(s3client, GetBucketLocationCommand , S3Folders, S3EnumerationDepth, _)
+  tobeprocessed = await commonshared.TransformInputValues(s3client, GetBucketLocationCommand, S3Folders, S3EnumerationDepth, _)
 
   do {
-    await commonshared.walkfolders(_, ListObjectsV2Command, ddclient, PutItemCommand, commonshared, tobeprocessed, subfolderlist, getCommonPrefixes, 'controller.js',jobid)
+    await commonshared.walkfolders(_, ListObjectsV2Command, ddclient, PutItemCommand, commonshared, tobeprocessed, subfolderlist, getCommonPrefixes, 'controller.js', jobid)
   }
   while (((subfolderlist.length + tobeprocessed.length) !== 0) && (tobeprocessed.length !== 0))
   const z2 = performance.now()
@@ -296,7 +296,7 @@ async function main (cbclient, sqsclient, ssmclient, ddclient, docClient, scclie
 
   const alltasksresolved = await s3limiter.schedule(() => {
     const allTasks = subfolderlist.map(
-      subfolderarrayitem => getAllKeys(subfolderarrayitem[4],{
+      subfolderarrayitem => getAllKeys(subfolderarrayitem[4], {
         Bucket: subfolderarrayitem[1],
         Prefix: subfolderarrayitem[0],
         Delimiter: subfolderarrayitem[2]
@@ -411,36 +411,36 @@ async function EnvironmentMaxWokerCount (commonshared, scclient, cwclient, dbins
 
   if ((maxactiveconnection !== 0)) { // there are database performance metrics available for further decisions.
     if (PreferedWorkerNumber === 'auto') {
-      var NumberofWorkers = parseInt((Math.min(...maxworkercount)/2) * 0.4) //1 lambda creats 2 connecttions hence we take half of the lowest workercount, and use 40% of it
-      console.log('The determined worker count equals to 40% of the lowest environment limit \'s '+ NumberofWorkers+' ,taking into account that each lambda has 2 active connections to the DB.\n')
+      var NumberofWorkers = parseInt((Math.min(...maxworkercount) / 2) * 0.4) // 1 lambda creats 2 connecttions hence we take half of the lowest workercount, and use 40% of it
+      console.log('The determined worker count equals to 40% of the lowest environment limit \'s ' + NumberofWorkers + ' ,taking into account that each lambda has 2 active connections to the DB.\n')
     }
-    else if (((Math.min(...maxworkercount)/2) > PreferedWorkerNumber) && (PreferedWorkerNumber > maxactiveconnection)) {
+    else if (((Math.min(...maxworkercount) / 2) > PreferedWorkerNumber) && (PreferedWorkerNumber > maxactiveconnection)) {
       console.log(warning)
       var NumberofWorkers = parseInt(PreferedWorkerNumber)
       console.log('The prefered (' + PreferedWorkerNumber + ') worker count is under the environment limits, hence it will be used. However the connections memory requirement is more than the available free memory, \n')
       console.log('If its significantly higher the database will start to **SWAP** and execution will be significantly slower or fail, if current number (' + NumberofWorkers + ') of Lambda workers are needed a larger capacity DB instance is advised.\n')
     }
-    else if (((Math.min(...maxworkercount)/2) > PreferedWorkerNumber) && (PreferedWorkerNumber < maxactiveconnection)) {
+    else if (((Math.min(...maxworkercount) / 2) > PreferedWorkerNumber) && (PreferedWorkerNumber < maxactiveconnection)) {
       var NumberofWorkers = parseInt(PreferedWorkerNumber)
       console.log('The prefered (' + PreferedWorkerNumber + ') worker count is under the environment limits and memory requirement, hence it will be used.\n')
     }
     else {
-      var NumberofWorkers = parseInt(Math.ceil((Math.min(...maxworkercount)/2) * 0.6))
+      var NumberofWorkers = parseInt(Math.ceil((Math.min(...maxworkercount) / 2) * 0.6))
       console.log('The prefered (' + PreferedWorkerNumber + ') worker count is over the lowest environment limit, 60% of the limit (' + NumberofWorkers + ') is going to be used.\n')
     }
   }
   else {
     // bellow doing the determination without database performance metrics
     if (PreferedWorkerNumber === 'auto') {
-      var NumberofWorkers = parseInt((Math.min(...maxworkercount) / 2) * 0.4) //1 lambda creats 2 connecttions hence we take half of the lowest workercount, and use 40% of it.
+      var NumberofWorkers = parseInt((Math.min(...maxworkercount) / 2) * 0.4) // 1 lambda creats 2 connecttions hence we take half of the lowest workercount, and use 40% of it.
       console.log('The determined worker count is ' + NumberofWorkers + ', 40% of the lowest environment limit (' + Math.min(...maxworkercount) + ').\n')
     }
-    else if (((Math.min(...maxworkercount)/2) > PreferedWorkerNumber)) {
+    else if (((Math.min(...maxworkercount) / 2) > PreferedWorkerNumber)) {
       var NumberofWorkers = parseInt(PreferedWorkerNumber)
       console.log('The determined worker count is ' + NumberofWorkers + ', as the prefered worker count (' + PreferedWorkerNumber + ') is lower the lowest environment limit ' + Math.min(...maxworkercount) + '.\n')
     }
-    else if (((Math.min(...maxworkercount)/2) < PreferedWorkerNumber)) {
-      var NumberofWorkers = parseInt(Math.ceil((Math.min(...maxworkercount)/2) * 0.6))
+    else if (((Math.min(...maxworkercount) / 2) < PreferedWorkerNumber)) {
+      var NumberofWorkers = parseInt(Math.ceil((Math.min(...maxworkercount) / 2) * 0.6))
       console.log('The determined worker count is ' + NumberofWorkers + ',  60% of the lowest environment limit (' + Math.min(...maxworkercount) + '), taking into account that each lambda has 2 active connections to the DB. \n')
     }
     else {
@@ -485,7 +485,7 @@ async function controllambdajobs (workerlimiter, ddclient, PutItemCommand, ssmcl
         }
       })
 
-      console.log('SQS queue length: ' + queuelength.ApproximateNumberOfMessages +' messages in flight '+queuelength.ApproximateNumberOfMessagesNotVisible +'. Running lambdas count: ' + counts.EXECUTING + '\n' + ' controller\'s internal queue' + JSON.stringify(counts) + '\n\n\n')
+      console.log('SQS queue length: ' + queuelength.ApproximateNumberOfMessages + ' messages in flight ' + queuelength.ApproximateNumberOfMessagesNotVisible + '. Running lambdas count: ' + counts.EXECUTING + '\n' + ' controller\'s internal queue' + JSON.stringify(counts) + '\n\n\n')
 
       if (queuelength.ApproximateNumberOfMessages <= (Math.ceil(NumberofWorkers * 0.10)) && queuelength.ApproximateNumberOfMessagesNotVisible <= (Math.ceil(NumberofWorkers * 0.10)) && SQSQUEUENOTNULL) {
         SQSQUEUENOTNULL = false // when sqs approx length is less than 25% SQSQUEUENOTNULL=false
@@ -698,7 +698,7 @@ async function getSQSqueueProperties (QueueURL) {
 const getCommonPrefixes = async (currentdepth, region, jobid, callerid, ddclient, PutItemCommand, commonshared, ListObjectsV2Command, params, allKeys = []) => {
   // https://stackoverflow.com/questions/42394429/aws-sdk-s3-best-way-to-list-all-keys-with-listobjectsv2
 
-  const s3client = new S3Client({ region }) //region: "us-west-2"
+  const s3client = new S3Client({ region }) // region: "us-west-2"
   try {
     const command = new ListObjectsV2Command(params)
     var data = await s3client.send(command)
@@ -899,6 +899,50 @@ async function GetConfiguration (directory, value) {
     var data = (await import(moduleDataURL))
   }
   return data
+}
+
+async function InitiateSQLConnection (sequelize, DBEngineType, connectionstring, DBName) {
+
+  if (DBEngineType === 'mssql') {
+    // by default mssql does not have a Logverz database, so at first execution it needs to be created.
+
+    sequelize.options.validateBulkLoadParameters = true
+    sequelize.options.loginTimeout = 15
+
+    try {
+      await sequelize.authenticate()
+    }
+    catch (err) {
+      if (err.name === 'SequelizeAccessDeniedError') {
+
+        // At first execution Logverz DB is not present need to connect to a different db to verify credentials
+        // than create  Logverz DB and if successfull return authenticated true.
+        sequelize = new Sequelize(connectionstring)
+        sequelize.connectionManager.config.database = 'master'
+        sequelize.options.logging = false
+
+        // trying to authenticate a 2nd time either works (case of 1st execution) or errors (wrong credential).
+        // This error is caught in the main try catch
+        await sequelize.authenticate()
+
+        // connection succeeded creating mssql database
+        await sequelize.query('CREATE DATABASE ' + DBName)
+
+        // connectioning to newly created DB
+        sequelize = new Sequelize(connectionstring)
+        await sequelize.authenticate()
+
+      }
+      else {
+        console.log(err)
+      }
+    }
+  }
+  else {
+    //non mssql DB
+    await sequelize.authenticate()
+  }
+
 }
 
 // kudos : "https://manytools.org/hacker-tools/ascii-banner/"

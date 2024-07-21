@@ -234,6 +234,18 @@
 							"Effect": "Allow",
 							"Action": "iam:GetGroup",
 							"Resource": "*"
+						},
+						{
+							"Sid": "GetBuildLogs",
+							"Effect": "Allow",
+							"Action": [
+								"logs:GetLogEvents",
+								"logs:DescribeLogGroups"
+							],
+							"Resource": [
+								{"Fn::Sub":"arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/Logverz-Engine*"},
+								{"Fn::Sub":"arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:log-stream:"}
+							]
 						}
 					]
 				},

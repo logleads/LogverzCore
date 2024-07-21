@@ -558,6 +558,37 @@
 						"Resource": "*"
 					},
 					{
+						"Action": [
+							"s3:PutObject"					
+						],
+						"Effect": "Allow",
+						"Resource": [
+							{
+								"Fn::Join": [
+									"",
+									[
+										"arn:aws:s3:::",
+										{
+											"Ref" : "EngineBucket"
+										},
+										"/*"
+									]
+								]
+							}, {
+								"Fn::Join": [
+									"",
+									[
+										"arn:aws:s3:::",
+										{
+											"Ref" : "EngineBucket"
+										},
+										"/"
+									]
+								]
+							}
+						]
+					},
+					{
 						"Effect": "Allow",
 						"Action": [
 							"ssm:DescribeParameters"
@@ -667,7 +698,9 @@
 					"Variables": {
 						"StackName" : {"Ref": "AWS::StackName"},
 						"TestingTimeout" : "0",
-						"sequalisepath": "file:///var/task/node_modules/sequelize/lib/index.mjs"
+						"sequalisepath": "file:///var/task/node_modules/sequelize/lib/index.mjs",
+						"EngineBucket":{ "Ref" : "EngineBucket" },
+						"DebugInsert":"0"
 					}
 				},
 				"Description": "To Retrive matching data from S3",

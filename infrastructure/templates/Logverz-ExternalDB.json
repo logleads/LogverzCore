@@ -246,7 +246,7 @@
 								{
 									"Fn::Split" : [ ":", {
 										"Fn::GetAtt" : [ "LogverzDBServerless", "DBClusterArn" ]
-									} 
+									}
 									]
 								}
 							]
@@ -351,16 +351,16 @@
 									"isServer",
 									{
 										"Fn::Sub": ["arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:${DBName}", {
-										"DBName": {
-											"Ref": "LogverzDB"
-										}
+											"DBName": {
+												"Ref": "LogverzDB"
+											}
 										}]
 									},
 									{
 										"Fn::Sub": ["arn:aws:rds:${AWS::Region}:${AWS::AccountId}:cluster:${DBName}", {
-										"DBName": {
-											"Ref": "LogverzDBServerless"
-										}
+											"DBName": {
+												"Ref": "LogverzDBServerless"
+											}
 										}]
 									}
 								]
@@ -390,8 +390,8 @@
 					"Ref": "DBUserPasswd"
 				},
 				"ServerlessV2ScalingConfiguration": {
-					"MinCapacity": { "Fn::Select" : [ "0",{ "Fn::Split" : [ "-", { "Fn::Select" : [ "1", { "Fn::Split" : [ ":", {"Ref":"DBInstanceClass"} ] }] }] }] },
-					"MaxCapacity": { "Fn::Select" : [ "1",{ "Fn::Split" : [ "-", { "Fn::Select" : [ "1", { "Fn::Split" : [ ":", {"Ref":"DBInstanceClass"} ] }] }] }] }
+					"MinCapacity": { "Fn::Select" : [ "0", { "Fn::Split" : [ "-", { "Fn::Select" : [ "1", { "Fn::Split" : [ ":", {"Ref":"DBInstanceClass"} ] }] }] }] },
+					"MaxCapacity": { "Fn::Select" : [ "1", { "Fn::Split" : [ "-", { "Fn::Select" : [ "1", { "Fn::Split" : [ ":", {"Ref":"DBInstanceClass"} ] }] }] }] }
 				},
 				"VpcSecurityGroupIds": [{
 					"Fn::ImportValue": "DBSecGroup"
@@ -423,12 +423,12 @@
 		"LogverzDBClusterID": {
 			"Condition" : "isServerless",
 			"Description": "The DBclusterID",
-			"Value":  {
+			"Value": {
 				"Fn::Select" : [6,
 					{
 						"Fn::Split" : [ ":", {
 							"Fn::GetAtt" : [ "LogverzDBServerless", "DBClusterArn" ]
-						} 
+						}
 						]
 					}
 				]
