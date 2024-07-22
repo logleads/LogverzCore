@@ -10,13 +10,13 @@
     "type": "git",
     "url": "https://logleads@dev.azure.com/logleads/Logverz/_git/Logverz"
   },
+  "type": "module",
   "author": "platformlead",
-  "type": "commonjs",
   "license": "LogLeads License 1.0",
   "dependencies": {
-    "aws-sdk": "^2.1599.0",
-    "axios": "^1.6.8",
-    "cfn-response": "^1.0.1",
+    "@aws-sdk/client-dynamodb": "^3.616.0",
+    "@aws-sdk/client-ssm": "^3.616.0",
+    "@aws-sdk/lib-dynamodb": "^3.616.0",
     "generate-password": "^1.7.1",
     "lodash": "^4.17.21"
   }

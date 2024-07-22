@@ -1,15 +1,22 @@
+/* eslint-disable array-callback-return */
 /* eslint-disable no-redeclare */
 /* eslint-disable no-var */
 /* eslint brace-style: ["error", "stroustrup"] */
-var AWS = require('aws-sdk')
-var _ = require('lodash')
-var path = require('path')
-const axios = require('axios')
 
-const {
-  generateKeyPairSync
-} = require('crypto')
-var generator = require('generate-password')
+import { fileURLToPath } from 'url'
+import path from 'path'
+import fs from 'fs'
+import _ from 'lodash'
+import { generateKeyPairSync } from 'node:crypto'
+import generator from 'generate-password'
+
+import { SSMClient, GetParameterCommand, DeleteParameterCommand, PutParameterCommand } from '@aws-sdk/client-ssm'
+import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb'
+import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+
 var finalresult = {}
 var results = []
 
@@ -38,24 +45,26 @@ _.mergeWith(ListOfSSMKeys, ListOfSSMStandardKeys, customizer)
 
 console.log('start')
 
-module.exports.handler = async function (event, context) {
+export const handler = async (event, context) => {
   if (process.env.Environment !== 'LocalDev') {
     // Prod lambda function settings
     var arnList = (context.invokedFunctionArn).split(':')
     var region = arnList[3]
-    var commonshared = require('./shared/commonshared.js')
+    var commonsharedpath = ('file:///' + path.join(__dirname, './shared/commonsharedv3.js').replace(/\\/g, '/'))
+    var commonshared = await GetConfiguration(commonsharedpath, '*')
     var LogverzDBSecretRef = requestpropertylookup(event, 'LogverzDBSecretRef')
     var Mode = requestpropertylookup(event, 'Mode')
     var RegistryNewValue = requestpropertylookup(event, 'RegistryNewValue')
     var RegistryName = requestpropertylookup(event, 'RegistryName')
     var requesttype = event.RequestType
-    var maskedevent = maskcredentials(JSON.parse(JSON.stringify(event))) 		// TODO move it to commonshared.json
+    var maskedevent = commonshared.maskcredentials(JSON.parse(JSON.stringify(event)))
     console.log('THE EVENT: \n' + JSON.stringify(maskedevent) + '\n\n')
     console.log('context RECEIVED: ' + JSON.stringify(context))
   }
   else {
     // Dev environment settings
-    const mydev = require(path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'setconnectionparamsdb', 'mydev.js'))
+    var directory = path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'setconnectionparamsdb', 'mydev.mjs')
+    const mydev = await import('file:///' + directory.replace(/\\/g, '/'))
     var region = mydev.region
     var commonshared = mydev.commonshared
     var LogverzDBSecretRef = mydev.LogverzDBSecretRef
@@ -70,34 +79,30 @@ module.exports.handler = async function (event, context) {
   console.log('Mode: ' + Mode)
   console.log('RequestType: ' + requesttype)
 
-  AWS.config.update({
-    region
-  })
-  var SSM = new AWS.SSM()
-  const dynamodb = new AWS.DynamoDB()
-  var docClient = new AWS.DynamoDB.DocumentClient()
+  const ddclient = new DynamoDBClient({ region })
+  const docClient = DynamoDBDocumentClient.from(ddclient)
+  const ssmclient = new SSMClient({})
 
   if (Mode === 'RetrieveSecret') {
     var details = {
       source: 'setconnectionparamsdb.js:RetrieveSecret/getssmparameter',
       message: ''
     }
-    var result = await commonshared.getssmparameter(SSM, {
+    var param = {
       Name: LogverzDBSecretRef,
       WithDecryption: true
-    }, dynamodb, details)
+    }
+    var result = await commonshared.getssmparameter(ssmclient, GetParameterCommand, param, ddclient, PutItemCommand, details)
+
     finalresult = {
       Name: result.Parameter.Name,
       Value: result.Parameter.Value
     }
   }
-  else if (requesttype === 'Delete' && Mode === 'RegistryRequest') {
-    console.log(RegistryNewValue + '\n\nresource was deleted. Either due to scalling activity or cloudformation stack delete.')
-  }
   else if (requesttype === 'Delete' && Mode === 'StackDelete') {
     // Enable code to run only in case of event of DB stack delete.
     var registrynewobject = convertstringtoobject(RegistryNewValue)
-    var databases = await getdbRegistryentries(SSM, dynamodb, commonshared, RegistryName)
+    var databases = await getdbRegistryentries(ssmclient, GetParameterCommand, ddclient, PutItemCommand, commonshared, RegistryName)
     var LogverzDBSecretRef = ''
     var found = false
     for (const item in databases) {
@@ -112,13 +117,20 @@ module.exports.handler = async function (event, context) {
         console.log('\n\nDeleting Registry value: ' + JSON.stringify(dbobject))
         // Deleting here the secret reference
         LogverzDBSecretRef = dbobject.LogverzDBSecretRef
-        var result = await commonshared.getssmparameter(SSM, {
+
+        var details = {
+          source: 'setconnectionparamsdb.js:StackDelete/getssmparameter',
+          message: ''
+        }
+        var param = {
           Name: LogverzDBSecretRef,
           WithDecryption: true
-        }, dynamodb, details)
+        }
+        var result = await commonshared.getssmparameter(ssmclient, GetParameterCommand, param, ddclient, PutItemCommand, details)
+
         if (typeof (result) === 'object') {
           // if exists deleting corresponding password //DELETE
-          await SetSSMParameter(SSM, 'null', LogverzDBSecretRef, requesttype)
+          await SetSSMParameter(commonshared, ddclient, ssmclient, 'null', LogverzDBSecretRef, requesttype)
           console.log('\n\nDeleted Password key: ' + LogverzDBSecretRef)
         }
 
@@ -139,7 +151,7 @@ module.exports.handler = async function (event, context) {
       var parametername = RegistryName
       if (parametervalue !== '') {
         // deleting individual entries from the DB registry
-        var result = await SetSSMParameter(SSM, parametervalue, parametername, 'Update')
+        var result = await SetSSMParameter(commonshared, ddclient, ssmclient, parametervalue, parametername, 'Update')
         console.log("Parameter '" + parametername + "' request '" + requesttype + "' has been completed.\nNewVersion: " + result.Version)
         finalresult = {
           Parameter: parametername,
@@ -149,7 +161,7 @@ module.exports.handler = async function (event, context) {
       }
       else {
         // in case the last (default db) delete the parameter can be deleted
-        var result = await SetSSMParameter(SSM, parametervalue, parametername, 'Delete')
+        var result = await SetSSMParameter(commonshared, ddclient, ssmclient, parametervalue, parametername, 'Delete')
         console.log("Parameter '" + parametername + "' request '" + requesttype + "' has been completed.\nOutput: " + JSON.stringify(result))
         finalresult = {
           Parameter: parametername,
@@ -164,6 +176,13 @@ module.exports.handler = async function (event, context) {
       }
     }
   }
+  else if (requesttype === 'Delete' && Mode === 'RegistryRequest') {
+    //console.log(RegistryNewValue + '\n\nresource was deleted. Either due to scalling activity or cloudformation stack delete.')
+    console.log('Cloudformation replacing SetDBConnectionResource')
+    finalresult = {
+      Nochange: 'Parameter has been deleted/updated prior'
+    }
+  }
   else if (requesttype === 'Delete' && Mode === 'RegisterSecret') {
     console.log('Cloudformation replacing SetDBConnectionResource')
     finalresult = {
@@ -174,7 +193,7 @@ module.exports.handler = async function (event, context) {
     // Create and update  SSM DB Registry value(s).
     var registrynewobject = convertstringtoobject(RegistryNewValue)
     _.unset(registrynewobject, '[[DBDELIM]]')
-    var databases = await getdbRegistryentries(SSM, dynamodb, commonshared, RegistryName)
+    var databases = await getdbRegistryentries(ssmclient, GetParameterCommand, ddclient, PutItemCommand, commonshared, RegistryName)
 
     var missing = true
     for (const item in databases) {
@@ -217,8 +236,8 @@ module.exports.handler = async function (event, context) {
       var dbobject = convertstringtoobject(RegistryNewValue[0])
       console.log('\n\nNew Registry value: ' + JSON.stringify(dbobject))
       databases.push(RegistryNewValue[0])
-      await createsystemtablepermission(docClient, commonshared, 'ProcessingErrors', dbobject.LogverzDBFriendlyName, region)
-      await createsystemtablepermission(docClient, commonshared, 'Invocations', dbobject.LogverzDBFriendlyName, region)
+      await createsystemtablepermission(docClient, PutCommand, 'ProcessingErrors', dbobject.LogverzDBFriendlyName, region)
+      await createsystemtablepermission(docClient, PutCommand, 'Invocations', dbobject.LogverzDBFriendlyName, region)
     }
 
     var parametervalue = ''
@@ -229,7 +248,7 @@ module.exports.handler = async function (event, context) {
     console.log('\n\nFinal Registry value: ' + parametervalue)
     var parametername = RegistryName
 
-    var result = await SetSSMParameter(SSM, parametervalue, parametername, requesttype)
+    var result = await SetSSMParameter(commonshared, ddclient, ssmclient, parametervalue, parametername, requesttype)
     console.log("Parameter '" + parametername + "' request '" + requesttype + "' has been completed.\nNewVersion: " + result.Version)
     finalresult = {
       Parameter: parametername,
@@ -254,29 +273,31 @@ module.exports.handler = async function (event, context) {
         var Names = _.flatten([ListOfSSMKeys[property]])
       }
 
-      var parametercheckresults = await checkparameters(SSM, dynamodb, commonshared, Names)
+      var parametercheckresults = await checkparameters(ssmclient, GetParameterCommand, ddclient, PutItemCommand, commonshared, Names)
 
       if ((parametercheckresults.InvalidParameters.length !== 0) && (requesttype !== 'Delete')) {
-        actionitems.push(generateSSMPairs(property, propertyvalue, event.ResourceProperties))
+        // generate all missing parameters
+        actionitems.push(generateSSMkeys(property, propertyvalue, event.ResourceProperties))
       }
       else if (parametercheckresults.Parameters.length !== 0) {
         // compare the two and if new propertychanged update it
-       var propertycomparisonresult = ispropertysame(event,property,parametercheckresults)
+        var propertycomparisonresult = ispropertysame(event, property, parametercheckresults)
 
         if ((propertyvalue !== 'autogeneratedkey') && (propertycomparisonresult !== true)) {
           console.log(`${property} property has changed.`)
 
           if (property === 'TokenSigningPassphrase') {
-            actionitems.push(generateSSMPairs(property, propertyvalue, event.ResourceProperties))
-          } 
+            actionitems.push(generateSSMkeys(property, propertyvalue, event.ResourceProperties))
+          }
           else {
             var changedobject = {}
             var ssmkey = ListOfSSMKeys[property]
             if (ssmkey === 'LogverzDBSecretRef') {
               ssmkey = event.ResourceProperties.LogverzDBSecretRef
-              changedobject[ssmkey] =event.ResourceProperties.DBpassword
-            }else{
-              changedobject[ssmkey] = generateSSMPairs(property, propertyvalue, event.ResourceProperties)
+              changedobject[ssmkey] = event.ResourceProperties.DBpassword
+            }
+            else {
+              changedobject[ssmkey] = generateSSMkeys(property, propertyvalue, event.ResourceProperties)
             }
             actionitems.push(changedobject)
           }
@@ -301,11 +322,11 @@ module.exports.handler = async function (event, context) {
         Overwrite: true
       }
 
-      if (ListOftandardKeyNames.includes(parametername)){
-        ssmparams["Type"]='String'
+      if (ListOftandardKeyNames.includes(parametername)) {
+        ssmparams.Type = 'String'
       }
-      
-      var result = await commonshared.setssmparameter(SSM, ssmparams, dynamodb, details)
+
+      var result = await commonshared.setssmparameter(ssmclient, PutItemCommand, PutParameterCommand, ssmparams, ddclient, details)
 
       console.log("Parameter '" + parametername + "' Add/Modify request has been completed.")
       var object = {}
@@ -319,7 +340,6 @@ module.exports.handler = async function (event, context) {
     finalresult = convertresultstoobject(results)
   }
 
-  
   var i = 1
   var waittime = 1000
   var exitcondition = false
@@ -331,27 +351,21 @@ module.exports.handler = async function (event, context) {
     if (context.getRemainingTimeInMillis() < 5000) {
       // send this before function timeout.
       console.log('the remaining time:' + context.getRemainingTimeInMillis())
-      // return response(event, context, 'FAILED', {
-      //   error: 'Timeout before completing the requested operation(s)...'
-      // })
       /* eslint brace-style: ["error", "stroustrup"] */
       return await commonshared.newcfnresponse(event, context, 'FAILED', {})
-      
     }
-    else if (finalresult !== {}) {
+    // eslint-disable-next-line eqeqeq
+    else if (finalresult != {}) {
       exitcondition = true
-      //return response(event, context, 'SUCCESS', finalresult)
+      // return response(event, context, 'SUCCESS', finalresult)
       return await commonshared.newcfnresponse(event, context, 'SUCCESS', {})
     }
     i++
   }
   while (!exitcondition)
-  
 }
 
-async function createsystemtablepermission (docClient, commonshared, type, DBName, region) {
-  // var type="Invocations"
-  // var DBName="DefaultDB"
+async function createsystemtablepermission (docClient, PutCommand, type, DBName, region) {
   var tableentry = {
     UsersQuery: 'Logverz:System',
     UnixTime: (Date.now() / 1000 | 0 + Math.floor(Math.random() * 100)), // ading few random seconds so that the two tables are not created at the same time
@@ -382,11 +396,12 @@ async function createsystemtablepermission (docClient, commonshared, type, DBNam
   }
   params.Item = tableentry
 
-  var dynamodbresult = await commonshared.putJSONDDB(docClient, params)
+  const putcommand = new PutCommand(params)
+  const dynamodbresult = await docClient.send(putcommand)
   return dynamodbresult
 }
 
-async function checkparameters (SSM, dynamodb, commonshared, Names) {
+async function checkparameters (ssmclient, GetParameterCommand, ddclient, PutItemCommand, commonshared, Names) {
   // check here if value exists if missing,put parameter to new variables list if exists check if new value is different or not if different then update it.
   var details = {
     source: 'setconnectionparamsdb.js:RegisterSecret/getssmparameter',
@@ -397,13 +412,16 @@ async function checkparameters (SSM, dynamodb, commonshared, Names) {
     Parameters: []
   }
   for await (var OneName of Names) {
-    var result = await commonshared.getssmparameter(SSM, {
+    var param = {
       Name: OneName,
       WithDecryption: true
-    }, dynamodb, details)
+    }
+
+    var result = await commonshared.getssmparameter(ssmclient, GetParameterCommand, param, ddclient, PutItemCommand, details)
     if (typeof (result) === 'string') {
       // there was an error retrieving the parameter
       parametercheckresults.InvalidParameters.push(OneName)
+      console.log('The parameter will be created.')
     }
     else {
       parametercheckresults.Parameters.push(result)
@@ -413,22 +431,24 @@ async function checkparameters (SSM, dynamodb, commonshared, Names) {
   return parametercheckresults
 }
 
-async function getdbRegistryentries (SSM, dynamodb, commonshared, RegistryName) {
+async function getdbRegistryentries (ssmclient, GetParameterCommand, ddclient, PutItemCommand, commonshared, RegistryName) {
   var details = {
     source: 'setconnectionparamsdb.js:getdbRegistryentries/getssmparameter',
     message: ''
   }
-  var existingssmparameter = await commonshared.getssmparameter(SSM, {
+
+  var param = {
     Name: RegistryName,
     WithDecryption: false
-  }, dynamodb, details)
+  }
+  var existingssmparameter = await commonshared.getssmparameter(ssmclient, GetParameterCommand, param, ddclient, PutItemCommand, details)
   var registrycurrentvalue = existingssmparameter.Parameter.Value.replace('placeholder', '')
   var connectionstringsarray = registrycurrentvalue.split('[[DBDELIM]]')
   var databases = _.reject(connectionstringsarray, _.isEmpty)
   return databases
 }
 
-function generateSSMPairs (property, propertyvalue, ResourceProperties) {
+function generateSSMkeys (property, propertyvalue, ResourceProperties) {
   var newvariables = []
 
   if (property === 'WebRTCProxyKey') {
@@ -468,6 +488,7 @@ function generateSSMPairs (property, propertyvalue, ResourceProperties) {
     var obj = {}
     var LogverzDBSecretRef = ResourceProperties.LogverzDBSecretRef
     obj[LogverzDBSecretRef] = DBpassword
+    console.log('Configuring new database ssm password parameter.  Adding it to the list of added/modified keys.')
     newvariables.push(obj)
   }
   else if (property === 'TokenSigningPassphrase') {
@@ -492,6 +513,8 @@ function generateSSMPairs (property, propertyvalue, ResourceProperties) {
     }
 
     var autogeneratedkeys = generateKeys(TokenSigningPassphrase)
+    console.log('Configuring new keypair with the provided TokenSigningPassphrase. Adding those to the list of added/modified keys.')
+
     newvariables.push({
       '/Logverz/Logic/Passphrase': TokenSigningPassphrase
     })
@@ -593,52 +616,49 @@ function generateKeys (passphrase) {
   return keys
 }
 
-async function SetSSMParameter (SSM, parametervalue, parametername, requesttype) {
-  // TODO refactor to use the commonshared.setssmparameters.
+async function SetSSMParameter (commonshared, ddclient, ssmclient, parametervalue, parametername, requesttype) {
   parametervalue = parametervalue.replace(/"/g, '')
   parametername = parametername.replace(/"/g, '')
   requesttype = requesttype.replace(/"/g, '')
 
   var isstandardstring = _.includes(_.flatten(Object.values(ListOfSSMStandardKeys)), parametername)
 
-  var promisedresult = new Promise((resolve) => {
-    if (requesttype === 'Delete') {
+  if (requesttype === 'Delete') {
+    var params = {
+      Name: parametername
+    }
+
+    const command = new DeleteParameterCommand(params)
+    return await ssmclient.send(command)
+  }
+  else {
+    if (isstandardstring === false) {
       var params = {
-        Name: parametername
+        Name: parametername,
+        Type: 'SecureString',
+        Value: parametervalue,
+        Description: '.',
+        Overwrite: true,
+        Tier: 'Standard'
       }
-      SSM.deleteParameter(params, function (err, data) {
-        if (err) console.log(err, err.stack) // an error occurred
-        else resolve(data) // console.log(data);           // successful response
-      })
     }
     else {
-      if (isstandardstring === false) {
-        var params = {
-          Name: parametername,
-          Type: 'SecureString',
-          Value: parametervalue,
-          Description: '.',
-          Overwrite: true,
-          Tier: 'Standard'
-        }
+      var params = {
+        Name: parametername,
+        Type: 'String',
+        Value: parametervalue,
+        Description: '.',
+        Overwrite: true,
+        Tier: 'Standard'
       }
-      else {
-        var params = {
-          Name: parametername,
-          Type: 'String',
-          Value: parametervalue,
-          Description: '.',
-          Overwrite: true,
-          Tier: 'Standard'
-        }
-      }
-      SSM.putParameter(params, function (err, data) {
-        if (err) console.log(err, err.stack) // an error occurred
-        else resolve(data) // console.log(data); // successful response
-      })
     }
-  }) // new promise
-  return await promisedresult
+
+    var details = {
+      source: 'setconnectionparamsdb.js:main/setssmparameter',
+      message: ''
+    }
+    return await commonshared.setssmparameter(ssmclient, PutItemCommand, PutParameterCommand, params, ddclient, details)
+  }
 }
 
 function timeout (ms) {
@@ -675,74 +695,48 @@ function customizer (objValue, srcValue) {
   }
 }
 
-function maskcredentials (mevent) {
-  if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.TokenSigningPassphrase !== undefined) {
-    mevent.ResourceProperties.TokenSigningPassphrase = '****'
-    mevent.OldResourceProperties.TokenSigningPassphrase = '****'
-  }
-  else if (mevent.ResourceProperties.TokenSigningPassphrase !== undefined) {
-    // at first deployment time no OldResourceProperties exists
-    mevent.ResourceProperties.TokenSigningPassphrase = '****'
-  }
-
-  if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.TurnSrvPassword !== undefined) {
-    mevent.ResourceProperties.TurnSrvPassword = '****'
-    mevent.OldResourceProperties.TurnSrvPassword = '****'
-  }
-  else if (mevent.ResourceProperties.TurnSrvPassword !== undefined) {
-    // at first deployment time no OldResourceProperties exists
-    mevent.ResourceProperties.TurnSrvPassword = '****'
-  }
-
-  if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.WebRTCProxyKey !== undefined) {
-    mevent.ResourceProperties.WebRTCProxyKey = '****'
-    mevent.OldResourceProperties.WebRTCProxyKey = '****'
-  }
-  else if (mevent.ResourceProperties.WebRTCProxyKey !== undefined) {
-    // at first deployment time no OldResourceProperties exists
-    mevent.ResourceProperties.WebRTCProxyKey = '****'
-  }
-
-  if (mevent.OldResourceProperties !== undefined && mevent.ResourceProperties.DBpassword !== undefined) {
-    mevent.ResourceProperties.DBpassword = '****'
-    mevent.OldResourceProperties.DBpassword = '****'
-  }
-  else if (mevent.ResourceProperties.DBpassword !== undefined) {
-    // at first deployment time no OldResourceProperties exists
-    mevent.ResourceProperties.DBpassword = '****'
-  }
-
-  return mevent
-}
-
 function requestpropertylookup (event, property) {
   var value
   try {
     value = event.ResourceProperties[property]
-  } catch (err) {
+  }
+  catch (err) {
     console.log('error at function requestproperty lookup:')
     console.error(err)
   }
   return value
 }
 
-function ispropertysame(event,property,parametercheckresults){
-
-  var result=false
-  //if its an update the OldResourceProperties will exists
-  if (event.OldResourceProperties !== undefined ) {
+function ispropertysame (event, property, parametercheckresults) {
+  var result = false
+  // if its an update the OldResourceProperties will exists
+  if (event.OldResourceProperties !== undefined) {
     var oldpropertyvalue = event.OldResourceProperties[property]
-     
-    if (oldpropertyvalue === event.ResourceProperties[property]){
-      result =true
+
+    if (oldpropertyvalue === event.ResourceProperties[property]) {
+      result = true
     }
   }
-  else{
-    //sometime there is property left over (example failed previous deplyoment) than we need to check the parameter store results
-    result=parametercheckresults.Parameters.map(p=> { 
+  else {
+    // sometime there is property left over (example failed previous deplyoment) than we need to check the parameter store results
+    result = parametercheckresults.Parameters.map(p => {
       return Object.values(p.Parameter).includes(event.ResourceProperties[property])
     })[0]
     console.log(result)
   }
   return result
+}
+
+async function GetConfiguration (directory, value) {
+  // Kudos: https://stackoverflow.com/questions/71432755/how-to-use-dynamic-import-from-a-dependency-in-node-js
+  const moduleText = fs.readFileSync(fileURLToPath(directory), 'utf-8').toString()
+  const moduleBase64 = Buffer.from(moduleText).toString('base64')
+  const moduleDataURL = `data:text/javascript;base64,${moduleBase64}`
+  if (value !== '*') {
+    var data = (await import(moduleDataURL))[value]
+  }
+  else {
+    var data = (await import(moduleDataURL))
+  }
+  return data
 }
