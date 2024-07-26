@@ -57,7 +57,7 @@ if (process.env.Environment !== 'LocalDev') {
   var enginesharedpath = ('file:///' + path.join(__dirname, 'shared', 'enginesharedv3.mjs').replace(/\\/g, '/'))
   var engineshared = await GetConfiguration(enginesharedpath, '*')
   var region = process.env.AWS_REGION
-  var heartbeatlocation = '/usr/src/app/build/heartbeat.json'
+  var heartbeatlocation = 'file:///usr/src/app/build/heartbeat.json'
   var ASGNAME = fs.readFileSync('/usr/src/app/build/ASGName').toString().replace(/\r|\n/g, '')
   var instanceId = JSON.parse(fs.readFileSync('/usr/src/app/build/identitydocument').toString().replace(/\r|\n/g, '')).instanceId
   var privateIp = JSON.parse(fs.readFileSync('/usr/src/app/build/identitydocument').toString().replace(/\r|\n/g, '')).privateIp

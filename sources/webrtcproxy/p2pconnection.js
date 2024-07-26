@@ -149,8 +149,8 @@ const p2pconnection = async (req, res) => {
       }
 
       const [isadmin, ispoweruser] = await Promise.all([
-        authenticationshared.admincheck(_, commonshared, docClient, identities, requestoridentity),
-        authenticationshared.powerusercheck(_, commonshared, docClient, identities, requestoridentity, region)
+        authenticationshared.admincheck(_, docClient, QueryCommand, identities, requestoridentity),
+        authenticationshared.powerusercheck(_, docClient, QueryCommand, identities, requestoridentity, region)
       ])
 
       switch (clientrequest.Mode) {

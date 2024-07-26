@@ -1,29 +1,40 @@
-/* eslint-disable camelcase */
+/* eslint-disable array-callback-return */
 /* eslint-disable no-redeclare */
 /* eslint-disable no-var */
-const axios = require('axios')
-var jwt = require('jsonwebtoken')
-var jwkToPem = require('jwk-to-pem')
-var AWS = require('aws-sdk')
-const fs = require('fs')
-const path = require('path')
-const {
-  promisify
-} = require('util')
-const DeleteFile = promisify(fs.unlink)
-var _ = require('lodash')
-const {
-  // parse,
-  stringify
-} = require('flatted')
+/* eslint brace-style: ["error", "stroustrup"] */
 
-var db = require('./db').db
-var MaximumCacheTime=process.env.MaximumCacheTime
+import { fileURLToPath } from 'url'
+import { stringify } from 'flatted'
+import path from 'path'
+import fs from 'fs'
+import _ from 'lodash'
+import jwt from 'jsonwebtoken'
+import loki from 'lokijs'
+import axios from 'axios'
+import jwkToPem from 'jwk-to-pem'
+
+import { SSMClient, GetParameterCommand, PutParameterCommand } from '@aws-sdk/client-ssm'
+import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb'
+import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb'
+import { LambdaClient, InvokeCommand, GetFunctionConfigurationCommand, UpdateFunctionConfigurationCommand } from '@aws-sdk/client-lambda'
+import { fromEnv, fromIni } from '@aws-sdk/credential-providers'
+import { CognitoIdentityProviderClient, DescribeUserPoolClientCommand } from '@aws-sdk/client-cognito-identity-provider'
+import { STSClient, GetCallerIdentityCommand, GetSessionTokenCommand } from '@aws-sdk/client-sts'
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+
+var params = {}
+var MaximumCacheTime = process.env.MaximumCacheTime
+if (typeof db === 'undefined') {
+  // the variable is defined
+  var db = new loki('db.json', {
+    autoupdate: true
+  })
+}
 
 if (db.collections.length === 0) {
-  
-  if (MaximumCacheTime === undefined){
-    MaximumCacheTime =1
+  if (MaximumCacheTime === undefined) {
+    MaximumCacheTime = 1
   }
 
   var identities = db.addCollection('Logverz-Identities', {
@@ -31,16 +42,17 @@ if (db.collections.length === 0) {
   })
 }
 
-var params = {}
-module.exports.handler = async function (event, context) {
+export const handler = async (event, context) => {
   if (process.env.Environment !== 'LocalDev') {
     // Prod lambda function settings
     var arnList = (context.invokedFunctionArn).split(':')
     params.region = arnList[3]
     params.functionName = arnList[6]
-    var commonshared = require('./shared/commonshared')
-    var authenticationshared = require('./shared/authenticationshared')
-    params.configfilelocation = '/tmp/config.json'
+    var commonsharedpath = ('file:///' + path.join(__dirname, './shared/commonsharedv3.js').replace(/\\/g, '/'))
+    var commonshared = await GetConfiguration(commonsharedpath, '*')
+    var authenticationsharedpath = ('file:///' + path.join(__dirname, './shared/authenticationsharedv3.js').replace(/\\/g, '/'))
+    var authenticationshared = await GetConfiguration(authenticationsharedpath, '*')
+    params.configfilelocation = '/tmp/config.ini' // .json
     params.UserPoolId = process.env.UserPoolId
     params.UserPoolPubKey = process.env.UserPoolPubKey
     params.APIGatewayURL = event.headers.Host
@@ -50,9 +62,11 @@ module.exports.handler = async function (event, context) {
     params.ScaleFunction = (process.env.ScaleFunction).split(':').slice(-1)[0]
     params.AllowedOrigins = process.env.AllowedOrigins
     params.AllowedAccounts = process.env.AllowedAccounts
-  } else {
+  }
+  else {
     // Dev environment settings
-    const mydev = require(path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'login', 'mydev.js'))
+    var directory = path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'login', 'mydev.mjs')
+    const mydev = await import('file:///' + directory.replace(/\\/g, '/'))
     var commonshared = mydev.commonshared
     var authenticationshared = mydev.authenticationshared
     var context = mydev.context
@@ -72,7 +86,7 @@ module.exports.handler = async function (event, context) {
     params.AllowedOrigins = mydev.params.AllowedOrigins
   }
 
-  var maskedevent = maskcredentials(JSON.parse(JSON.stringify(event))) // TODO move it to commonshared.json
+  var maskedevent = maskloginsecrets(JSON.parse(JSON.stringify(event)))
   console.log('REQUEST RECEIVED: \n' + JSON.stringify(context) + '\n\n')
   console.log('THE EVENT: \n' + JSON.stringify(maskedevent) + '\n\n')
   // console.log("Scalefunction:\n" + params.ScaleFunction);
@@ -83,25 +97,20 @@ module.exports.handler = async function (event, context) {
   params.username = commonshared.eventpropertylookup(event, 'user', 'queryStringParameters')
   params.stagename = determinestagename(JSON.parse(JSON.stringify(event)))
 
-  AWS.config.update({
-    region: params.region
-  })
-
-  var SSM = new AWS.SSM()
-  var lambda = new AWS.Lambda()
-  var cognitoidentityserviceprovider = new AWS.CognitoIdentityServiceProvider()
-  const dynamodb = new AWS.DynamoDB()
-  var docClient = new AWS.DynamoDB.DocumentClient()
+  const ddclient = new DynamoDBClient(params.region)
+  const docClient = DynamoDBDocumentClient.from(ddclient)
+  const ssmclient = new SSMClient({})
+  const lmdclient = new LambdaClient({})
 
   console.log('start')
-  var result = await main(event, SSM, lambda, cognitoidentityserviceprovider, dynamodb, docClient, commonshared, authenticationshared, params)
+  var result = await main(event, ssmclient, lmdclient, ddclient, docClient, commonshared, authenticationshared, params)
   console.log('end')
 
   return result
   // JSON object sent to API GW to relay it to requestor
 }
 
-async function main (event, SSM, lambda, cognitoidentityserviceprovider, dynamodb, docClient, commonshared, authenticationshared, params) {
+async function main (event, ssmclient, lmdclient, ddclient, docClient, commonshared, authenticationshared, params) {
   if ((params.accountnumber !== undefined) && (!params.AllowedAccounts.includes(params.accountnumber))) {
     var message = `Provided accountnumber ${params.accountnumber} is not on the AllowedAccounts list. Access denied.`
     params = {
@@ -117,15 +126,18 @@ async function main (event, SSM, lambda, cognitoidentityserviceprovider, dynamod
     source: 'login.js:main',
     message: ''
   }
+  var passphparam = {
+    Name: '/Logverz/Logic/Passphrase',
+    WithDecryption: true
+  }
+  var pkparam = {
+    Name: '/Logverz/Logic/PrivateKey',
+    WithDecryption: true
+  }
+
   var [privateKey, passphrase] = await Promise.all([
-    commonshared.getssmparameter(SSM, {
-      Name: '/Logverz/Logic/PrivateKey',
-      WithDecryption: true
-    }, dynamodb, details),
-    commonshared.getssmparameter(SSM, {
-      Name: '/Logverz/Logic/Passphrase',
-      WithDecryption: true
-    }, dynamodb, details)
+    commonshared.getssmparameter(ssmclient, GetParameterCommand, pkparam, ddclient, PutItemCommand, details),
+    commonshared.getssmparameter(ssmclient, GetParameterCommand, passphparam, ddclient, PutItemCommand, details)
   ])
 
   if ((event.resource.match('/Auth') !== null) && (event.httpMethod === 'POST') && event.queryStringParameters.apicall !== undefined) {
@@ -144,36 +156,32 @@ async function main (event, SSM, lambda, cognitoidentityserviceprovider, dynamod
     var response = commonshared.apigatewayresponse(payload, event.headers, params.AllowedOrigins)
 
     return response
-  } else if ((event.resource.match('/Auth') !== null) && (event.httpMethod === 'POST') && (event.queryStringParameters.user !== undefined)) {
+  }
+  else if ((event.resource.match('/Auth') !== null) && (event.httpMethod === 'POST') && (event.queryStringParameters.user !== undefined)) {
     // function is invoked via API GW for AWS IAM USER AUTH
     var response = await AwsIamUserAuth(params.accountnumber, params.username, params.password, event.queryStringParameters.mfavalue, event.queryStringParameters.mfaType)
-    var message = await createIAMAuthresponse(commonshared, authenticationshared, dynamodb, docClient, response.data.state, 'AWS', params.username, privateKey.Parameter.Value, passphrase.Parameter.Value, event.headers, params.AllowedOrigins)
-  } else if ((event.resource.match('/Auth') !== null) && (event.httpMethod === 'POST') && (event.queryStringParameters.accesskey !== undefined)) {
+    var message = await createIAMAuthresponse(commonshared, authenticationshared, ddclient, docClient, response.data.state, 'AWS', params.username, privateKey.Parameter.Value, passphrase.Parameter.Value, event.headers, params.AllowedOrigins)
+  }
+  else if ((event.resource.match('/Auth') !== null) && (event.httpMethod === 'POST') && (event.queryStringParameters.accesskey !== undefined)) {
     // function is invoked via API GW for AWS IAM KEY AUTH
+    var configcontent = '[clientprofile]\n'
+    configcontent += 'aws_access_key_id=' + params.accesskey + '\n'
+    configcontent += 'aws_secret_access_key=' + params.secretkey + '\n'
+
     if (event.queryStringParameters.serialnumber !== undefined) {
-      var configcontent = {
-        accessKeyId: params.accesskey,
-        secretAccessKey: params.secretkey,
-        region: params.region,
-        serialnumber: event.queryStringParameters.serialnumber,
-        tokencode: event.queryStringParameters.tokencode
-      }
-    } else {
-      var configcontent = {
-        accessKeyId: params.accesskey,
-        secretAccessKey: params.secretkey,
-        region: params.region
-      }
+      configcontent += 'serialnumber=' + event.queryStringParameters.serialnumber + '\n'
+      configcontent += 'tokencode=' + event.queryStringParameters.tokencode + '\n'
     }
 
-    fs.writeFileSync(params.configfilelocation, JSON.stringify(configcontent))
-    var response = await AwsIamKeyAuth(params, commonshared, dynamodb)
-    var message = await createIAMAuthresponse(commonshared, authenticationshared, dynamodb, docClient, response.state, 'AWS', response.username, privateKey.Parameter.Value, passphrase.Parameter.Value, event.headers, params.AllowedOrigins)
-  } else if (event.resource.match('/Auth') !== null && event.httpMethod === 'GET') {
+    fs.writeFileSync(fileURLToPath(params.configfilelocation), configcontent, { flags: 'a' })
+    var response = await AwsIamKeyAuth(params, commonshared, ddclient)
+    var message = await createIAMAuthresponse(commonshared, authenticationshared, ddclient, docClient, response.state, 'AWS', response.username, privateKey.Parameter.Value, passphrase.Parameter.Value, event.headers, params.AllowedOrigins)
+  }
+  else if (event.resource.match('/Auth') !== null && event.httpMethod === 'GET') {
     // function is invoked by cognito external identity provider (Google,Okta etc), Authorization code grant flow.
     // more info: https://aws.amazon.com/blogs/mobile/understanding-amazon-cognito-user-pool-oauth-2-0-grants/
 
-    var result = await CognitoAuth(event, jwt, lambda, cognitoidentityserviceprovider, SSM, commonshared, dynamodb, params)
+    var result = await CognitoAuth(event, jwt, lmdclient, ssmclient, commonshared, ddclient, params)
     console.log('auth result: ' + JSON.stringify(result))
 
     if (result) {
@@ -189,21 +197,24 @@ async function main (event, SSM, lambda, cognitoidentityserviceprovider, dynamod
         // Authentication success, Authorizatin success, user exits in database
         var token = createtoken(jwt, domain, username, privateKey.Parameter.Value, passphrase.Parameter.Value)
         var message = cognitosuccess(token, params, username, result)
-      } else {
+      }
+      else {
         // Authentication success, Authorization failure, user does not exist in database
         var message = cognitounuthorized
       }
-    } else {
+    }
+    else {
       // Authentication failure, user provided invalid credentials
       var message = errorresponse
     }
-  } else {
+  }
+  else {
     // catch all for request that do not match specified conditions
     message = errorresponse
     console.log('\nSomekind of error or other auth method\n')
   }
 
-  var lambdaresult = await InvokeScale(lambda, params)
+  var lambdaresult = await InvokeScale(lmdclient, params)
   console.log('Invoke scale result ' + JSON.stringify(lambdaresult.StatusCode))
 
   return message
@@ -211,30 +222,31 @@ async function main (event, SSM, lambda, cognitoidentityserviceprovider, dynamod
 
 async function ValidateUserAccess (commonshared, authenticationshared, docClient, requestoridentity, params) {
   // get the identity once and use in the checks
-  var userattributes = await authenticationshared.getidentityattributes(commonshared, docClient, requestoridentity.Name, requestoridentity.Type) // "admin"
-
+  var userattributes = await authenticationshared.getidentityattributes(docClient, QueryCommand, requestoridentity.Name, requestoridentity.Type)
+ 
   if (userattributes.Items.length !== 0) {
     // with cognito users the user is valid but not authorized to login (does not have permissions associated in Admin module).
     userattributes = userattributes.Items[0]
     identities.insert(userattributes)
 
     var [isadmin, ispoweruser, isuser] = await Promise.all([
-      authenticationshared.admincheck(_, commonshared, docClient, identities, requestoridentity),
-      authenticationshared.powerusercheck(_, commonshared, docClient, identities, requestoridentity, params.region),
-      authenticationshared.usercheck(_, commonshared, docClient, identities, requestoridentity, params.region)
+       authenticationshared.admincheck(_, docClient, QueryCommand, identities, requestoridentity),
+       authenticationshared.powerusercheck(_, docClient, QueryCommand, identities, requestoridentity, params.region),
+       authenticationshared.usercheck(_, docClient, QueryCommand, identities, requestoridentity, params.region)
     ])
   }
 
   if (isadmin || ispoweruser || isuser) {
     var isallallowed = true
-  } else {
+  }
+  else {
     isallallowed = false
   }
 
   return isallallowed
 }
 
-async function CognitoAuth (event, jwt, lambda, cognitoidentityserviceprovider, SSM, commonshared, dynamodb, params) {
+async function CognitoAuth (event, jwt, lmdclient, ssmclient, commonshared, ddclient, params) {
   var url = event.requestContext.domainName
   var redirect_uri = 'https://' + url + event.requestContext.path
   params.UserPoolDomain = 'https://' + params.UserPoolDomain + '.auth.' + params.region + '.amazoncognito.com/oauth2/token'
@@ -243,25 +255,29 @@ async function CognitoAuth (event, jwt, lambda, cognitoidentityserviceprovider, 
   if (params.UserPoolId === params.UserPoolPubKey) {
     // the JSON webkey has not been retrieved yet, downloading now
     // https://docs.aws.amazon.com/cognito/latest/developerguide/amazon-cognito-user-pools-using-tokens-verifying-a-jwt.html
-    params.UserPoolPubKey = await SaveUserPoolPubKey(lambda, params)
+    params.UserPoolPubKey = await SaveUserPoolPubKey(lmdclient, params)
   }
 
   var details = {
     source: 'login.js:CognitoAuth',
     message: ''
   }
+  var csparam = {
+    Name: '/Logverz/Logic/CognitoSecret',
+    WithDecryption: true
+  }
+
   try {
-    params.client_secret = await commonshared.getssmparameter(SSM, {
-      Name: '/Logverz/Logic/CognitoSecret',
-      WithDecryption: true
-    }, dynamodb, details)
-  } catch (err) {
+    params.client_secret = await commonshared.getssmparameter(ssmclient, GetParameterCommand, csparam, ddclient, PutItemCommand, details)
+  }
+  catch (err) {
     console.error(err)
   }
 
   if (typeof (params.client_secret.Parameter) === 'undefined') {
-    params.client_secret = await SaveAppclientSecret(cognitoidentityserviceprovider, SSM, params)
-  } else {
+    params.client_secret = await SaveAppclientSecret(ddclient, commonshared, ssmclient, params)
+  }
+  else {
     params.client_secret = params.client_secret.Parameter.Value
   }
 
@@ -279,7 +295,8 @@ async function CognitoAuth (event, jwt, lambda, cognitoidentityserviceprovider, 
     var result = jwt.verify(tokensdata.id_token, pem, {
       algorithms: ['RS256']
     })
-  } else {
+  }
+  else {
     // cognito token invalid
     var result = false
   }
@@ -303,26 +320,30 @@ async function GetUsersToken (FormData, params) {
     var tokens = await axios(config)
     // console.log(tokens.data)
     var result = tokens.data
-  } catch (err) {
+  }
+  catch (err) {
     console.error('Error exchanging code to token\n' + 'Config:\n' + JSON.stringify(config) + '\n Please check that SSM /Logverz/Logic/CognitoSecret value matches Logverz-Logic user pool -> App Integration -> App clients and analytics -> appclient client name-> Show client secret toggle')
     result = null
   }
   return result
 }
 
-async function SaveAppclientSecret (cognitoidentityserviceprovider, SSM, params) {
+async function SaveAppclientSecret (ddclient, commonshared, ssmclient, params) {
   // Function retrieves Cognito Appclientsecret and save it to ssm
 
-  var client_secret
+  var client_secret = ''
   var upparams = {
     ClientId: params.client_id,
     UserPoolId: params.UserPoolId
   }
+  const cipcclient = new CognitoIdentityProviderClient({})
 
   try {
-    var result = await cognitoidentityserviceprovider.describeUserPoolClient(upparams).promise()
+    const command = new DescribeUserPoolClientCommand(upparams)
+    const result = await cipcclient.send(command)
     client_secret = result.UserPoolClient.ClientSecret
-  } catch (err) {
+  }
+  catch (err) {
     console.log('Lambda function Logverz-Authentiation has ' + params.UserPoolId + ' a resource policy associated to it, where:' + err)
   }
 
@@ -333,21 +354,17 @@ async function SaveAppclientSecret (cognitoidentityserviceprovider, SSM, params)
     Tier: 'Standard',
     Type: 'SecureString'
   }
-  var promisedresult = new Promise((resolve, reject) => {
-    SSM.putParameter(ssmparams, function (err, data) {
-      if (err) {
-        console.log(err, err.stack)
-        reject(err)
-        // an error occurred
-      } else resolve(data) // console.log(data); // successful response
-    })
-  })
-  await promisedresult
+
+  var details = {
+    source: 'login.js:SaveAppclientSecret',
+    message: ''
+  }
+  await commonshared.setssmparameter(ssmclient, PutItemCommand, PutParameterCommand, ssmparams, ddclient, details)
 
   return client_secret
 }
 
-async function SaveUserPoolPubKey (lambda, params) {
+async function SaveUserPoolPubKey (lmdclient, params) {
   var jwksurl = `https://cognito-idp.${params.region}.amazonaws.com/${params.UserPoolId}/.well-known/jwks.json`
   // params.UserPoolId.split('_')[0]
 
@@ -362,11 +379,11 @@ async function SaveUserPoolPubKey (lambda, params) {
     AttributeValue: UserPoolPubKey
   }
 
-  await updatelambdaenvironmentvariables(lambda, functionname, data)
+  await updatelambdaenvironmentvariables(lmdclient, functionname, data)
   return UserPoolPubKey
 }
 
-async function InvokeScale (lambda, params) {
+async function InvokeScale (lmdclient, params) {
   // Client context is empty for async invocations as pare https://github.com/aws/aws-sdk-js/issues/1388#issuecomment-403466618
   // var invocationparameters=`{"logonevent":"true","username":"${params.username}","Domain":"${params.domain}"}`;
   // var clientcontext = Buffer.from(invocationparameters).toString('base64') ;
@@ -380,17 +397,8 @@ async function InvokeScale (lambda, params) {
     LogType: 'None'
   }
 
-  // return await
-  var lambdapromise = new Promise((resolve, reject) => {
-    lambda.invoke(lambdaparams, function (err, data) {
-      if (err) {
-        console.log(err, err.stack)
-        reject(err)
-        // an error occurred
-      } else resolve(data) // console.log(data);// successful response
-    })
-  })
-  var lambdaresult = await lambdapromise
+  const command = new InvokeCommand(lambdaparams)
+  const lambdaresult = await lmdclient.send(command)
   return lambdaresult
 }
 
@@ -431,9 +439,11 @@ async function authrequest (FormData) {
 function createrequestbody (type, accountnumber, username, password, mfavalue, mfaType, code, client_id, redirect_uri) {
   if (type === 'iam-user-authentication-SWMFA') {
     var formparameters = ['action=iam-user-authentication', `account=${encodeURIComponent(accountnumber)}`, `username=${encodeURIComponent(username)}`, `password=${encodeURIComponent(password)}`, `client_id=${encodeURIComponent('arn:aws:iam::015428540659:user/homepage')}`, `redirect_uri=${encodeURIComponent('https://console.aws.amazon.com/console/home?nc2=h_ct&src=header-signin&state=hashArgs#&isauthcode=true')}`, `mfa_otp_1=${encodeURIComponent(mfavalue)}`, `mfaType=${encodeURIComponent(mfaType)}`]
-  } else if (type === 'iam-user-authentication') {
+  }
+  else if (type === 'iam-user-authentication') {
     var formparameters = ['action=iam-user-authentication', `account=${encodeURIComponent(accountnumber)}`, `username=${encodeURIComponent(username)}`, `password=${encodeURIComponent(password)}`, `client_id=${encodeURIComponent('arn:aws:iam::015428540659:user/homepage')}`, `redirect_uri=${encodeURIComponent('https://console.aws.amazon.com/console/home?nc2=h_ct&src=header-signin&state=hashArgs#&isauthcode=true')}`]
-  } else if (type === 'authorization_code') {
+  }
+  else if (type === 'authorization_code') {
     var formparameters = ['grant_type=authorization_code', `client_id=${client_id}`, `code=${code}`, `redirect_uri=${encodeURIComponent(redirect_uri)}`]
   }
 
@@ -459,7 +469,7 @@ function createtoken (jwt, domain, username, privateKey, passphrase) {
   return token
 }
 
-async function createIAMAuthresponse (commonshared, authenticationshared, dynamodb, docClient, state, domain, username, privateKey, passphrase, headers, AllowedOrigins) {
+async function createIAMAuthresponse (commonshared, authenticationshared, ddclient, docClient, state, domain, username, privateKey, passphrase, headers, AllowedOrigins) {
   console.log('Authentication status: ' + state + ', User: ' + username)
 
   if (state === 'SUCCESS') {
@@ -483,7 +493,8 @@ async function createIAMAuthresponse (commonshared, authenticationshared, dynamo
         }
       } // ;TODO add back  -> HttpOnly;  <- once build is done. //// ??'Access-Control-Allow-Origin' : '*'
       var response = commonshared.apigatewayresponse(params, headers, AllowedOrigins)
-    } else {
+    }
+    else {
       var loglevel = 'Error'
       var message = `{"user" : "${username}","status":"Authorization  Failed"}`
       params = {
@@ -493,7 +504,8 @@ async function createIAMAuthresponse (commonshared, authenticationshared, dynamo
       }
       var response = commonshared.apigatewayresponse(params, headers, AllowedOrigins)
     }
-  } else {
+  }
+  else {
     var loglevel = 'Error'
     var message = `{"user" : "${username}","status":"Authentication Failed"}`
     params = {
@@ -508,63 +520,71 @@ async function createIAMAuthresponse (commonshared, authenticationshared, dynamo
     source: 'login.js:main',
     message
   }
-  await commonshared.AddDDBEntry(dynamodb, 'Logverz-Invocations', 'LoginIAM', loglevel, 'User', details, 'API')
+
+  await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'LoginIAM', loglevel, 'User', details, 'API')
+
   return response
 }
 
-async function AwsIamKeyAuth (params, commonshared, dynamodb) {
+async function AwsIamKeyAuth (params, commonshared, ddclient) {
   var configfilelocation = params.configfilelocation
+  var configcontent = fs.readFileSync(fileURLToPath(configfilelocation), 'utf8')
+  var configobject = ini2json(configcontent.split('\n'))
 
-  var configjson = fs.readFileSync(configfilelocation, 'utf8')
-  var configobject = JSON.parse(configjson)
-
-  AWS.config.loadFromPath(configfilelocation)
-  var sts = new AWS.STS()
+  // Initialising sts client wtih credential information (in configfilelocation) provided by the user.
+  // Later functin GetCallerIdentityCommand will determine call to determine if its valid or not. If its valid than who is the user.
+  let stsclient = new STSClient({
+    credentials: fromIni({
+      profile: 'clientprofile',
+      filepath: fileURLToPath(configfilelocation),
+      clientConfig: { region: params.region }
+      //, mfaCodeProvider:  async (serial) => await addserialandtoken2request(token)
+    })
+  })
 
   // eslint-disable-next-line no-prototype-builtins
   if (configobject.hasOwnProperty('serialnumber')) { // configobject.serialnumber.length!==0
-    var result = AwsIamKeyMFA(sts, commonshared, dynamodb, configobject, params)
-  } else {
-    var result = await AwsIamKeynoneMFA(sts, commonshared, dynamodb, configobject, params)
+    var result = await AwsIamKeyMFA(stsclient, commonshared, ddclient, configobject, params)
+  }
+  else {
+    var result = await AwsIamKeynoneMFA(stsclient, commonshared, ddclient, configcontent, params)
   }
 
-  await DeleteFile(configfilelocation)
+  fs.unlinkSync(fileURLToPath(configfilelocation))
 
-  AWS.config = new AWS.Config()
-  // reverting to the default aws lambda role.
-  AWS.config.accessKeyId = process.env.AWS_ACCESS_KEY_ID
-  AWS.config.secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY
-  AWS.config.region = process.env.AWS_DEFAULT_REGION
+  // reverting to the default aws lambda role, credentials are available part of the default environment variables.
+  stsclient = new STSClient({
+    credentials: fromEnv()
+  })
+  const gcicommand = new GetCallerIdentityCommand({})
+  var identity = await stsclient.send(gcicommand)
+  console.log('switched identity to: ' + identity)
   return result
 }
 
-async function AwsIamKeynoneMFA (sts, commonshared, dynamodb, configobject, params) {
+async function AwsIamKeynoneMFA (stsclient, commonshared, ddclient, configcontent, params) {
   var identityerror = ''
   try {
-    var paramsidentity = {}
-    var promisedidentity = new Promise((resolve, reject) => {
-      sts.getCallerIdentity(paramsidentity, function (err, data) {
-        if (err) {
-          console.log(err, err.stack)
-          reject(err)
-          // an error occurred
-        } else resolve(data) // console.log(data);           // successful response
-      })
-    })
-    var identity = await promisedidentity
-  } catch (error) {
-    AWS.config = new AWS.Config()
-    // reverting to the default aws lambda role.
-    AWS.config.accessKeyId = process.env.AWS_ACCESS_KEY_ID
-    AWS.config.secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY
-    AWS.config.region = process.env.AWS_DEFAULT_REGION
-    console.error(error)
+    const gcicommand = new GetCallerIdentityCommand({})
+    var identity = await stsclient.send(gcicommand)
+    // throw new Error('Just `testin!');
+  }
+  catch (error) {
+    console.error(error.message)
     identityerror = error
+
+    // reverting to the default aws lambda role. So that the DynamoDB entry can be commited/added.
+    stsclient = new STSClient({
+      credentials: fromEnv()
+    })
+    const gcicommand = new GetCallerIdentityCommand({})
+    await stsclient.send(gcicommand)
+
     var details = {
       source: 'login.js:AwsIamKeyAuth',
       message: JSON.stringify(error)
     }
-    await commonshared.AddDDBEntry(dynamodb, 'Logverz-Invocations', 'LoginIAM', 'Error', 'User', details, 'API')
+    await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'LoginIAM', 'Error', 'User', details, 'API')
   }
 
   try {
@@ -574,12 +594,14 @@ async function AwsIamKeynoneMFA (sts, commonshared, dynamodb, configobject, para
         state: 'SUCCESS',
         account: identity.Account
       }
-    } else {
+    }
+    else {
       var e = new Error('accountnumber ' + identity.Account + ' is not on the allowedlist!')
       throw e
     }
-  } catch (error) {
-    var message = `IAM key based authenitcation failed for access key: ${configobject.accessKeyId} \n` + identityerror + '\n' + error
+  }
+  catch (error) {
+    var message = `IAM key based authenitcation failed for  ${configcontent.split('\n')[1]} \n` + identityerror + '\n'
     console.error(message)
     var result = {
       username: message,
@@ -590,61 +612,42 @@ async function AwsIamKeynoneMFA (sts, commonshared, dynamodb, configobject, para
   return result
 }
 
-async function AwsIamKeyMFA (sts, commonshared, dynamodb, configobject, params) {
+async function AwsIamKeyMFA (stsclient, commonshared, ddclient, configobject, params) {
   var identityerror = ''
+  var paramsidentity = {
+    DurationSeconds: 900,
+    SerialNumber: configobject.serialnumber,
+    TokenCode: configobject.tokencode
+  }
 
   try {
-    var paramsidentity = {
-      DurationSeconds: 900,
-      SerialNumber: configobject.serialnumber,
-      TokenCode: configobject.tokencode
-    }
-    var promisedidentitymfa = new Promise((resolve, reject) => {
-      sts.getSessionToken(paramsidentity, function (err, data) {
-        if (err) {
-          reject(err)
-          // console.log(err, err.stack);  an error occurred
-        } else {
-          resolve(data)
-        } // console.log(data);           // successful response
-      })
-    })
-    var identitymfa = await promisedidentitymfa
-  } catch (error) {
-    AWS.config = new AWS.Config()
-    // reverting to the default aws lambda role.
-    AWS.config.accessKeyId = process.env.AWS_ACCESS_KEY_ID
-    AWS.config.secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY
-    AWS.config.region = process.env.AWS_DEFAULT_REGION
+    const gstcommand = new GetSessionTokenCommand(paramsidentity)
+    await stsclient.send(gstcommand)
+    // throw new Error('Just `testin!');
+  }
+  catch (error) {
     console.error(error.message)
     identityerror = error
+
+    // reverting to the default aws lambda role. So that the DynamoDB entry can be commited/added.
+    stsclient = new STSClient({
+      credentials: fromEnv()
+    })
+    const gcicommand = new GetCallerIdentityCommand({})
+    await stsclient.send(gcicommand)
+
     var details = {
       source: 'login.js:AwsIamKeyAuth',
       message: JSON.stringify(error)
     }
-    await commonshared.AddDDBEntry(dynamodb, 'Logverz-Invocations', 'LoginIAM', 'Error', 'User', details, 'API')
+
+    await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'LoginIAM', 'Error', 'User', details, 'API')
   }
 
   if (identityerror === '') {
     try {
-      AWS.config = new AWS.Config()
-      // setting temporary credential
-      AWS.config.accessKeyId = identitymfa.Credentials.AccessKeyId
-      AWS.config.secretAccessKey = identitymfa.Credentials.secretAccessKey
-      AWS.config.region = identitymfa.Credentials.region
-      AWS.config.sessionToken = identitymfa.Credentials.SessionToken
-
-      // do sts get caller identity to determine the users name and accountnumber
-      var promisedidentity = new Promise((resolve, reject) => {
-        sts.getCallerIdentity({}, function (err, data) {
-          if (err) {
-            console.log(err, err.stack)
-            reject(err)
-            // an error occurred
-          } else resolve(data) // console.log(data);           // successful response
-        })
-      })
-      var identity = await promisedidentity
+      const gcicommand = new GetCallerIdentityCommand({})
+      var identity = await stsclient.send(gcicommand)
 
       if (params.AllowedAccounts.includes(identity.Account)) {
         var result = {
@@ -652,31 +655,66 @@ async function AwsIamKeyMFA (sts, commonshared, dynamodb, configobject, params) 
           state: 'SUCCESS',
           account: identity.Account
         }
-      } else {
+      }
+      else {
         var e = new Error('accountnumber ' + identity.Account + ' is not on the allowedlist!')
         throw e
       }
-    } catch (error) {
-      var message = `IAM key based authenitcation failed for access key: ${configobject.accessKeyId} \n` + identityerror + '\n' + error
+    }
+    catch (error) {
+      identityerror = error.message
+      var message = `IAM key based authenitcation failed for access key: ${configobject.accessKeyId} \n` + identityerror + '\n'
       console.error(message)
-      // reverting to the default aws lambda role.
-      AWS.config.accessKeyId = process.env.AWS_ACCESS_KEY_ID
-      AWS.config.secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY
-      AWS.config.region = process.env.AWS_DEFAULT_REGION
-      console.error(error)
+
       identityerror = error
       var result = {
         username: message,
         state: 'FAIL'
       }
     }
-  } else {
+  }
+  else {
     var message = `IAM key based authenitcation failed,details: ${identityerror.message} `
     var result = {
       username: message,
       state: 'FAIL'
     }
   }
+
+  // reverting to the default aws lambda role.
+  stsclient = new STSClient({
+    credentials: fromEnv()
+  })
+  const gcicommand = new GetCallerIdentityCommand({})
+  var identity = await stsclient.send(gcicommand)
+
+  return result
+}
+
+function ini2json (data) {
+  // kudos: https://stackoverflow.com/questions/55179240/convert-ini-txt-to-json-in-node-js
+  const result = {}
+
+  let prev = {}
+  let preKey
+
+  data.forEach(line => {
+    const key = line.split('=')[0]
+    const value = line.split('=')[1]
+    const _ = {}
+
+    if (!value) {
+      prev[preKey] += key
+      result[preKey] = prev[preKey]
+    }
+    else {
+      result[key] = value
+    }
+
+    _[key] = value
+    prev = _
+    preKey = key
+  })
 
   return result
 }
@@ -687,11 +725,12 @@ function base64decode (input) {
   return text
 }
 
-function maskcredentials (mevent) {
+function maskloginsecrets (mevent) {
   if (mevent.queryStringParameters.password !== undefined) {
     mevent.queryStringParameters.password = '****'
     mevent.multiValueQueryStringParameters.password[0] = '****'
-  } else if (mevent.queryStringParameters.secretkey !== undefined) {
+  }
+  else if (mevent.queryStringParameters.secretkey !== undefined) {
     mevent.queryStringParameters.secretkey = '****'
     mevent.multiValueQueryStringParameters.secretkey[0] = '****'
   }
@@ -706,7 +745,8 @@ function determinestagename (apigwevent) {
   if ((apigwevent.headers.referer !== undefined) && apigwevent.headers.referer.match('.amazonaws.com') && apigwevent.headers.referer.match('execute-api')) {
     // regular api gw provided domain name is in use need stage name
     result = '/' + apigwevent.requestContext.stage
-  } else {
+  }
+  else {
     // custom domain name, no need for stagename
     result = ''
   }
@@ -741,19 +781,13 @@ function cognitosuccess (token, params, username, result) {
   return json
 }
 
-async function updatelambdaenvironmentvariables (lambda, functionname, data){
- 
+async function updatelambdaenvironmentvariables (lmdclient, functionname, data) {
   var configparams = {
     FunctionName: functionname
   }
 
-  var configpromise = new Promise((resolve, reject) => {
-    lambda.getFunctionConfiguration(configparams, function (err, data) {
-      if (err) reject(err) // console.log(err, err.stack); // an error occurred
-      else resolve(data) // console.log(data);           // successful response
-    })
-  })
-  var lambdaconfig = await configpromise
+  const getcommand = new GetFunctionConfigurationCommand(configparams)
+  const lambdaconfig = await lmdclient.send(getcommand)
   var environmentvariables = lambdaconfig.Environment.Variables
   environmentvariables[data.AttributeName] = data.AttributeValue
 
@@ -763,14 +797,24 @@ async function updatelambdaenvironmentvariables (lambda, functionname, data){
       Variables: environmentvariables
     }
   }
-  var updatepromise = new Promise((resolve, reject) => {
-    lambda.updateFunctionConfiguration(updateparams, function (err, data) {
-      if (err) reject(err) // console.log(err, err.stack); // an error occurred
-      else resolve(data) // console.log(data);           // successful response
-    })
-  })
-  var updateresult = await updatepromise
+
+  const updcommand = new UpdateFunctionConfigurationCommand(updateparams)
+  const updateresult = await lmdclient.send(updcommand)
   console.log(updateresult)
+}
+
+async function GetConfiguration (directory, value) {
+  // Kudos: https://stackoverflow.com/questions/71432755/how-to-use-dynamic-import-from-a-dependency-in-node-js
+  const moduleText = fs.readFileSync(fileURLToPath(directory), 'utf-8').toString()
+  const moduleBase64 = Buffer.from(moduleText).toString('base64')
+  const moduleDataURL = `data:text/javascript;base64,${moduleBase64}`
+  if (value !== '*') {
+    var data = (await import(moduleDataURL))[value]
+  }
+  else {
+    var data = (await import(moduleDataURL))
+  }
+  return data
 }
 
 var errorresponse = {

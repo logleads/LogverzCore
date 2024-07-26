@@ -14,7 +14,7 @@ done
 
 bundlelist=$(ls |grep .zip)
 
-echo -e"\nCopying control bundles to S3 bucket.\n"
+echo -e "\nCopying control bundles to S3 bucket.\n"
 for bundle in $bundlelist;
 do
     echo copying $bundle;
@@ -24,7 +24,7 @@ done
 cd ../bin 
 #ls -la
 zipfilelist=$(ls |grep -E ".*.zip")
-echo -e"\nCopying lambda binaries to S3 bucket.\n"
+echo -e "\nCopying lambda binaries to S3 bucket.\n"
 for zipfile in $zipfilelist;
 do
     echo copying $zipfile;

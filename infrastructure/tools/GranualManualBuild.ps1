@@ -60,7 +60,7 @@ create-Bundle -zipfilename "setconnectionparamsdb.zip" `
               -projectpath $projectpath `
               -componentpath "\sources\setconnectionparamsdb"`
               -files "setconnectionparamsdb.js","package.json","package-lock.json"`
-              -extrafiles "\sources\shared\commonshared.js","\sources\shared\package.json"
+              -extrafiles "\sources\shared\commonsharedv3.js"
                    
 update-lambda -lambdafunctionname "Logverz-SetConnectionParamsDB"`
               -projectpath $projectpath `
@@ -166,8 +166,8 @@ update-lambda -lambdafunctionname "Logverz-IdentitySync"`
 create-Bundle -zipfilename "login.zip" `
                     -projectpath $projectpath `
                     -componentpath "\sources\login"`
-                    -files "db.js","login.js","package.json","package-lock.json"`
-                    -extrafiles "\sources\shared\commonshared.js","\sources\shared\authenticationshared.js","\sources\shared\package.json"
+                    -files "login.js","package.json","package-lock.json"`
+                    -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\authenticationsharedv3.js"
 
                    
 update-lambda -lambdafunctionname "Logverz-Login"`

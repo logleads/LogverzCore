@@ -11,7 +11,7 @@ import jwt from 'jsonwebtoken'
 import axios from 'axios'
 
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
-import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb'
+import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb'
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -143,7 +143,7 @@ async function ProcessValidrequests (s3client, GetObjectCommand, tokenobject, ev
   }
   else {
     // here come all other bucket access
-    const requestcheck = await AuthorizeRequest(tokenobject, authenticationshared, commonshared, docClient, event, LogicBucket, TestPath)
+    const requestcheck = await AuthorizeRequest(tokenobject, authenticationshared, docClient, event, LogicBucket, TestPath)
     if (requestcheck.status !== 'Allow' || requestcheck.status === 'Deny') {
       // the request was invalid for some reason, send the reason back to the requester.
       var response = {
@@ -224,16 +224,16 @@ async function GetFile (url, cookie) {
   return response
 }
 
-async function AuthorizeRequest (tokenobject, authenticationshared, commonshared, docClient, event, LogicBucket, TestPath) {
+async function AuthorizeRequest (tokenobject, authenticationshared, docClient, event, LogicBucket, TestPath) {
   const requesttype = (event.path.split('/')[2]).toLowerCase() // one of S3,Test,Adv
 
   if (requesttype === 's3') {
     const requestedfile = decodeURIComponent(event.path.split('/').slice(4).join().replace(/,/g, '/'))
     const requestbucket = ((event.path.split('/')[3]).toLowerCase()).replace(/^lb$/, LogicBucket)
 
-    const username = tokenobject.value.user.split(':')[1] // dummyuser//admin//Bobthebuilder
-    const usertype = 'User' + tokenobject.value.user.split(':')[0]
-    const data = await authenticationshared.getidentityattributes(commonshared, docClient, username, usertype)
+    const username = tokenobject.value.user.split(':')[1]
+    const usertype = 'User' + tokenobject.value.user.split(':')[0] 
+    const data = await authenticationshared.getidentityattributes(docClient, QueryCommand, username, usertype)
     const statements = authenticationshared.getuserstatements(data.Items[0])
 
     const userrequest = {

@@ -24,6 +24,7 @@ RUN . "$NVM_DIR/nvm.sh" && nvm install ${NODE_VERSION} && \
     . "$NVM_DIR/nvm.sh" && nvm alias default v${NODE_VERSION}
    
 ENV PATH="/root/.nvm/versions/node/v${NODE_VERSION}/bin/:${PATH}"
+ENV sequalisepath="file:///usr/src/app/node_modules/sequelize/lib/index.mjs"
 
 # Create app directory
 WORKDIR /usr/src/app
@@ -60,3 +61,4 @@ CMD [ "pm2-runtime","proxyserver.js"]
 
 
 #docker run --env AWS_REGION=ap-southeast-2 -d --mount type=bind,source=/etc/logverzenv,target=/usr/src/app/build --network='host' logverz/webrtcproxy:latest 
+#docker run --env AWS_REGION=ap-southeast-2 --env sequalisepath=/usr/src/app/node_modules/sequelize/lib/index.mjs -d --network='host' --mount type=bind,source=/home/ec2-user/,target=/usr/src/app/build --log-driver=awslogs --log-opt awslogs-group=/Logverz/WebRTCProxy logverz/webrtcproxy:latest 
