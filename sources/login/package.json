@@ -12,18 +12,18 @@
   "author": "platformlead",
   "license": "LogLeads License 1.0",
   "dependencies": {
-    "@aws-sdk/client-cognito-identity-provider": "^3.616.0",
-    "@aws-sdk/client-dynamodb": "^3.616.0",
-    "@aws-sdk/client-lambda": "^3.616.0",
-    "@aws-sdk/client-ssm": "^3.616.0",
-    "@aws-sdk/client-sts": "^3.616.0",
-    "@aws-sdk/credential-providers": "^3.617.0",
-    "@aws-sdk/lib-dynamodb": "^3.616.0",
-    "axios": "^1.6.8",
+    "@aws-sdk/client-cognito-identity-provider": "^3.632.0",
+    "@aws-sdk/client-dynamodb": "^3.632.0",
+    "@aws-sdk/client-lambda": "^3.632.0",
+    "@aws-sdk/client-ssm": "^3.632.0",
+    "@aws-sdk/client-sts": "^3.632.0",
+    "@aws-sdk/credential-providers": "^3.632.0",
+    "@aws-sdk/lib-dynamodb": "^3.632.0",
+    "axios": "^1.7.4",
     "flatted": "^3.3.1",
     "jsonwebtoken": "^9.0.2",
-    "jwk-to-pem": "^2.0.5",
+    "jwk-to-pem": "^2.0.6",
     "lodash": "^4.17.21",
-    "lokijs": "^1.5.11"
+    "lokijs": "^1.5.12"
   }
 }

@@ -8,10 +8,10 @@
 	"author": "platformlead",
 	"license": "LogLeads License 1.0",
 	"dependencies": {
-		"@aws-sdk/client-dynamodb": "^3.569.0",
-		"@aws-sdk/client-s3": "^3.569.0",
-		"@aws-sdk/lib-dynamodb": "^3.569.0",
-		"axios": "^1.6.8",
+		"@aws-sdk/client-dynamodb": "^3.632.0",
+		"@aws-sdk/client-s3": "^3.633.0",
+		"@aws-sdk/lib-dynamodb": "^3.632.0",
+		"axios": "^1.7.4",
 		"jsonwebtoken": "^9.0.2",
 		"lodash": "^4.17.21"
 	}

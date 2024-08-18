@@ -22,6 +22,7 @@ import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
 import { ServiceQuotasClient, GetServiceQuotaCommand } from '@aws-sdk/client-service-quotas'
 import { CloudWatchClient, GetMetricDataCommand } from '@aws-sdk/client-cloudwatch'
 import { EC2Client, paginateDescribeNetworkInterfaces } from '@aws-sdk/client-ec2'
+import { RDSClient,  DescribeDBInstancesCommand } from '@aws-sdk/client-rds'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -30,10 +31,13 @@ const dbinstanceclasses = fs.readFileSync(path.join(__dirname, 'DbInstanceClasse
 // enginetype, memory requirment per connection, max DB engine connection count.
 // https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_Limits.html#RDS_Limits.MaxConnections
 const dbenginememorylimits = [
-  ['mysql', 12, 100000],
-  ['postgres', 9.5, 8388607],
-  ['mssql', 10, 32767]
-  // Todo set to 1 , once logic is more robust. Currently using 10 so that automatic connection count is similar to other dbs
+  ['mysql', 100, 100000],
+  ['postgres',120, 8388607],
+  ['mssql', 100, 32767]
+// based on testing while sustained load higher memory requirement per lambda is required  than stated in the docu
+//MSSQL: RequestError: There is insufficient system memory in resource pool 'internal' to run this query.
+//Postgres: https://dba.stackexchange.com/questions/206448/postgresql-large-transaction-oom-killer
+// https://github.com/sequelize/sequelize/issues/15404 , https://www.enterprisedb.com/blog/tuning-maxwalsize-postgresql
 ]
 let SQSQUEUENOTNULL = true
 const subfolderlist = []
@@ -131,6 +135,7 @@ var config = {
   requestTimeout: lambdatimeout
 }
 
+const rdsclient = new RDSClient(config)
 const cbclient = new CodeBuildClient(config)
 const sqsclient = new SQSClient(config)
 const ssmclient = new SSMClient(config)
@@ -142,10 +147,10 @@ const cwclient = new CloudWatchClient(config)
 
 /* End of Initializing Environment */
 
-main(cbclient, sqsclient, ssmclient, ddclient, docClient, scclient, cwclient, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber)
+main(rdsclient, cbclient, sqsclient, ssmclient, ddclient, docClient, scclient, cwclient, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber)
 
-async function main (cbclient, sqsclient, ssmclient, ddclient, docClient, scclient, cwclient, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber) {
-  console.log('PreferedWorkerNumber: ' + PreferedWorkerNumber + '\n' + '(note each lambda uses 2 connections to the database)\n\n')
+async function main (rdsclient, cbclient, sqsclient, ssmclient, ddclient, docClient, scclient, cwclient, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber) {
+  console.log('PreferedWorkerNumber: ' + PreferedWorkerNumber + '\n' )
 
   if (PreferedWorkerNumber !== 'auto' && (Number.isNaN(Number(PreferedWorkerNumber)) === true)) {
     // validate if input is not auto and not a number. Than change PreferedWorkerNumber 'auto'
@@ -191,7 +196,7 @@ async function main (cbclient, sqsclient, ssmclient, ddclient, docClient, scclie
   // if not authorized process exits;
   await authorizecollection(username)
 
-  const NumberofWorkers = await EnvironmentMaxWokerCount(commonshared, scclient, cwclient, dbinstanceclasses, DBInstanceClass, DBEngineType, DBEndpointName, buildenvironment, PreferedWorkerNumber)
+  const NumberofWorkers = await EnvironmentMaxWokerCount(rdsclient, commonshared, scclient, cwclient, dbinstanceclasses, DBInstanceClass, DBEngineType, DBEndpointName, buildenvironment, PreferedWorkerNumber, S3SelectQuery)
 
   const workerlimiter = new Bottleneck({
     minTime: 200, // so that max 5 request is made per second.
@@ -264,9 +269,7 @@ async function main (cbclient, sqsclient, ssmclient, ddclient, docClient, scclie
     await CreateSQLTable(sequelize, Model, engineshared.InvocationsModel, 'Invocation', 'Invocations')
     await CreateSQLTable(sequelize, Model, engineshared.ProcessingErrorsModel(DBEngineType), 'ProcessingError', 'ProcessingErrors')
   }
-  finally {
-    // TODO: Set "failed to complete status" to stale entries that are running status and older than 15 minutes.
-  };
+
 
   // const SelectedModel = require('./build/SelectedModel')
   var SelectedModelpath = ('file:///' + path.join(__dirname, 'build', 'SelectedModel.js').replace(/\\/g, '/'))
@@ -313,10 +316,10 @@ async function main (cbclient, sqsclient, ssmclient, ddclient, docClient, scclie
 
   // TODO: dontwait for all files to be enumerated but do file enumeration and SQL population in parralell
   // TODO: handle allkeys zero case (no acces to bucket or non existent bucket etc.)
-  populatesqs(sqsclient, SendMessageCommand, sqslimiter, allKeys, QueueURL)
+ populatesqs(sqsclient, SendMessageCommand, sqslimiter, allKeys, QueueURL)
   // TODO: Set the message queue size dynamically based on the number of estimated files.
 
-  await controllambdajobs(workerlimiter, ddclient, PutItemCommand, ssmclient, sequelize, Model, engineshared.InvocationsModel, QueueURL, S3SelectParameter, jobid, NumberofWorkers)
+  await controllambdajobs(workerlimiter, ddclient, ssmclient, sequelize, Model, engineshared.InvocationsModel, QueueURL, S3SelectParameter, jobid, NumberofWorkers)
 
   console.log('\n\n FINISHED EXECUTION at: ' + Date.now() + ', ' + commonshared.timeConverter(Date.now()) + ' local time.\n\n')
   process.exit()
@@ -324,9 +327,11 @@ async function main (cbclient, sqsclient, ssmclient, ddclient, docClient, scclie
   // entries matched and  inserted to database, number of erros etc. And the settings that where used to create the table.
 }
 
-async function EnvironmentMaxWokerCount (commonshared, scclient, cwclient, dbinstanceclasses, DBInstanceClass, DBEngineType, DBEndpointName, buildenvironment, PreferedWorkerNumber) {
+async function EnvironmentMaxWokerCount (rdsclient, commonshared, scclient, cwclient, dbinstanceclasses, DBInstanceClass, DBEngineType, DBEndpointName, buildenvironment, PreferedWorkerNumber, S3SelectQuery) {
+
   const maxworkercount = []
   const monitoringtimeperiod = 5 // min
+  const lambdaconnectioncount=2
 
   // retriving cloudwatch performance metrics for the time specified as monitoringtimeperiod.
   const dbpropertiesarray = [{
@@ -357,30 +362,50 @@ async function EnvironmentMaxWokerCount (commonshared, scclient, cwclient, dbins
     console.log('\nMaximum database server connections(' + maxdbconnectioncount + ') - active connections(' + currentactiveconnections + '): ' + (maxdbconnectioncount - currentactiveconnections) + '\n')
     maxworkercount.push((maxdbconnectioncount - currentactiveconnections))
 
-    var maxactiveconnection = determinedbmaxactiveconnection(currentfreememory, DBEngineType) - 3 // - controller connections
+    var maxactiveconnection = Math.ceil((determinedbmaxactiveconnection(currentfreememory, DBEngineType)) )
     maxworkercount.push(maxactiveconnection)
-    console.log('Database server effective connections count: ' + maxactiveconnection + '\n' + '(Derived from current free memory (' + Math.round(currentfreememory / 1024 / 1024) + ') MB / per connection memory requirement (approx 10MB) - Controller connections)\n')
+    var specificenginelimit = dbenginememorylimits.filter(de => de[0] === DBEngineType)[0][1]
+    console.log('Database server effective connections count: ' + maxactiveconnection + '\n' + '(Derived from current free memory (' + Math.round(currentfreememory / 1024 / 1024) + ') MB / (lambda memory requirement (approx '+specificenginelimit+' MB)\n')
   }
   else {
     console.log('\nFailed to get performance metrics (free memory, cpu utilisation, connection count) for DB instance: \n' + DBEndpointName + '\n')
     console.log('\nMaximum database server connections count: ' + maxdbconnectioncount + '\n')
   }
 
-  // describe vpc network interfaces
-  const EniList = await DesribeAllENI()
+  // get the RDS storage capabilities
 
-  const vpcquotaparams = {
-    QuotaCode: 'L-DF5E4CA3',
-    /* required */
-    ServiceCode: 'vpc' /* required */
-  }
+  const input = { // DescribeDBInstancesMessage
+    DBInstanceIdentifier: DBEndpointName.split('.')[0]
+  };
 
-  var command = new GetServiceQuotaCommand(vpcquotaparams)
-  const vpcquota = (await scclient.send(command)).Quota.Value
+  const rdscommand = new DescribeDBInstancesCommand(input);
+  const response = await rdsclient.send(rdscommand);
+  
+  const dbconfig = {
+    AllocatedStorage: response.DBInstances[0].AllocatedStorage,
+    StorageType: response.DBInstances[0].StorageType,
+    DBEngineType
+  } 
 
-  // const vpcquota = (await getquotas(servicequotas, vpcquotaparams)).Quota.Value
-  maxworkercount.push(vpcquota - EniList.length)
-  console.log('Available number of ENIs, determined by quota(' + vpcquota + ') - current usage(' + EniList.length + '): ' + (vpcquota - EniList.length) + '\n')
+  console.log('Database storage type ('+dbconfig.StorageType + ') Database storage capacity ' + dbconfig.AllocatedStorage +' GB\n')
+
+  var diskcapacity =diskiocapacity(dbconfig, S3SelectQuery)
+  maxworkercount.push(diskcapacity)
+  // // describe vpc network interfaces
+  // const EniList = await DesribeAllENI()
+
+  // const vpcquotaparams = {
+  //   QuotaCode: 'L-DF5E4CA3',
+  //   /* required */
+  //   ServiceCode: 'vpc' /* required */
+  // }
+
+  // var command = new GetServiceQuotaCommand(vpcquotaparams)
+  // const vpcquota = (await scclient.send(command)).Quota.Value
+
+  // // const vpcquota = (await getquotas(servicequotas, vpcquotaparams)).Quota.Value
+  // maxworkercount.push(vpcquota - EniList.length)
+  // console.log('Available number of ENIs, determined by quota(' + vpcquota + ') - current usage(' + EniList.length + '): ' + (vpcquota - EniList.length) + '\n')
 
   // Lambda Concurrent executions per Region arn:aws:servicequotas:ca-central-1::lambda/L-B99A9384
   // aws service-quotas list-service-quotas --service-code lambda
@@ -399,7 +424,7 @@ async function EnvironmentMaxWokerCount (commonshared, scclient, cwclient, dbins
   maxworkercount.push(lambdaquota - concurrentlambdacount)
 
   // https://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-compute-types.html
-  // Type, MemoryAllocated,Concurrency so that one workerthread has approx 10 MB ram.
+  // Type, MemoryAllocated,Concurrency so that one workerthread has approx 10 MB /40 MB ram.
   const codebuildcomputeproperties = [
     ['BUILD_GENERAL1_SMALL', 3000, 275],
     ['BUILD_GENERAL1_MEDIUM', 7000, 650],
@@ -409,39 +434,41 @@ async function EnvironmentMaxWokerCount (commonshared, scclient, cwclient, dbins
   console.log('Selected build environment maximum concurrent execution capacity: ' + codebuildmaxworkercount + '\n')
   maxworkercount.push(codebuildmaxworkercount)
 
+  var minenvlimit=parseInt((Math.min(...maxworkercount) ))
   if ((maxactiveconnection !== 0)) { // there are database performance metrics available for further decisions.
     if (PreferedWorkerNumber === 'auto') {
-      var NumberofWorkers = parseInt((Math.min(...maxworkercount) / 2) * 0.4) // 1 lambda creats 2 connecttions hence we take half of the lowest workercount, and use 40% of it
-      console.log('The determined worker count equals to 40% of the lowest environment limit \'s ' + NumberofWorkers + ' ,taking into account that each lambda has 2 active connections to the DB.\n')
+      var NumberofWorkers = parseInt((minenvlimit)) // 1 lambda creats 2 connecttions hence we take half of the lowest workercount, and use 40% of it
+      console.log('The determined worker count equals to the lowest environment limit ('+ minenvlimit +'). The calculated worker number is (' + NumberofWorkers + ').\n')
     }
-    else if (((Math.min(...maxworkercount) / 2) > PreferedWorkerNumber) && (PreferedWorkerNumber > maxactiveconnection)) {
+    else if (((minenvlimit ) > PreferedWorkerNumber) && (PreferedWorkerNumber > maxactiveconnection)) {
       console.log(warning)
       var NumberofWorkers = parseInt(PreferedWorkerNumber)
       console.log('The prefered (' + PreferedWorkerNumber + ') worker count is under the environment limits, hence it will be used. However the connections memory requirement is more than the available free memory, \n')
       console.log('If its significantly higher the database will start to **SWAP** and execution will be significantly slower or fail, if current number (' + NumberofWorkers + ') of Lambda workers are needed a larger capacity DB instance is advised.\n')
     }
-    else if (((Math.min(...maxworkercount) / 2) > PreferedWorkerNumber) && (PreferedWorkerNumber < maxactiveconnection)) {
+    else if (((minenvlimit ) > PreferedWorkerNumber) && (PreferedWorkerNumber < maxactiveconnection)) {
       var NumberofWorkers = parseInt(PreferedWorkerNumber)
       console.log('The prefered (' + PreferedWorkerNumber + ') worker count is under the environment limits and memory requirement, hence it will be used.\n')
     }
     else {
-      var NumberofWorkers = parseInt(Math.ceil((Math.min(...maxworkercount) / 2) * 0.6))
-      console.log('The prefered (' + PreferedWorkerNumber + ') worker count is over the lowest environment limit, 60% of the limit (' + NumberofWorkers + ') is going to be used.\n')
+      var NumberofWorkers = parseInt(Math.ceil((minenvlimit )))
+      console.log('The prefered (' + PreferedWorkerNumber + ') worker count is over the lowest environment limit ('+ minenvlimit +'). The calculated worker number is: ' + NumberofWorkers + '\n')
     }
   }
   else {
     // bellow doing the determination without database performance metrics
     if (PreferedWorkerNumber === 'auto') {
-      var NumberofWorkers = parseInt((Math.min(...maxworkercount) / 2) * 0.4) // 1 lambda creats 2 connecttions hence we take half of the lowest workercount, and use 40% of it.
-      console.log('The determined worker count is ' + NumberofWorkers + ', 40% of the lowest environment limit (' + Math.min(...maxworkercount) + ').\n')
+      var NumberofWorkers = parseInt((minenvlimit ) ) // 1 lambda creats 2 connecttions hence we take half of the lowest workercount, and use 40% of it.
+      console.log('The determined worker count equals to the lowest environment limit ('+ minenvlimit +'). The calculated worker number is (' + NumberofWorkers + ').\n')
+
     }
-    else if (((Math.min(...maxworkercount) / 2) > PreferedWorkerNumber)) {
+    else if (((minenvlimit ) > PreferedWorkerNumber)) {
       var NumberofWorkers = parseInt(PreferedWorkerNumber)
-      console.log('The determined worker count is ' + NumberofWorkers + ', as the prefered worker count (' + PreferedWorkerNumber + ') is lower the lowest environment limit ' + Math.min(...maxworkercount) + '.\n')
+      console.log('The determined worker count is ' + NumberofWorkers + ', as the prefered worker count (' + PreferedWorkerNumber + ') is lower the lowest environment limit ' + minenvlimit + '.\n')
     }
-    else if (((Math.min(...maxworkercount) / 2) < PreferedWorkerNumber)) {
-      var NumberofWorkers = parseInt(Math.ceil((Math.min(...maxworkercount) / 2) * 0.6))
-      console.log('The determined worker count is ' + NumberofWorkers + ',  60% of the lowest environment limit (' + Math.min(...maxworkercount) + '), taking into account that each lambda has 2 active connections to the DB. \n')
+    else if (((minenvlimit ) < PreferedWorkerNumber)) {
+      var NumberofWorkers = parseInt(Math.ceil((minenvlimit )))
+      console.log('The determined worker count is ' + NumberofWorkers + ',  equals to the lowest environment limit ('+ minenvlimit +'). \n')
     }
     else {
       console.log('something went wrong, there should have been a decision made earlier, stopping execution')
@@ -449,10 +476,14 @@ async function EnvironmentMaxWokerCount (commonshared, scclient, cwclient, dbins
     }
   }
 
+  if (NumberofWorkers < 1){
+    NumberofWorkers =1
+  }
+  
   return NumberofWorkers
 }
 
-async function controllambdajobs (workerlimiter, ddclient, PutItemCommand, ssmclient, sequelize, Model, InvocationsModel, QueueURL, S3SelectParameter, jobid, NumberofWorkers) {
+async function controllambdajobs (workerlimiter, ddclient, ssmclient, sequelize, Model, InvocationsModel, QueueURL, S3SelectParameter, jobid, NumberofWorkers) {
   // wait 3 seconds for the queue to be populated.
   console.log('Determined initial number of workers ' + NumberofWorkers)
   await new Promise((resolve, reject) => setTimeout(resolve, 3000)) // wait a bit so that sqs queue is not empty at later check
@@ -464,7 +495,7 @@ async function controllambdajobs (workerlimiter, ddclient, PutItemCommand, ssmcl
   if (initialqueuelength !== 0) { // checks for initial queue length if SQS is empty at start, than no need to start worker lambdas.
     var jobquelength = Math.ceil(NumberofWorkers * 1.2)
     console.log('Internal jobqueue length: ' + jobquelength)
-    submitlambdajobs2Q(throttledlambdajob, ddclient, PutItemCommand, sequelize, Model, InvocationsModel, jobid, S3SelectParameter, jobquelength)
+    submitlambdajobs2Q(throttledlambdajob, ddclient, sequelize, Model, InvocationsModel, jobid, S3SelectParameter, jobquelength)
 
     let exitcondition = false
     do {
@@ -485,18 +516,19 @@ async function controllambdajobs (workerlimiter, ddclient, PutItemCommand, ssmcl
         }
       })
 
-      console.log('SQS queue length: ' + queuelength.ApproximateNumberOfMessages + ' messages in flight ' + queuelength.ApproximateNumberOfMessagesNotVisible + '. Running lambdas count: ' + counts.EXECUTING + '\n' + ' controller\'s internal queue' + JSON.stringify(counts) + '\n\n\n')
+      console.log('SQS queue length: ' + queuelength.ApproximateNumberOfMessages + ' messages in flight ' + queuelength.ApproximateNumberOfMessagesNotVisible + '. Running lambdas count: ' + runninglambdas.length + '\n' + ' controller\'s internal queue' + JSON.stringify(counts) + '\n\n\n')
 
       if (queuelength.ApproximateNumberOfMessages <= (Math.ceil(NumberofWorkers * 0.10)) && queuelength.ApproximateNumberOfMessagesNotVisible <= (Math.ceil(NumberofWorkers * 0.10)) && SQSQUEUENOTNULL) {
         SQSQUEUENOTNULL = false // when sqs approx length is less than 25% SQSQUEUENOTNULL=false
         console.log('Finished processing the SQS queue. ' + counts.EXECUTING + ' Lambdas are finishing up.')
       }
       else if ((counts.RECEIVED <= Math.ceil((NumberofWorkers * 0.25))) && (counts.QUEUED <= Math.ceil((NumberofWorkers * 0.25))) && SQSQUEUENOTNULL) {
+
         // The number of jobs in the internalqueue is getting low adding new jobs
         console.log('placing worker jobs to internal queue\n')
         console.log(JSON.stringify(counts) + '\n')
         var jobquelength = Math.ceil(NumberofWorkers * 0.75)
-        submitlambdajobs2Q(throttledlambdajob, ddclient, PutItemCommand, sequelize, Model, InvocationsModel, jobid, S3SelectParameter, jobquelength)
+        submitlambdajobs2Q(throttledlambdajob, ddclient, sequelize, Model, InvocationsModel, jobid, S3SelectParameter, jobquelength)
         var newcounts = workerlimiter.counts()
         console.log('internal queue state' + JSON.stringify(newcounts))
       }
@@ -524,55 +556,47 @@ async function controllambdajobs (workerlimiter, ddclient, PutItemCommand, ssmcl
   }
 }
 
-function submitlambdajobs2Q (throttledlambdajob, ddclient, PutItemCommand, sequelize, Model, InvocationsModel, jobid, S3SelectParameter, jobquelength) {
+function submitlambdajobs2Q (throttledlambdajob, ddclient, sequelize, Model, InvocationsModel, jobid, S3SelectParameter, jobquelength) {
   // this is the internal queue (based on bottleneck), that controlls lambda execution ensures that exactly NumberofWorkers lambda jobs are running
   const newjobs = []
   for (let i = 0; i < jobquelength; i++) {
     newjobs.push(i)
   }
 
-  newjobs.map(j => throttledlambdajob(ddclient, PutItemCommand, sequelize, Model, InvocationsModel, jobid, S3SelectParameter, j))
+  newjobs.map(j => throttledlambdajob(ddclient, sequelize, Model, InvocationsModel, jobid, S3SelectParameter, j))
   console.log('placed ' + JSON.stringify(jobquelength) + ' worker jobs in internal queue')
 }
 
-async function lambdajob (ddclient, PutItemCommand, sequelize, Model, InvocationsModel, jobid, S3SelectParameter) {
+async function lambdajob (ddclient, sequelize, Model, InvocationsModel, jobid, S3SelectParameter) {
   if (SQSQUEUENOTNULL === true) {
     const invocationid = commonshared.makeid(16)
-    // TODO: instead of makeid use :https://www.npmjs.com/package/docker-names
     await invokelambda(invocationid, jobid, S3SelectParameter)
-    const mydata = {
-      jobid,
-      invocationid,
-      status: 'INVOKED',
-      updateunixtime: Date.now()
-    }
-    const AddSQLEntryresult = await engineshared.AddSqlEntry(sequelize, Model, engineshared.InvocationsModel, 'Invocation', 'Invocations', mydata)
 
-    // checks for SQL insert success/failure if failed records it in DynamoDb.
-    if (AddSQLEntryresult.Result !== 'PASS') {
-      const details = {
-        source: 'controller.js:lambdajob:AddSqlEntry',
-        message: AddSQLEntryresult.Data,
-        jobid
-      }
-      await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'SQLInsert', 'Error', 'Infra', details, 'API')
-    }
-
+    //TODO ADD TRY CATCH
+    console.log("invokedlambda id"+invocationid)
     // checks for lambda statusin sql if completed or last update more than 15 second old returns promise
     for (let index = 0; index < lambdatimeout / lambdacheckfrequency; index++) {
+
+      await timeout(lambdacheckfrequency)
+
       const lambdastate = await SelectSQLTable(sequelize, Model, InvocationsModel, 'Invocation', 'Invocations', 'findOne', {
         where: {
           invocationid: `${invocationid}`
         }
       })
+      var maxdelay=lambdacheckfrequency*2
       const datenow = Date.now()
-
-      if ((lambdastate.status === 'COMPLETED') || ((lambdastate.status === 'INVOKED') && (parseInt(lambdastate.updateunixtime) + 60000 < datenow))) {
-        break
+      
+      console.log("invocationid: " + invocationid + ' lambdastate: '+ lambdastate.status + " last update: " + lambdastate.updateunixtime )
+      //console.log("Datenow: "+ datenow)
+   
+      if ((lambdastate.status === 'COMPLETED')  || ((parseInt(lambdastate.updateunixtime) + maxdelay) < datenow)) {
+        console.log('Lambda of invocation id ' +invocationid + ' has finished.')
+        return null
       }
-      await timeout(lambdacheckfrequency)
+    
     }
-    // console.log("I am here-finished lamdajob")
+
   }
   else {
     // There are N number of jobs submited in controllambdajobs. Once the queue is empty we iterate over the remaining jobs without submitting a lambda job.
@@ -872,7 +896,7 @@ async function authorizecollection (username) {
   }
 
   if (S3authresult !== 'ok') {
-    const message = 'User not allowed to access one or more S3 locations. Further details: \n' + S3authresult
+    const message = 'User not allowed to access one or more S3 locations. Further details: \n' + S3authresult.toString()
     console.error(message)
     const details = {
       source: 'controller.js:authorizeS3access',
@@ -943,6 +967,64 @@ async function InitiateSQLConnection (sequelize, DBEngineType, connectionstring,
     await sequelize.authenticate()
   }
 
+}
+
+function diskiocapacity(dbconfig, S3SelectQuery){
+
+  //regular statement with limitted result set
+  var queryweight =2.5
+  //default db engine of logverz is postgres
+  var dbenginecorrection=1
+ // TODO add criteria for query complexity a query containing  1-2 'AND' or 'OR' conditions should be set queryweight =>6 if more than use the general query weight (2.5).  
+  if (S3SelectQuery.includes('WHERE') === false){
+    // data dump (insert all data no where statements) puts extra 400%-600% stress on the db server 
+    queryweight =12
+  }
+
+  if (dbconfig.DBEngineType === 'mssql'){
+    //based on testing mssql uses more IO for the same input data, hence lowering the value by 20%
+    dbenginecorrection =0.8
+  }
+
+  if (dbconfig.AllocatedStorage < 10){
+    //Aurora serverless starts with 0 disk capacity allocated so we configure as it had 10 
+    dbconfig.AllocatedStorage = 10
+  }
+
+  switch (dbconfig.StorageType) {
+    case 'gp3':
+      var parallellambdacapacity = (dbconfig.AllocatedStorage * dbenginecorrection)/ queryweight
+      break;
+    case 'aurora':
+      //aurora according to test and pricing is about 2X fast than standard gp3 + it has scalable additional memory
+      //test: https://hackmysql.com/are-aurora-performance-claims-true/
+      var performancecounter = 2
+      var parallellambdacapacity = (dbconfig.AllocatedStorage * performancecounter ) / queryweight
+      break
+    case 'io1':
+      // io1 according to documentation is approx 4 times faster than gp3 so we adjust the allocation
+      var performancecounter = 4
+      var parallellambdacapacity = (dbconfig.AllocatedStorage * performancecounter * dbenginecorrection) / queryweight
+      break;
+    case 'aurora-iopt1':
+        //aurora according to pricing is about 2X fast than standard io1
+        var performancecounter = 8
+        var parallellambdacapacity = (dbconfig.AllocatedStorage * performancecounter) / queryweight
+        break
+    case 'io2':
+      // io2 according to documentation is approx 8-16 times faster than gp3 so we adjust the allocation
+      var performancecounter = 12
+      var parallellambdacapacity = (dbconfig.AllocatedStorage * performancecounter * dbenginecorrection) / queryweight
+      break;
+    default:
+      console.log(`unknown storage type`);
+  }
+  parallellambdacapacity =parseInt(parallellambdacapacity)
+  console.log('Database storage configuration and typeof query concurent working lambda worker limit: '+parallellambdacapacity+ '')
+  if(dbconfig.StorageType.includes("aurora")===false){
+    console.log("(Increasing the storage capacity or switching disk type could increase this number)\n")
+  }
+  return parallellambdacapacity
 }
 
 // kudos : "https://manytools.org/hacker-tools/ascii-banner/"

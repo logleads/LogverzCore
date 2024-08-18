@@ -65,7 +65,8 @@
 								]
 							]
 						}
-					}
+					},
+					"TimeoutInMinutes":240
 				}
 			}
 		}
@@ -404,6 +405,22 @@
 							"dynamodb:PutItem"
 						],
 						"Resource": "arn:aws:dynamodb:*:*:table/Logverz*"
+					},
+					{
+						"Sid": "RDSDescribe",
+						"Effect": "Allow",
+						"Action": [
+							"rds:DescribeDBClusters",
+							"rds:DescribeDBInstances"
+						],
+						"Resource": [
+							{
+							"Fn::Sub":"arn:aws:rds:${AWS::Region}:${AWS::AccountId}:cluster:*"
+							},
+							{
+							"Fn::Sub":"arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:*"
+							}
+						]
 					}
 					]
 				},
@@ -710,7 +727,7 @@
 					"Fn::GetAtt": ["LogverzWorkerRole", "Arn"]
 				},
 				"Runtime": "nodejs20.x",
-				"Timeout": "300",
+				"Timeout": "90",
 				"MemorySize":"1769",
 				"VpcConfig": {
 					"SecurityGroupIds" : [ { "Ref" : "DBSecGroup" } ],
@@ -1214,7 +1231,7 @@
 			"Properties": {
 				"Name": "/Logverz/Settings/IdleTime",
 				"Type": "String",
-				"Value": "{\"WebRTCProxy\":{\n   \"Container\":\"15\",\n   \"LastContainer\":\"120\",\n   \"StartAtUserLogin\":true,\n   \"StartDesiredCount\":\"1\"\n},\n\"TurnService\":{\n   \"Period\":\"120\",\n   \"CombinedTrafficKbyte\":\"100\",\n   \"StartAtUserLogin\":true,\n   \"StartDesiredCount\":\"1\",\n   \"CoupledToProxy\":true\n},\n\"Database\":[{\n   \"DBName\":\"DefaultDB\",\n   \"_comment\":\"\\\"StartAfterUTC\\\":\\\"22:30\\\"\",\n   \"StartAtUserLogin\":true,\n   \"Threshold\":{\n      \"CpuAvg\":\"10\",\n      \"SessionMax\":\"3\"\n   },\n   \"Period\":\"60\",\n   \"Configuration\":\"CAS\"\n}]}",
+				"Value": "{\"WebRTCProxy\":{\n   \"Container\":\"15\",\n   \"LastContainer\":\"120\",\n   \"StartAtUserLogin\":true,\n   \"StartDesiredCount\":\"1\"\n},\n\"TurnService\":{\n   \"Period\":\"120\",\n   \"CombinedTrafficKbyte\":\"100\",\n   \"StartAtUserLogin\":true,\n   \"StartDesiredCount\":\"1\",\n   \"CoupledToProxy\":true\n},\n\"Database\":[{\n   \"DBName\":\"DefaultDB\",\n   \"_comment\":\"\\\"StartAfterUTC\\\":\\\"22:30\\\"\",\n   \"StartAtUserLogin\":true,\n   \"Threshold\":{\n      \"CpuAvg\":\"10\",\n      \"SessionMax\":\"3\"\n   },\n   \"Period\":\"90\",\n   \"Configuration\":\"CAS\"\n}]}",
 				"Description": "Providing ASG minimum count equals to 0, the time (in minutes) after the WebRTC Proxy (Container Host) considered not in use and shutsdown to save cost.\n Setting honors ASG minimum value ie ASG minimum count 1 will prevent ASG shutdown.\n   Configuration options for RDS: \"C\" only CPU limit triggers,\"S\" only Session limit (DB connection count) triggers.\"CAS\" Cpu AND Session triggers , \"COS\" either Cpu OR Session triggers scaling event.\n   Configuration options Turnservice: total combined traffic in+out less than specified value. As for \"StartAfterUTC\" parameter use 24h time format such as 08:00 or 19:00."
 			}
 		}

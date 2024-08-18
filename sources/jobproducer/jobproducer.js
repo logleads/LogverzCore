@@ -7,6 +7,7 @@ import fs from 'fs'
 import _ from 'lodash'
 import jwt from 'jsonwebtoken'
 import loki from 'lokijs'
+import { uniqueNamesGenerator, adjectives, animals } from 'unique-names-generator'
 
 import { SSMClient, GetParameterHistoryCommand, GetParameterCommand } from '@aws-sdk/client-ssm'
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs'
@@ -212,7 +213,7 @@ export const handler = async (event, context) => {
 
   // Regardless how the function was called, check if user has access to specified s3 resources.
   if (message === 'ok') {
-    console.log('Debug: At S3 authorization check Start')
+    //console.log('Debug: At S3 authorization check Start')
     var userattributes = identity.chain().find({
       Type: usertype,
       Name: username
@@ -239,7 +240,7 @@ export const handler = async (event, context) => {
 
   // if previous steps of authentication and authorization are successfull send messages
   if (message === 'ok') {
-    console.log('Debug: At retrevingthe Schema')
+    //console.log('Debug: At retrevingthe Schema')
     // Retrieve Schema and other information
     if (DataType !== 'Custom' && DataType !== '') {
       // it is a regular schema (not custom).
@@ -277,7 +278,12 @@ export const handler = async (event, context) => {
     }
 
     TableParameters += '<!!>Creator=' + username + ':' + usertype
-    var JobID = commonshared.makeid(12)
+
+    var JobID = uniqueNamesGenerator({
+      dictionaries: [adjectives, animals],
+      length: 2
+    });
+
     var MessageAttributes = {
       JobID,
       S3Properties: {

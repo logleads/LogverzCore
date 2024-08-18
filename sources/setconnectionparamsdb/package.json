@@ -14,9 +14,9 @@
   "author": "platformlead",
   "license": "LogLeads License 1.0",
   "dependencies": {
-    "@aws-sdk/client-dynamodb": "^3.616.0",
-    "@aws-sdk/client-ssm": "^3.616.0",
-    "@aws-sdk/lib-dynamodb": "^3.616.0",
+    "@aws-sdk/client-dynamodb": "^3.632.0",
+    "@aws-sdk/client-ssm": "^3.632.0",
+    "@aws-sdk/lib-dynamodb": "^3.632.0",
     "generate-password": "^1.7.1",
     "lodash": "^4.17.21"
   }

@@ -92,12 +92,21 @@ export const handler = async (event, context) => {
       Name: LogverzDBSecretRef,
       WithDecryption: true
     }
-    var result = await commonshared.getssmparameter(ssmclient, GetParameterCommand, param, ddclient, PutItemCommand, details)
 
-    finalresult = {
-      Name: result.Parameter.Name,
-      Value: result.Parameter.Value
+    try{
+      var result = await commonshared.getssmparameter(ssmclient, GetParameterCommand, param, ddclient, PutItemCommand, details)
+      finalresult = {
+        Name: result.Parameter.Name,
+        Value: result.Parameter.Value
+      } 
     }
+    catch(error){
+      //happens eg at DB creation the value is not (yet) retrievable, that can be igonored  
+      finalresult = {
+        Nochange: 'Parameter retrieval failed'
+      }
+    }
+
   }
   else if (requesttype === 'Delete' && Mode === 'StackDelete') {
     // Enable code to run only in case of event of DB stack delete.

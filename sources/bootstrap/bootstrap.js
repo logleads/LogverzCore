@@ -28,6 +28,7 @@ export const handler = async (event, context) => {
     params.PublicSubnet = event.ResourceProperties.PublicSubnet
     params.NumberOfControllers = event.ResourceProperties.NumberOfControllers
     params.DBAllocatedStorage = event.ResourceProperties.DBAllocatedStorage
+    params.DBAllocatedStorageType = event.ResourceProperties.DBAllocatedStorageType
     params.DBInstanceClass = event.ResourceProperties.DBInstanceClass
     params.DBEngineType = event.ResourceProperties.DBEngineType
     params.DBSnapshotID = event.ResourceProperties.DBSnapshotID

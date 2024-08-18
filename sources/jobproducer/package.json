@@ -14,13 +14,14 @@
 	"type": "module",
 	"license": "LogLeads License 1.0",
 	"dependencies": {
-		"@aws-sdk/client-dynamodb": "^3.563.0",
-		"@aws-sdk/client-sqs": "^3.556.0",
-		"@aws-sdk/client-ssm": "^3.562.0",
-		"@aws-sdk/lib-dynamodb": "^3.556.0",
+		"@aws-sdk/client-dynamodb": "^3.632.0",
+		"@aws-sdk/client-sqs": "^3.632.0",
+		"@aws-sdk/client-ssm": "^3.632.0",
+		"@aws-sdk/lib-dynamodb": "^3.632.0",
+		"docker-names": "^1.2.1",
 		"jsonwebtoken": "^9.0.2",
-		"lodash": "^4.17.20",
-		"lokijs": "^1.5.11",
-		"sequelize": "^6.37.3"
+		"lodash": "^4.17.21",
+		"lokijs": "^1.5.12",
+		"unique-names-generator": "^4.7.1"
 	}
 }

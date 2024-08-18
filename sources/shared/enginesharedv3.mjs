@@ -120,59 +120,6 @@ const convertschema = (schema, DBEngineType) => {
   return schema
 }
 
-const AddSqlEntry = async (sequelize, Model, SelectedModel, QueryType, DBTableName, mydata) => {
-  return new Promise((resolve, reject) => {
-    class DBEntry extends Model {}
-    DBEntry.init(SelectedModel, {
-      sequelize,
-      modelName: QueryType,
-      tableName: DBTableName,
-      freezeTableName: true
-    })
-
-    DBEntry.create(mydata)
-      .then(result => {
-        // console.log('SQL Entry ' + JSON.stringify(result) + 'has been added.')
-        // Transaction has been committed
-        // resolve(result)
-        resolve({
-          Result: 'PASS',
-          Data: result
-        })
-      }).catch(err => {
-        console.log(err)
-        resolve({
-          Result: 'Fail',
-          Data: err
-        })
-        // reject(err)
-      })
-  })
-}
-
-const UpdateSqlEntry = async (sequelize, Model, SelectedModel, QueryType, DBTableName, updatedfields, conditions) => {
-  return new Promise((resolve, reject) => {
-    class DBEntry extends Model {}
-    DBEntry.init(SelectedModel, {
-      sequelize,
-      modelName: QueryType,
-      tableName: DBTableName,
-      freezeTableName: true
-    })
-
-    DBEntry.update(updatedfields, conditions)
-      .then(result => {
-        console.log('SQL Entry ' + JSON.stringify(result) + 'has been updated.')
-        // Transaction has been committed
-        resolve(result)
-      }).catch(err => {
-        console.log(err)
-        reject(err)
-        // err is whatever rejected the promise chain returned to the transaction callback
-      })
-  })
-}
-
 const SelectSQLTable = async (sequelize, Model, SelectedModel, QueryType, DBTableName, Mode, QueryParameters) => {
   class Query extends Model {}
   Query.init(SelectedModel, { // SelectedModel
@@ -208,9 +155,9 @@ const CloseSQLConnection = async (sequelize) => {
 const ConfigureSequalize = (DBEngineType) => {
   var sequaliseconfig = {
     pool: {
-      max: 10,
-      min: 0,
-      idle: 5000,
+      max: 20,
+      min: 2,
+      idle: 15000,
       acquire: 120000
     },
     dialectOptions: {
@@ -225,10 +172,27 @@ const ConfigureSequalize = (DBEngineType) => {
       }
     }
   }
+  else if (DBEngineType === 'mssql'){
+    sequaliseconfig.pool.idle = 30000
+    sequaliseconfig.dialectOptions = {
+      options: { 
+
+        //https://stackoverflow.com/questions/57032706/sequelize-tedious-create-update-records-with-long-string-error-read-econnreset
+        //packetSize: 32768,
+        //https://stackoverflow.com/questions/63496622/node-js-mssql-error-tedious-deprecated-the-default-value-for-config-options-en
+        //enableArithAbort: false
+        
+        //Disable encryption as with encrypted connections there are random Unhandled rejection SequelizeDatabaseError: read ECONNRESET
+        // info: https://github.com/tediousjs/tedious/issues/923 , not using encryption seems to lesser the issue.
+        encrypt: true
+
+       }
+    }
+  }
   return sequaliseconfig
 }
 
 export {
-  constructmodel, AddSqlEntry, UpdateSqlEntry, SelectSQLTable, CloseSQLConnection, 
-  InvocationsModel, ProcessingErrorsModel, convertschema, ConfigureSequalize
+  constructmodel, SelectSQLTable, CloseSQLConnection, InvocationsModel, 
+  ProcessingErrorsModel, convertschema, ConfigureSequalize
 }

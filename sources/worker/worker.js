@@ -105,8 +105,20 @@ export const handler = async (event, context) => {
     process.exit()
   }
 
+  await StartLambdastate(ddclient, sequelize, Model, engineshared.InvocationsModel, context.clientContext.jobid, context.clientContext.invocationid)
+
   t0 = performance.now()
-  await loop(sqsclient, sequelize, context, TestingTimeout, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, type, header,DebugInsert,EngineBucket, region, FileName)
+  const timer = new TaskTimer(5000)
+  timer.on('tick', async () => {
+    await UpdateLambdaState(context, sequelize, Model, engineshared) 
+  })
+  timer.start()
+  // two actions are run in parallel:
+  // 1.) reporting lambda state to sql database,
+  // 2.) processing sqs messages via TASK function
+  await loop(sqsclient, sequelize, context, TestingTimeout, engineshared, commonshared, ddclient, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, type, header,DebugInsert,EngineBucket, region, FileName)
+
+  timer.stop()
 
   return {
     statusCode: 200,
@@ -114,29 +126,9 @@ export const handler = async (event, context) => {
   }
 } // module exports
 
-async function loop (sqsclient, sequelize, context, TestingTimeout, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, type, header, DebugInsert, EngineBucket, region, FileName) {
-  // two actions are run in parallel:
-  // 1.) reporting lambda state to sql database,
-  // 2.) processing sqs messages via TASK function
+async function loop (sqsclient, sequelize, context, TestingTimeout, engineshared, commonshared, ddclient, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, type, header, DebugInsert, EngineBucket, region, FileName) {
+  
   let i = 0
-
-  const timer = new TaskTimer(5000)
-  timer.on('tick', () => {
-    console.log(`Reporting state of instance ${context.clientContext.invocationid} at ${new Date().toLocaleString()} : RUNNING`)
-
-    const updatedfields = {
-      status: 'RUNNING',
-      loggroup: context.logGroupName,
-      logstream: context.logStreamName
-    }
-    const conditions = {
-      where: {
-        invocationid: context.clientContext.invocationid
-      }
-    }
-    engineshared.UpdateSqlEntry(sequelize, Model, engineshared.InvocationsModel, 'Invocation', 'Invocations', updatedfields, conditions)
-  })
-  timer.start()
 
   try {
     let exitcondition = false
@@ -146,7 +138,7 @@ async function loop (sqsclient, sequelize, context, TestingTimeout, engineshared
         await timeout(TestingTimeout) // for testing log running lambdas
       }
       const t1 = performance.now()
-      await Task(sqsclient, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header, DebugInsert, EngineBucket, region, FileName)
+      await Task(sqsclient, engineshared, commonshared, ddclient, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header, DebugInsert, EngineBucket, region, FileName)
       const t2 = performance.now()
       const processingtime = (t2 - t1)
       const ellipsedtime = (t2 - t0)
@@ -164,6 +156,8 @@ async function loop (sqsclient, sequelize, context, TestingTimeout, engineshared
       // End the loop execution when the conditions are meet.
       if ((remainingtime < (processingtime * 2)) || (remainingtime < 10000)) {
         exitcondition = true
+        await CompleteLambdaState(context, sequelize, Model, engineshared)
+        await sequelize.close()
         console.log('exit condition met, the Lambdafunctions remaining time ' + remainingtime / 1000 + 'sec last iteration time ' + processingtime / 1000 + 'sec')
       }
     } while (!exitcondition)
@@ -171,22 +165,13 @@ async function loop (sqsclient, sequelize, context, TestingTimeout, engineshared
   catch (err) {
     console.log(err)
   }
-  timer.stop()
-
-  const conditions = {
-    where: {
-      invocationid: context.clientContext.invocationid
-    }
-  }
-  await engineshared.UpdateSqlEntry(sequelize, Model, engineshared.InvocationsModel, 'Invocation', 'Invocations', {
-    status: 'COMPLETED'
-  }, conditions)
 
   console.log(`Reporting state of instance ${context.clientContext.invocationid} at ${new Date().toLocaleString()} : COMPLETED`)
-
+  // await CompleteLambdaState(context, sequelize, Model, engineshared)
+  // await sequelize.close()
 }
 
-async function Task (sqsclient, engineshared, commonshared, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header, DebugInsert, EngineBucket, region, FileName) {
+async function Task (sqsclient, engineshared, commonshared, ddclient, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header, DebugInsert, EngineBucket, region, FileName) {
   const sqsmessages = await commonshared.receiveSQSMessage(sqsclient, ReceiveMessageCommand, QueueURL, '3')
 
   if (sqsmessages.Messages !== undefined) {
@@ -200,23 +185,27 @@ async function Task (sqsclient, engineshared, commonshared, S3SelectParameter, Q
       process.exit()
     }
 
-    const s3results = await processS3data(prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, sequelize, Model, type, header)
+    const s3results = await processS3data(prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, ddclient, sequelize, Model, type, header)
     const Transformeddata = DatatoSchemaTransformation(s3results, SelectedModel, S3SelectParameter, DBEngineType, type, header)
 
     // Only call InsertData if Transformed data is not null;
     if (Transformeddata.length !== 0) {
-      await InsertData(commonshared, sequelize, Model, SelectedModel, QueryType, DBTableName, Transformeddata, DebugInsert, EngineBucket, region, FileName)
+      rdsinsertsuccess=await InsertData(commonshared, sequelize, Model, SelectedModel, QueryType, DBTableName, Transformeddata, DebugInsert, EngineBucket, region, FileName)
       await deleteSQSMessage(sqsclient, QueueURL, ReceiptHandle, rdsinsertsuccess)
     }
     else {
+      //if there was no data we can delete the  sqs message 
       rdsinsertsuccess = true
       await deleteSQSMessage(sqsclient, QueueURL, ReceiptHandle, rdsinsertsuccess)
     }
   }
   else if (sqsempty > 2) {
-    await sequelize.close()
     console.log('\nQueue was empty for prolonged time stopping lambda function\n')
-    process.exit(0)
+    await CompleteLambdaState(context, sequelize, Model, engineshared)
+    await sequelize.close()
+
+    //process.exit(0)
+    return null
   }
   else {
     console.log('\nQueue was empty waiting 1 second for new messages\n')
@@ -225,53 +214,115 @@ async function Task (sqsclient, engineshared, commonshared, S3SelectParameter, Q
   }
 }
 
+async function StartLambdastate(ddclient,sequelize, Model, InvocationsModel, jobid, invocationid){
+  const mydata = {
+    jobid,
+    invocationid,
+    status: 'INVOKED',
+    updateunixtime: Date.now()
+  }
+  //const AddSQLEntryresult = await engineshared.AddSqlEntry(sequelize, Model, InvocationsModel, 'Invocation', 'Invocations', mydata)
+
+  var AddSQLEntryresult =await AddSqlEntry(sequelize, Model, InvocationsModel, 'Invocation', 'Invocations', mydata)
+
+   
+  // checks for SQL insert success/failure if failed records it in DynamoDb.
+  if (AddSQLEntryresult.Result !== 'PASS') {
+    const details = {
+      source: 'worker.js:StartLambdastate:AddSqlEntry',
+      message: JSON.stringify(AddSQLEntryresult.Data),
+      jobid
+    }
+    await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'SQLInsert', 'Error', 'Infra', details, 'API')
+  }
+
+}
+
+async function UpdateLambdaState(context, sequelize, Model, engineshared)    {
+  console.log(`Reporting state of instance ${context.clientContext.invocationid} at ${new Date().toLocaleString()} : RUNNING`)
+
+  const updatedfields = {
+
+    status: 'RUNNING',
+    updateunixtime: Date.now(),
+    loggroup: context.logGroupName,
+    logstream: context.logStreamName
+  }
+  const conditions = {
+    where: {
+      invocationid: context.clientContext.invocationid
+    }
+  }
+
+  await UpdateSqlEntry(sequelize, Model, engineshared.InvocationsModel, 'Invocation', 'Invocations', updatedfields, conditions)
+}
+
+async function CompleteLambdaState(context, sequelize, Model, engineshared){
+
+  const conditions = {
+    where: {
+      invocationid: context.clientContext.invocationid
+    }
+  }
+  var status=  {
+    status: 'COMPLETED'
+  }
+
+  await UpdateSqlEntry(sequelize, Model, engineshared.InvocationsModel, 'Invocation', 'Invocations', status, conditions)
+
+}
+
 async function InsertData (commonshared, sequelize, Model, SelectedModel, QueryType, DBTableName, Transformeddata, DebugInsert, EngineBucket, region, FileName) {
-  return sequelize.transaction(t => {
-    class Entry extends Model {}
-    Entry.init(SelectedModel, {
-      sequelize,
-      modelName: QueryType,
-      tableName: DBTableName,
-      freezeTableName: true
+  
+  class Entry extends Model {}
+  await Entry.init(SelectedModel, {
+    sequelize,
+    modelName: QueryType,
+    tableName: DBTableName,
+    freezeTableName: true
+  })
+  var rdsinsertsuccess
+  const t = await sequelize.transaction();
+
+  try {
+    await Entry.bulkCreate(Transformeddata, {
+      transaction: t 
     })
+    
+    await t.commit();
+    rdsinsertsuccess = true
+    console.log('SQL Server BulkEntry  has been completed successfully. Number of rows: ' + Transformeddata.length)
+    return rdsinsertsuccess
 
-    return Entry.bulkCreate(Transformeddata, {
-      transaction: t
-    })
-      .then(result => {
-        rdsinsertsuccess = true
-        console.log('SQL Server BulkEntry  has been completed successfully. Number of rows: ' + Transformeddata.length)
-        // Transaction has been committed
-        // result is whatever the result of the promise chain returned to the transaction callback
-      }).catch(err => {
-        console.log(err.message, "\nline: ",err.original.line)
-        if (DebugInsert === 1){
+  } catch (err) {
+    console.log(err.message, "\nline: ",err.original.line)
+    if (DebugInsert === 1){
 
-          let filenamepart=Date.now() /1000+"_error.txt"
-          let newfilefullname=FileName.replace("SelectedModel.mjs",filenamepart)
-          fs.writeFileSync(fileURLToPath(newfilefullname), err.sql)
-          const s3client = new S3Client({region})
-          console.log('Starting SQL commands debug file upload')
-          commonshared.s3putdependencies(newfilefullname, EngineBucket, s3client, PutObjectCommand, fs, fileURLToPath, 'DebugInsert/'+filenamepart)
-          setTimeout(function () {
-
-              rdsinsertsuccess = false
-              // Transaction has been rolled back
-              // err is whatever rejected the promise chain returned to the transaction callback
-              t.rollback()
-          }, 1500);
-        }
-        else{
+      let filenamepart=Date.now() /1000+"_error.sql"
+      let newfilefullname=FileName.replace("SelectedModel.mjs",filenamepart)
+      fs.writeFileSync(fileURLToPath(newfilefullname), err.sql)
+      const s3client = new S3Client({region})
+      console.log('Starting SQL commands debug file upload')
+      await commonshared.s3putdependencies(newfilefullname, EngineBucket, s3client, PutObjectCommand, fs, fileURLToPath, 'DebugInsert/'+filenamepart)
+      // setTimeout(function () {
           rdsinsertsuccess = false
           // Transaction has been rolled back
           // err is whatever rejected the promise chain returned to the transaction callback
           t.rollback()
-        }
-      })
-  }) // return sequlize
+          return  rdsinsertsuccess
+      // }, 1500);
+    }
+    else{
+      rdsinsertsuccess = false
+      // Transaction has been rolled back
+      // err is whatever rejected the promise chain returned to the transaction callback
+      t.rollback()
+      return   rdsinsertsuccess
+    }
+  }
 } // insert data function
 
-async function processS3data (prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, sequelize, Model, type, header) {
+async function processS3data (prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, ddclient, sequelize, Model, type, header) {
   // source: https://docs.aws.amazon.com/AWSJavaScriptSDK/latest/AWS/S3.html#selectObjectContent-property
 
   const s3parameters = {
@@ -310,15 +361,14 @@ async function processS3data (prefixarray, S3SelectQuery, S3SelectParameter, con
   const promises = prefixarray.map(prefix => {
     s3parameters.Key = prefix[0]
     s3parameters.Bucket = prefix[1]
-    let region = prefix[2]
+    const region = prefix[2]
     const params = s3parameters
-    const s3client = new S3Client({region})
-    return FilteredS3data(s3client, params, context, engineshared, commonshared, sequelize, Model, DBEngineType, type, header)
+    const s3client = new S3Client({ region })
+    return FilteredS3data(ddclient, s3client, params, context, engineshared, commonshared, sequelize, Model, DBEngineType, type, header)
   }) // prefixarray.map
 
   const resolved = await Promise.all(promises)
   let results = _.compact(_.flatten(resolved))
-  console.log('Number of events ' + results.length + ' \n')
 
   if ((S3SelectParameter.InputSerialization.RootElement !== undefined) && (typeof results[0][S3SelectParameter.InputSerialization.RootElement] === 'object')) {
     // its a list of elements
@@ -331,7 +381,7 @@ async function processS3data (prefixarray, S3SelectQuery, S3SelectParameter, con
   return results
 }
 
-async function FilteredS3data (s3client, params, context, engineshared, commonshared, sequelize, Model, DBEngineType, type, header) {
+async function FilteredS3data (ddclient, s3client, params, context, engineshared, commonshared, sequelize, Model, DBEngineType, type, header) {
   const asyncIterableStreamToString = (asyncIterable) =>
     new Promise(async (resolve, reject) => {
       try {
@@ -399,7 +449,12 @@ async function FilteredS3data (s3client, params, context, engineshared, commonsh
     }
   }
   catch (e) {
-    console.log("S3Error:",e.message,'\n(Note: the line number is +1 or +2 depending on weather the file has header line or not)\nBucket:',e.$response.body.req.host,"\nFile:",e.$response.body.req.path.split('?')[0])
+    var errormessage ="\n   S3Error:  "+e.message+"\n   Bucket:   "+e.$response.body.req.host+"\n   File:  "+ e.$response.body.req.path.split('?')[0]
+    console.log(errormessage)
+    result = {
+      Result: 'Fail',
+      Data: errormessage
+    }
   }
 
   if (result.Result === 'PASS') {
@@ -415,8 +470,8 @@ async function FilteredS3data (s3client, params, context, engineshared, commonsh
       logstream: context.logStreamName,
       errormessage: result.Data
     }
-    const AddSQLEntryresult = await engineshared.AddSqlEntry(sequelize, Model, engineshared.ProcessingErrorsModel(DBEngineType), 'ProcessingError', 'ProcessingErrors', mydata)
-
+    // const AddSQLEntryresult = await engineshared.AddSqlEntry(sequelize, Model, engineshared.ProcessingErrorsModel(DBEngineType), 'ProcessingError', 'ProcessingErrors', mydata)
+    const AddSQLEntryresult = await AddSqlEntry(sequelize, Model, engineshared.ProcessingErrorsModel(DBEngineType), 'ProcessingError', 'ProcessingErrors', mydata)
     // checks for SQL insert success/failure if failed records it in DynamoDb.
     if (AddSQLEntryresult.Result !== 'PASS') {
       const details = {
@@ -437,14 +492,14 @@ async function InitiateConnection (DBEngineType, connectionstring) {
       dialectOptions: {
         options: {
           validateBulkLoadParameters: true,
-          loginTimeout: 15
+          loginTimeout: 60
         }
       },
       pool: {
         max: 2,
-        min: 0,
-        idle: 5000,
-        acquire: 30000
+        min: 1,
+        idle: 10000,
+        acquire: 60000
       }
     }
     var sequelize = new Sequelize(connectionstring, config)
@@ -459,9 +514,9 @@ async function InitiateConnection (DBEngineType, connectionstring) {
       },
       pool: {
         max: 2,
-        min: 0,
-        idle: 5000,
-        acquire: 30000
+        min: 2,
+        idle: 10000,
+        acquire: 60000
       }
     }
     var sequelize = new Sequelize(connectionstring, config)
@@ -588,7 +643,7 @@ function convertdatatosqlschema (s3results, SelectedModel, DBEngineType) {
       else if ((type === 'INTEGER' || type === 'BIGINT') && (value !== undefined)) {
         // convert non number value such as '-' to NULL
         // Note value can be undefined if the processed file does not contain same number of fields as schema example "ELBAccessLogTestFile" vs generic ELB AccessLogs
-        if (value.match(/^[0-9]*$/) === null) {
+        if (value === null || value === "null" || value === "NULL"){
           value = null
           existingentry[Modelskey] = value
         }
@@ -602,10 +657,21 @@ function convertdatatosqlschema (s3results, SelectedModel, DBEngineType) {
           existingentry[Modelskey] = value
         }
       }
-      else if (value === 'null' || value === undefined) {
+      else if ((type === 'STRING' ) &&  (typeof (value) === 'string') && (value.includes('\r\n'))) {
+        //line breaks mess up formating of the insert strings so we remove them. 
+        //But only if its string (value !== null) && (typeof (value) !== 'object') <json> and has linebreak charachters.
+        existingentry[Modelskey] = value.replaceAll('\r\n'," ")
+      }
+      else if (value === null || value === 'null' || value === "NULL" || value === undefined) {
         value = null
         existingentry[Modelskey] = value
       }
+      else if ((type === 'STRING' ) &&  (typeof (value) === 'object') && (value.length === 0)) {
+        //Empty array fails for postgres: 
+        //https://github.com/sequelize/sequelize/issues/714
+        existingentry[Modelskey] = ""
+      }
+
     }
     array.push(existingentry)
   })
@@ -672,6 +738,49 @@ async function initialseparameters (commonshared, Schema, QueryType, DBFrendlyNa
   return result
 }
 
+async function UpdateSqlEntry (sequelize, Model, SelectedModel, QueryType, DBTableName, updatedfields, conditions) {
+ 
+    class DBEntry extends Model {}
+    await DBEntry.init(SelectedModel, {
+      sequelize,
+      modelName: QueryType,
+      tableName: DBTableName,
+      freezeTableName: true
+    })
+
+    var result = await DBEntry.update(updatedfields, conditions)
+    console.log('SQL Entry ' + JSON.stringify(result) + 'has been updated.')
+
+}
+
+async function AddSqlEntry(sequelize, Model, SelectedModel, QueryType, DBTableName, mydata) {
+
+  class DBEntry extends Model {}
+  await DBEntry.init(SelectedModel, {
+    sequelize,
+    modelName: QueryType,
+    tableName: DBTableName,
+    freezeTableName: true
+  })
+
+  var result
+  try{
+    var response = await DBEntry.create(mydata)
+    result={
+      Result: 'PASS',
+      Data: response
+    }
+  }
+  catch(err){
+    result={
+      Result: 'Fail',
+      Data: err
+    }
+  }
+
+  return result
+}
+
 async function GetConfiguration (directory, value) {
   // Kudos: https://stackoverflow.com/questions/71432755/how-to-use-dynamic-import-from-a-dependency-in-node-js
   const moduleText = fs.readFileSync(fileURLToPath(directory), 'utf-8').toString()
@@ -688,13 +797,18 @@ async function GetConfiguration (directory, value) {
 
   // Testing setup: After initiate connection, before loop:
   // var prefixarray=[
-  //   [
+  //     [
+  //       "key",
+  //       "bucket",
+  //       "region"
+  //     ],
+  //     [
   //       "key",
   //       "bucket",
   //       "region"
   //     ]
   // ]
-  // var s3results = await processS3data(prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, sequelize, Model, type, header)
+  // var s3results = await processS3data(prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, ddclient, sequelize, Model, type, header)
   // var Transformeddata = DatatoSchemaTransformation(s3results, SelectedModel, S3SelectParameter, DBEngineType, type, header)
   // await InsertData(commonshared, sequelize, Model, SelectedModel, QueryType, DBTableName, Transformeddata, DebugInsert, EngineBucket, region, FileName)
   // await timeout(2000)

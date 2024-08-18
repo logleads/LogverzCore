@@ -8,14 +8,20 @@
 	"Parameters": {
 		"DBAllocatedStorage": {
 			"Type": "Number",
-			"Default": "20",
-			"Description": "Number of Gigabytes the database partition has.You can't decrease disk space after its set, only increase it."
+			"Default": "30",
+			"Description": "Number of Gigabytes the database partition has.You can't decrease disk space after its set, only increase it.Note ingestion performance heavily depends on disk speed wich correlate to size, add more capacity if you need faster disks."
+		},
+		"DBAllocatedStorageType": {
+			"Type": "String",
+			"Default": "gp3",
+			"AllowedValues":  ["gp3", "io1", "io2"] ,
+			"Description": "The disk type, accepted values are  \"gp3\" or \"io1\"  \"io2\". Gp3 is the cheapest slowest Io2 Note ingestion performance heavily depends on disk speed wich correlate to size,if you need faster disks,  before switching from gp3 to ioX try add more capacity first."
 		},
 		"DBInstanceClass": {
 			"Type": "String",
-			"Default": "db.t3.micro",
-			"AllowedValues": ["db.t2.micro", "db.t2.small", "db.t2.medium", "db.t2.large", "db.t3.micro", "db.t3.small", "db.t3.medium", "db.t3.large", "db.t3.xlarge", "db.t3.2xlarge", "db.m5.2xlarge", "db.m5.4xlarge", "db.serverless:0.5-2", "db.serverless:0.5-8", "db.serverless:0.5-32", "db.serverless:0.5-128"],
-			"Description": "The database capacity, determines the maximum number of parallel lambda collectors, at t2.micro size its approximately 40."
+			"Default": "db.t3.small",
+			"AllowedValues": ["db.t2.small", "db.t2.medium", "db.t2.large", "db.t3.small", "db.t3.medium", "db.t3.large", "db.t3.xlarge", "db.t3.2xlarge", "db.m5.2xlarge", "db.m5.4xlarge", "db.serverless:0.5-2", "db.serverless:0.5-8", "db.serverless:0.5-32", "db.serverless:0.5-128"],
+			"Description": "The database capacity, determines the maximum number of parallel lambda collectors, at t3.small size its approximately 2-10 lambda workers depending on the query complexity. Note: disk io (storage speed) is a major factor in data ingestion capacity."
 		},
 		"DBSnapshotID": {
 			"Type": "String",
@@ -101,7 +107,7 @@
 				"AllocatedStorage": {
 					"Ref": "DBAllocatedStorage"
 				},
-				"StorageType": "gp3",
+				"StorageType":  {"Ref":"DBAllocatedStorageType"},
 				"DBInstanceClass": {
 					"Ref": "DBInstanceClass"
 				},

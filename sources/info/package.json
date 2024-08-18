@@ -11,9 +11,9 @@
   "author": "platformlead",
   "license": "LogLeads License 1.0",
   "dependencies": {
-    "aws-sdk": "^2.1596.0",
+    "aws-sdk": "^2.1677.0",
     "jsonwebtoken": "^9.0.2",
-    "lodash": "^4.17.20",
-    "lokijs": "^1.5.11"
+    "lodash": "^4.17.21",
+    "lokijs": "^1.5.12"
   }
 }

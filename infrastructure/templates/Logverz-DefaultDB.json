@@ -24,6 +24,9 @@
 		"DBEngineType": {
 			"Type": "String"
 		},
+		"DBAllocatedStorageType": {
+			"Type": "String"
+		},
 		"DBUserName": {
 			"Type": "String"
 		},
@@ -34,9 +37,6 @@
 			"Type":"String"
 		},
 		"DBSecGroup":{
-			"Type":"String"
-		},
-		"LogverzDBIAMGroup":{
 			"Type":"String"
 		},
 		"PublicSubnet":{
@@ -73,7 +73,7 @@
 			"DependsOn":"GetDBPasswordResource",
 			"Properties": {
 				"DBName": {"Fn::If": ["MSSQLServer", {"Ref": "AWS::NoValue"}, "Logverz"]},
-				"DBSubnetGroupName":{"Ref":"LogverzDBSubnetGroupPrivate"},
+				"DBSubnetGroupName":{"Fn::ImportValue":"LogverzPrivateSubnetsGroup"},
 				"MonitoringInterval": 60,
 				"MonitoringRoleArn": {
 					"Fn::GetAtt": ["LogverzDBMonitoringRole", "Arn"]
@@ -81,7 +81,7 @@
 				"AllocatedStorage": {
 					"Ref": "DBAllocatedStorage"
 				},
-				"StorageType": "gp3",
+				"StorageType":  {"Ref":"DBAllocatedStorageType"},
 				"DBInstanceClass": {
 					"Ref": "DBInstanceClass"
 				},
@@ -105,6 +105,22 @@
 				]
 			},
 			"DeletionPolicy": "Delete"
+		},
+		"LogverzPostgresEngineConfig":{
+			"Type" : "AWS::RDS::DBParameterGroup",
+			"Properties" : {
+				"DBParameterGroupName" : "LogverzDefaultDBPostgresPG",
+				"Description" : "Contains Postgres specific configuration, performance enhancement, To be applied later",
+				"Family" : "postgres16",
+				"Parameters" : {
+					"max_wal_size": 8192
+				},
+				"Tags": [{
+					"Key": "Logverz",
+					"Value": "true"
+				}
+				]
+			  }
 		},
 		"LogverzDBMonitoringRole":{
 			"Condition" : "isServer",
@@ -256,6 +272,17 @@
 				"RegistryName": "/Logverz/Database/Registry"
 			}
 		},
+		"LogverzDBIAMGroup": {
+			"Type" : "AWS::IAM::Group",
+			"Properties" : {
+				"GroupName" :
+				{
+					"Fn::Sub": ["Logverz-DBGroup-${DBFriendlyName}-${AWS::Region}", {
+						"DBFriendlyName": "DefaultDB"
+					}]
+				}
+			}
+		},
 		"LogverzDBGroupPolicy": {
 			"Type": "AWS::IAM::Policy",
 			"Properties": {
@@ -307,7 +334,7 @@
 			"DependsOn":"GetDBPasswordResource",
 			"Properties": {
 				"DatabaseName": "Logverz",
-				"DBSubnetGroupName":{"Ref":"LogverzDBSubnetGroupPrivate"},
+				"DBSubnetGroupName":{"Fn::ImportValue":"LogverzPrivateSubnetsGroup"},
 				"Engine": "setbyLambdaTransform",
 				"EngineVersion":"setbyLambdaTransform",
 				"DBClusterIdentifier": { "Fn::Join" : ["", ["Logverz", "-", "DefaultDB"] ] },
@@ -345,42 +372,9 @@
 					"Value": "true"
 				}]
 			}
-		},
-		"LogverzDBSubnetGroupPublic":{
-			"Type" : "AWS::RDS::DBSubnetGroup",
-			"Properties" : {
-				"DBSubnetGroupDescription" : "Optional PublicSubnet group for external connectivity,network access is controlled by \"DBSecGroup\"",
-				"DBSubnetGroupName" : "LogverzPublic",
-				"SubnetIds" : { "Fn::Split": [",", { "Ref" : "PublicSubnet" }]}
-			}
-		},
-		"LogverzDBSubnetGroupPrivate":{
-			"Type" : "AWS::RDS::DBSubnetGroup",
-			"Properties" : {
-				"DBSubnetGroupDescription" : "PrivateSubnet group for internal use in default and non default vpcs, network access is controlled by \"DBSecGroup\"",
-				"DBSubnetGroupName" : "LogverzPrivate",
-				"SubnetIds" : { "Fn::Split": [",", { "Ref" : "PrivateSubnet" }]}
-			}
 		}
 	},
 	"Outputs": {
-		"LogverzPrivateSubnetsGroup": {
-			"Export": {
-				"Name": "LogverzPrivateSubnetsGroup"
-			},
-			"Description": "The security groups for the databases ",
-			"Value": {
-				"Ref": "LogverzDBSubnetGroupPrivate"
-			}
-		},
-		"LogverzPublicSubnetsGroup": {
-			"Export": {
-				"Name": "LogverzPublicSubnetsGroup"
-			},
-			"Description": "The security groups for the databases ",
-			"Value": {
-				"Ref": "LogverzDBSubnetGroupPublic"
-			}
-		}
+
 	}
 }
