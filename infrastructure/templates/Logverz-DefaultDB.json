@@ -28,9 +28,11 @@
 			"Type": "String"
 		},
 		"DBUserName": {
+			"NoEcho": "true",
 			"Type": "String"
 		},
 		"DBUserPasswd": {
+			"NoEcho": "true",
 			"Type": "String"
 		},
 		"SetConnectionParamsDB":{

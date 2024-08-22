@@ -44,10 +44,7 @@
 		"DataTypeSelector": {
 			"Type": "String",
 			"Default": "",
-			"AllowedValues": ["CloudTrail", "VPCFlow", "ApplicationLB", "ClassicLB", "NetworkLB", "Custom",
-				""
-			],
-			"Description": "The dataformat/schema of the files located in the specified S3 bucket(s)."
+			"Description": "The dataformat/schema of the files located in the specified S3 bucket(s).Eg: \"CloudTrail\", \"VPCFlow\", \"ApplicationLB\", \"ClassicLB\", \"NetworkLB\", etc."
 		},
 		"LogVolume": {
 			"Description": "To allocate the necessary resources, please specify the number of log files to be processed. Job will be configured accordingly. Small: number of files up to 5M and less than 20 GB. Medium: number of files 5M-25M and less than 100GB. Large:number of files over 25M and 100GB",

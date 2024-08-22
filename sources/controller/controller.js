@@ -52,7 +52,7 @@ if (process.env.Environment !== 'LocalDev') {
   var enginesharedpath = ('file:///' + path.join(__dirname, 'shared', 'enginesharedv3.mjs').replace(/\\/g, '/'))
   var engineshared = await GetConfiguration(enginesharedpath, '*')
   var region = process.env.AWS_REGION
-  var sqsmessagesize = 50 // TODO Determine the message size based on the number of files and and the length of the files.
+  var defaultsqsmessagesize = 50
   var WorkerFunction = process.env.WorkerFunction
   var SelectedModelPath = ('file:///' + path.join(__dirname, 'build', 'SelectedModel.js').replace(/\\/g, '/'))
   // './build/SelectedModel'
@@ -83,7 +83,7 @@ else {
   var authenticationshared = mydev.authenticationshared
   var jobid = mydev.jobid
   var region = mydev.region
-  var sqsmessagesize = mydev.sqsmessagesize
+  var defaultsqsmessagesize = mydev.defaultsqsmessagesize
   var WorkerFunction = mydev.WorkerFunction
   var SelectedModelPath = mydev.SelectedModelPath
   var S3SelectQuery = mydev.S3SelectQuery
@@ -147,9 +147,9 @@ const cwclient = new CloudWatchClient(config)
 
 /* End of Initializing Environment */
 
-main(rdsclient, cbclient, sqsclient, ssmclient, ddclient, docClient, scclient, cwclient, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber)
+main(defaultsqsmessagesize, rdsclient, cbclient, sqsclient, ssmclient, ddclient, docClient, scclient, cwclient, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber)
 
-async function main (rdsclient, cbclient, sqsclient, ssmclient, ddclient, docClient, scclient, cwclient, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber) {
+async function main (defaultsqsmessagesize, rdsclient, cbclient, sqsclient, ssmclient, ddclient, docClient, scclient, cwclient, s3limiter, sqslimiter, engineshared, jobid, dbinstanceclasses, PreferedWorkerNumber) {
   console.log('PreferedWorkerNumber: ' + PreferedWorkerNumber + '\n' )
 
   if (PreferedWorkerNumber !== 'auto' && (Number.isNaN(Number(PreferedWorkerNumber)) === true)) {
@@ -206,7 +206,7 @@ async function main (rdsclient, cbclient, sqsclient, ssmclient, ddclient, docCli
   // check Lambda invocation context size  if its less than 3582 than ok send Schema with lambda invoke,
   var lambdamessagesize = (createmessage(jobid, jobid, S3SelectParameter, Schema)).length
 
-  // if its more than the schema needs to be saved to Parameter store.
+  // if its more than the lambda invocation limit, than schema needs to be saved to Parameter store.
   if ((lambdamessagesize + 4) >= 3582) {
     const ssmpath = '/Logverz/Engine/Schemas/'
     QueryType = `Temporary/${jobid}`
@@ -214,7 +214,7 @@ async function main (rdsclient, cbclient, sqsclient, ssmclient, ddclient, docCli
       Name: (ssmpath + QueryType),
       Value: Schema,
       Description: 'Temporary Large Schema',
-      Tier: 'Standard',
+      Tier: 'Advanced',
       Type: 'String'
     }
 
@@ -312,12 +312,13 @@ async function main (rdsclient, cbclient, sqsclient, ssmclient, ddclient, docCli
   console.log('5.) Finished enumerating keys elipsed time ' + ((z3 - z2) / 1000) + ' from finised walking folders and ' + ((z2 - z0) / 1000) + ' from the beginning')
   var allKeys = _.flatten(alltasksresolved)
   var allKeys = allKeys.filter(item => item[0].endsWith('/') === false) // to remove directories
-  console.log('\nThe number of files in specified bucket(s) ' + allKeys.length + '. Current local time:' + commonshared.timeConverter(Date.now()) + '\n\n')
+  var sumfilesize = allKeys.map(s =>s[3]).reduce((accumulator, currentValue) => accumulator + currentValue,0)
+  console.log('\nThe number of files in specified bucket(s) ' + allKeys.length+' total file size '+sumfilesize + ' KB. Current local time:' + commonshared.timeConverter(Date.now()) + '\n\n')
 
   // TODO: dontwait for all files to be enumerated but do file enumeration and SQL population in parralell
   // TODO: handle allkeys zero case (no acces to bucket or non existent bucket etc.)
- populatesqs(sqsclient, SendMessageCommand, sqslimiter, allKeys, QueueURL)
-  // TODO: Set the message queue size dynamically based on the number of estimated files.
+var sqsmessagesize=setsqsmessagesize(defaultsqsmessagesize, allKeys.length, sumfilesize, QueryType)
+ populatesqs(sqsclient, SendMessageCommand, sqslimiter, allKeys, QueueURL, sqsmessagesize)
 
   await controllambdajobs(workerlimiter, ddclient, ssmclient, sequelize, Model, engineshared.InvocationsModel, QueueURL, S3SelectParameter, jobid, NumberofWorkers)
 
@@ -611,11 +612,18 @@ function createmessage (invocationid, jobid, S3SelectParameter, Schema) {
   if (Schema !== '') {
     var Schema = Schema.replace(/"/g, '\\"').replace(/(\r\n|\n|\r)/g, '')
   }
-  // if message size where to be larger than 3583 than we send empty schema.Each lambda will need to retrieve schema from parameter store.
-  const invocationparameters = `{"Schema":"${Schema}","jobid":"${jobid}","QueryType":"${QueryType}","invocationid":"${invocationid}","QueueURL":"${QueueURL}","S3SelectQuery":"${S3SelectQuery}","DatabaseParameters":"${DatabaseParameters.replace(/"/g, '\\"')}","DBTableName":"${DBTableName}","S3SelectParameter":"${S3SelectParameter.replace(/"/g, '\\"')}"}`
+
+  const partialmessage= `{"Schema":"","jobid":"${jobid}","QueryType":"${QueryType}","invocationid":"${invocationid}","QueueURL":"${QueueURL}","S3SelectQuery":"${S3SelectQuery}","DatabaseParameters":"${DatabaseParameters.replace(/"/g, '\\"')}","DBTableName":"${DBTableName}","S3SelectParameter":"${S3SelectParameter.replace(/"/g, '\\"')}"}`
+  
+  if (3582 - partialmessage.length <Schema.length){
+    // if complete message size where to be larger than 3582 than we send empty schema.Each lambda will need to retrieve schema from parameter store.
+    var Schema = ''
+  }
+
+  const invocationparameters =partialmessage.replace('"Schema":""',`"Schema":"${Schema}"`)
   // console.log(invocationparameters +"\n\n")
-  // TODO check if we need to escape S3SelectQuery string.
   const clientcontext = Buffer.from(invocationparameters).toString('base64')
+  //const invocationparameters = `{"Schema":"${Schema}","jobid":"${jobid}","QueryType":"${QueryType}","invocationid":"${invocationid}","QueueURL":"${QueueURL}","S3SelectQuery":"${S3SelectQuery}","DatabaseParameters":"${DatabaseParameters.replace(/"/g, '\\"')}","DBTableName":"${DBTableName}","S3SelectParameter":"${S3SelectParameter.replace(/"/g, '\\"')}"}`
 
   return clientcontext
 }
@@ -672,7 +680,7 @@ async function CreateSQLTable (sequelize, Model, SelectedModel, QueryType, DBTab
   })
 }
 
-async function populatesqs (sqsclient, SendMessageCommand, sqslimiter, allKeys, QueueURL) {
+async function populatesqs (sqsclient, SendMessageCommand, sqslimiter, allKeys, QueueURL, sqsmessagesize) {
   var MessagesArray = []
   var onebatch = []
 
@@ -771,7 +779,7 @@ async function getAllKeys (region, params, allKeys = []) {
   const s3client = new S3Client({ region })
   const command = new ListObjectsV2Command(params)
   const response = await s3client.send(command)
-  response.Contents.forEach(obj => allKeys.push([obj.Key, params.Bucket, region]))
+  response.Contents.forEach(obj => allKeys.push([obj.Key, params.Bucket, region, Math.ceil(obj.Size/1024)]))
 
   if (response.NextContinuationToken) {
     params.ContinuationToken = response.NextContinuationToken
@@ -1025,6 +1033,31 @@ function diskiocapacity(dbconfig, S3SelectQuery){
     console.log("(Increasing the storage capacity or switching disk type could increase this number)\n")
   }
   return parallellambdacapacity
+}
+
+function setsqsmessagesize(defaultsqsmessagesize, sumfilenumber, sumfilesize, QueryType){
+  
+  //Lambdas may get terminated because of insufficent memory, with message:  Error: Runtime exited with error: signal: killedRuntime.ExitError
+  // in order to limit that we reduce the number of files per message processed in one iteration of lambda workers. 
+ let avgfilesize=Math.ceil(sumfilesize/sumfilenumber)
+ let sqsmessagesize
+
+  if (QueryType === "CostDemoAWS"){
+    //Schema is huge (processing on the DB side takes long ) so less file per message
+    sqsmessagesize = Math.ceil(defaultsqsmessagesize * (20/avgfilesize))
+  }
+  else if (avgfilesize > 40){
+    //assumption is that a typical bundle's size is 40 KB  or less in that case we add 50 files to a message.
+    //So 1 message cotains (references/paths) to 40 files * 50 KB up to 2 MB of compressed data. 
+    //If avg file size is more than 40 KB/file , eg 115 KB/file than we than we reduce number of messages,
+    // 17 X 115 ~1.95MB
+    sqsmessagesize = Math.ceil(defaultsqsmessagesize * (40/avgfilesize))
+  }
+  else{
+    sqsmessagesize = defaultsqsmessagesize
+  }
+  //TODO determine default values for more datatypes
+  return sqsmessagesize
 }
 
 // kudos : "https://manytools.org/hacker-tools/ascii-banner/"

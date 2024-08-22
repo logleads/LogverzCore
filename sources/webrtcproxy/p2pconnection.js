@@ -6,6 +6,7 @@
 // kudos: https://levelup.gitconnected.com/send-files-over-a-data-channel-video-call-with-webrtc-step-6-d38f1ca5a351
 const MAXIMUM_MESSAGE_SIZE = 196608 // 131070;
 const END_OF_FILE_MESSAGE = 'EOF'
+const debugdatatransfer = false
 
 // https://www.npmjs.com/package/object-sizeof
 
@@ -290,6 +291,11 @@ const p2pconnection = async (req, res) => {
             message = JSON.stringify(authorization)
           }
         }
+      }
+
+      if(debugdatatransfer === true) {
+        //TODO handle case when message is not a string its an object, which happens when DB server is stopped and connection cant be made. 
+        fs.writeFileSync('./build/debug/'+Date.now()+".json", message)
       }
 
       arraybuffer = Uint8Array.from(message, x => x.charCodeAt(0))

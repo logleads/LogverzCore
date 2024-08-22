@@ -1,10 +1,10 @@
-﻿#converting a JSON object to CloudFormation format. 
+#converting a JSON object to CloudFormation format. 
 
-#$pshost = get-host
+$pshost = get-host
 $pswindow = $pshost.ui.rawui
 $newsize = $pswindow.buffersize
 $newsize.height = 600
-$newsize.width = 600
+$newsize.width = 1000
 $pswindow.buffersize = $newsize
 
 

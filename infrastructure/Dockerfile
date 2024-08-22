@@ -32,6 +32,7 @@ WORKDIR /usr/src/app
 # Install app dependencies
 RUN npm install pm2 -g && \
     mkdir build && \
+    mkdir build/debug && \
     mkdir mssqlqueryplanspath
 
 COPY ./ ./

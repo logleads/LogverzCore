@@ -172,7 +172,7 @@ async function loop (sqsclient, sequelize, context, TestingTimeout, engineshared
 }
 
 async function Task (sqsclient, engineshared, commonshared, ddclient, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header, DebugInsert, EngineBucket, region, FileName) {
-  const sqsmessages = await commonshared.receiveSQSMessage(sqsclient, ReceiveMessageCommand, QueueURL, '3')
+  const sqsmessages = await commonshared.receiveSQSMessage(sqsclient, ReceiveMessageCommand, QueueURL, '1')
 
   if (sqsmessages.Messages !== undefined) {
     try {
@@ -308,7 +308,7 @@ async function InsertData (commonshared, sequelize, Model, SelectedModel, QueryT
           rdsinsertsuccess = false
           // Transaction has been rolled back
           // err is whatever rejected the promise chain returned to the transaction callback
-          t.rollback()
+          await t.rollback()
           return  rdsinsertsuccess
       // }, 1500);
     }
@@ -316,7 +316,7 @@ async function InsertData (commonshared, sequelize, Model, SelectedModel, QueryT
       rdsinsertsuccess = false
       // Transaction has been rolled back
       // err is whatever rejected the promise chain returned to the transaction callback
-      t.rollback()
+      await t.rollback()
       return   rdsinsertsuccess
     }
   }
@@ -640,10 +640,14 @@ function convertdatatosqlschema (s3results, SelectedModel, DBEngineType) {
         }
         existingentry[Modelskey] = value
       }
+      else if (value === null || value === 'null' || value === "NULL" || value === undefined) {
+        value = null
+        existingentry[Modelskey] = value
+      }
       else if ((type === 'INTEGER' || type === 'BIGINT') && (value !== undefined)) {
         // convert non number value such as '-' to NULL
         // Note value can be undefined if the processed file does not contain same number of fields as schema example "ELBAccessLogTestFile" vs generic ELB AccessLogs
-        if (value === null || value === "null" || value === "NULL"){
+        if (value === "-" || value === ""){
           value = null
           existingentry[Modelskey] = value
         }
@@ -653,6 +657,34 @@ function convertdatatosqlschema (s3results, SelectedModel, DBEngineType) {
           }
           catch (err) {
             console.log('The key: \n' + Modelskey + '\nThe Value: \n' + value + '\nThe error: \n' + err)
+            console.log(JSON.stringify(existingentry))
+          };
+          existingentry[Modelskey] = value
+        }
+      }
+      else if ( type === 'BOOLEAN') {
+        if (value.toLowerCase().indexOf('true')){
+          value = true
+          existingentry[Modelskey] = value
+        }
+        else if(value.toLowerCase().indexOf('false')){
+          value = false
+          existingentry[Modelskey] = value
+        }
+      }
+      else if (type === 'DOUBLE PRECISION' || type === 'FLOAT') {
+
+        if (value === "-" || value === ""){
+          value = null
+          existingentry[Modelskey] = value
+        }
+        else{
+          try {
+            value = parseFloat(value)
+          }
+          catch (err) {
+            console.log('The key: \n' + Modelskey + '\nThe Value: \n' + value + '\nThe error: \n' + err)
+            console.log(JSON.stringify(existingentry))
           };
           existingentry[Modelskey] = value
         }
@@ -661,10 +693,6 @@ function convertdatatosqlschema (s3results, SelectedModel, DBEngineType) {
         //line breaks mess up formating of the insert strings so we remove them. 
         //But only if its string (value !== null) && (typeof (value) !== 'object') <json> and has linebreak charachters.
         existingentry[Modelskey] = value.replaceAll('\r\n'," ")
-      }
-      else if (value === null || value === 'null' || value === "NULL" || value === undefined) {
-        value = null
-        existingentry[Modelskey] = value
       }
       else if ((type === 'STRING' ) &&  (typeof (value) === 'object') && (value.length === 0)) {
         //Empty array fails for postgres: 
@@ -684,11 +712,7 @@ function convertrawdata (plainstring) {
   // Add into JSON 'array'
   plainstring = `[${plainstring}]`
   try {
-    const JSONobject = JSON.parse(plainstring)
-    var result = {
-      Result: 'PASS',
-      Data: JSONobject
-    } // encapsulating state of data to PASS/FAIL JSON object.
+    var JSONobject = JSON.parse(plainstring)
   }
   catch (e) {
     console.log(e)
@@ -697,6 +721,24 @@ function convertrawdata (plainstring) {
       Data: e
     }
   }
+
+  try {
+    var firstproperty= Object.keys(JSONobject[0])[0]
+    if (firstproperty === JSONobject[0][firstproperty]){
+      //this is a bug in s3 select that it returns the csv header fields as values during csv input to json output conversion
+      // eg: {"line_num":"line_num","identity_line_item_id":"identity_line_item_id","3rd","4th" etc...} 
+      //because of that if the first objects property name and property value is the same we discard that first array element. 
+      JSONobject.shift()
+    }    
+  }
+  catch(e){
+    console.log(e)
+  }
+
+  var result = {
+    Result: 'PASS',
+    Data: JSONobject
+  } // encapsulating state of data to PASS/FAIL JSON object.
 
   return result
 }
