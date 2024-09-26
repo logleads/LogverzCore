@@ -702,7 +702,8 @@
 				},
 				"RoleName":{
 					"Fn::Sub": "Logverz-WorkerRole-${AWS::Region}"
-				}
+				},
+				"ManagedPolicyArns":["arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole"]
 			}
 		},
 		"LogverzWorkerFunction": {
@@ -719,7 +720,8 @@
 						"TestingTimeout" : "0",
 						"sequalisepath": "file:///var/task/node_modules/sequelize/lib/index.mjs",
 						"EngineBucket":{ "Ref" : "EngineBucket" },
-						"DebugInsert":"0"
+						"DebugInsert":"0",
+						"MaximumCacheTime": {"Ref": "MaximumCacheTime"}
 					}
 				},
 				"Description": "To Retrive matching data from S3",
@@ -1093,6 +1095,505 @@
 				"SourceArn": { "Fn::GetAtt": ["LogverzScaleFunctionTrigger", "Arn"] }
 			}
 		},
+		"ContinousCollectionFunction": {
+			"Type": "AWS::Lambda::Function",
+			"DependsOn": [
+				"ContinousCollectionPolicy"
+			],
+			"Properties": {
+				"Code": {
+					"S3Bucket": {
+						"Fn::ImportValue": "LogverzInitBucket"
+					},
+					"S3Key": "bin/collection.zip"
+				},
+				"Description": "To create Continous Collection job",
+				"Environment": {
+					"Variables": {
+						"StackName" : {"Ref": "AWS::StackName"},
+						"sequalisepath": "file:///var/task/node_modules/sequelize/lib/index.mjs",
+						"StartDbStepFunctionArn": {"Ref": "ContinousCollectionStartDbStepFunction"}
+					}
+				},
+				"FunctionName": "Logverz-ContinousCollection",
+				"Handler": "collection.handler",
+				"Role": {
+					"Fn::GetAtt": ["ContinousCollectionRole", "Arn"]
+				},
+				"Runtime": "nodejs20.x",
+				"Timeout": "20",
+				"MemorySize": "512",
+				"VpcConfig": {
+					"SecurityGroupIds" : [ { "Fn::ImportValue" : "LogverzDBSecurityGroup" } ],
+					"SubnetIds" :{ "Fn::Split": [",", {"Fn::ImportValue" : "LogverzPrivateSubnets" }]}
+				}
+			}
+		},
+		"ContinousCollectionRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"Description": "TODO: Add proper scoping to the ContinousCollectionPolicy simmilar to {\"Fn::GetAtt\": [\"LogverzQueueMessages\", \"Arn\"]}",
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Effect": "Allow",
+							"Principal": {
+								"Service": ["lambda.amazonaws.com"]
+							},
+							"Action": "sts:AssumeRole"
+						}
+					]
+				},
+				"RoleName": {
+					"Fn::Sub": "Logverz-ContinousCollectionRole-${AWS::Region}"
+				}
+			}
+		},
+		"ContinousCollectionPolicy": {
+			"Type": "AWS::IAM::Policy",
+			"Properties": {
+				"PolicyName": {
+					"Fn::Sub": "Logverz-ContinousCollectionPolicy-${AWS::Region}"
+				},
+				"PolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Action": "kms:Decrypt",
+							"Effect": "Allow",
+							"Resource": "*"
+						},
+						{
+							"Action": [
+								"logs:CreateLogGroup",
+								"logs:CreateLogStream",
+								"logs:PutLogEvents"
+							],
+							"Effect": "Allow",
+							"Resource": "*"
+						},
+						{
+						"Sid":"AllowContinousCollection2GetListDescribeCFNProperties",
+						"Effect": "Allow",
+						"Action": [
+							"cloudformation:Describe*",
+							"cloudformation:List*",
+							"cloudformation:Get*"
+						],
+						"Resource": "*"
+						},
+						{
+							"Effect": "Allow",
+							"Action": [
+								"sqs:SendMessage",
+								"sqs:ReceiveMessage",
+								"sqs:DeleteMessage",
+								"sqs:GetQueueAttributes",
+								"sqs:GetQueueUrl",
+								"sqs:ListDeadLetterSourceQueues",
+								"sqs:ListQueues"
+							],
+							"Resource": "*"
+						},
+						{
+							"Effect": "Allow",
+							"Action": ["ssm:DescribeParameters"],
+							"Resource": "*"
+						},
+						{
+							"Action": ["ssm:GetParameter", "ssm:GetParameterHistory"],
+							"Effect": "Allow",
+							"Resource": {
+								"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/Logverz*"
+							}
+						},
+						{
+							"Sid": "ListAndDescribe",
+							"Effect": "Allow",
+							"Action": [
+								"dynamodb:List*",
+								"dynamodb:DescribeReservedCapacity*",
+								"dynamodb:DescribeLimits",
+								"dynamodb:DescribeTimeToLive"
+							],
+							"Resource": "*"
+						},
+						{
+							"Sid": "SpecificTable",
+							"Effect": "Allow",
+							"Action": [
+								"dynamodb:BatchGet*",
+								"dynamodb:DescribeStream",
+								"dynamodb:DescribeTable",
+								"dynamodb:Get*",
+								"dynamodb:Query",
+								"dynamodb:Scan",
+								"dynamodb:BatchWrite*",
+								"dynamodb:Update*",
+								"dynamodb:PutItem"
+							],
+							"Resource": "arn:aws:dynamodb:*:*:table/Logverz*"
+						},
+						{
+							"Sid": "VPCintegration",
+							"Effect": "Allow",
+							"Action": [
+								"ec2:CreateNetworkInterface",
+								"ec2:DescribeNetworkInterfaces",
+								"ec2:DeleteNetworkInterface"
+							],
+							"Resource": "*"
+						},
+						{
+							"Sid":"AllowContinousCollection2CallLambdas",
+							"Action": [
+								"lambda:InvokeFunction"
+							],
+							"Effect": "Allow",
+							"Resource":  [
+								{
+									"Fn::Sub": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:Logverz-Info"
+								}
+							]
+						},
+						{
+							"Sid": "StateFunction",
+							"Effect": "Allow",
+							"Action": [
+								"states:StartExecution"
+							],
+							"Resource":  [{
+									"Fn::Sub": "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:Logverz-StartDBfunction"
+								}
+							]
+						},
+						{
+							"Sid": "S3permissions4ContinousCollection",
+							"Effect": "Allow",
+							"Action": [
+								"s3:GetBucketNotification",
+								"s3:PutBucketNotification"
+							],
+							"Resource":  "*"
+						},
+						{
+							"Sid": "Createeventsourcemapping",
+							"Effect": "Allow",
+							"Action": [
+								"lambda:CreateEventSourceMapping",
+								"lambda:ListEventSourceMappings",
+								"lambda:DeleteEventSourceMapping"
+							],
+							"Resource":  "*"
+						}
+					]
+				},
+				"Roles": [
+					{
+						"Ref": "ContinousCollectionRole"
+					}
+				]
+			}
+		},
+		"ContinousCollectionStartDbStepFunction":{
+			"Type" : "AWS::StepFunctions::StateMachine",
+			"Properties" : {
+				"Definition" : {
+					"Comment": "A description of my state machine.",
+					"StartAt": "Call Scale to StartDB",
+					"States": {
+					  "Call Info to get instance status": {
+						"Next": "Check if DB is available (max 5 min)",
+						"Parameters": {
+						  "FunctionName": "arn:aws:lambda:ap-southeast-2:965017399465:function:Logverz-Info:$LATEST",
+						  "Payload": {
+							"clientContext": {
+							  "Parameters.$": "$.initial.Parameters",
+							  "apicall": "DescribeDBInstances",
+							  "cookie.$": "$.initial.cookie",
+							  "host": "LogverzStartDBstepfunction",
+							  "service": "rds"
+							}
+						  }
+						},
+						"Resource": "arn:aws:states:::lambda:invoke",
+						"ResultPath": "$.info",
+						"ResultSelector": {
+						  "DBInstanceStatus.$": "$.Payload.body.origin.DBInstanceStatus"
+						},
+						"Retry": [
+						  {
+							"BackoffRate": 2,
+							"ErrorEquals": [
+							  "Lambda.ServiceException",
+							  "Lambda.AWSLambdaException",
+							  "Lambda.SdkClientException",
+							  "Lambda.TooManyRequestsException"
+							],
+							"IntervalSeconds": 1,
+							"MaxAttempts": 3
+						  }
+						],
+						"Type": "Task"
+					  },
+					  "Call Scale to StartDB": {
+						"Next": "Wait for DB start ( 3 min)",
+						"Parameters": {
+						  "FunctionName": "arn:aws:lambda:ap-southeast-2:965017399465:function:Logverz-Scale:$LATEST",
+						  "Payload": {
+							"clientContext": {
+							  "Parameters.$": "$.initial.Parameters",
+							  "apicall": "StartDBInstance",
+							  "cookie.$": "$.initial.cookie",
+							  "host": "LogverzStartDBstepfunction",
+							  "service": "rds"
+							}
+						  }
+						},
+						"Resource": "arn:aws:states:::lambda:invoke",
+						"ResultPath": "$.scale",
+						"ResultSelector": {
+						  "DBInstanceStatus.$": "$.Payload.body.origin.DBInstanceStatus"
+						},
+						"Retry": [
+						  {
+							"BackoffRate": 2,
+							"ErrorEquals": [
+							  "Lambda.ServiceException",
+							  "Lambda.AWSLambdaException",
+							  "Lambda.SdkClientException",
+							  "Lambda.TooManyRequestsException"
+							],
+							"IntervalSeconds": 1,
+							"MaxAttempts": 3
+						  }
+						],
+						"Type": "Task"
+					  },
+					  "Check if DB is available (max 5 min)": {
+						"Choices": [
+						  {
+							"Next": "Call Continous Collection Continue with Configuration",
+							"StringEquals": "available",
+							"Variable": "$.info.DBInstanceStatus"
+						  },
+						  {
+							"Comment": "DB is not running state after total of ~12 min",
+							"Next": "Call info to Signal CloudFormation Failure",
+							"NumericGreaterThanEquals": 20,
+							"Variable": "$.Counter.Value"
+						  },
+						  {
+							"Comment": "Have a second try starting DB after sum 6min (3min +12*15sec)",
+							"Next": "Increase number",
+							"NumericEquals": 12,
+							"Variable": "$.Counter.Value"
+						  }
+						],
+						"Default": "Increase iteration number",
+						"Type": "Choice"
+					  },
+					  "Call Continous Collection Continue with Configuration": {
+						"Type": "Task",
+						"Resource": "arn:aws:states:::lambda:invoke",
+						"OutputPath": "$.Payload",
+						"Parameters": {
+						  "FunctionName": "arn:aws:lambda:ap-southeast-2:965017399465:function:Logverz-ContinousCollection:$LATEST",
+						  "Payload": {
+							"clientContext": {
+							  "LogicalResourceId.$": "$.initial.LogicalResourceId",
+							  "logStreamName.$": "$.initial.logStreamName",
+							  "Parameters.$": "States.Format('\\{\"Endpoint\": \"{}\"\\}',$.initial.ResponseURL)",
+							  "RequestId.$": "$.initial.RequestId",
+							  "RequestType.$": "$.initial.RequestType",
+							  "StackId.$": "$.initial.StackId",
+							  "apicall": "SignalResource",
+							  "cookie.$": "$.initial.cookie",
+							  "host": "LogverzStartDBstepfunction",
+							  "service": "cloudformation"
+							}
+						  }
+						},
+						"Retry": [
+						  {
+							"ErrorEquals": [
+							  "Lambda.ServiceException",
+							  "Lambda.AWSLambdaException",
+							  "Lambda.SdkClientException",
+							  "Lambda.TooManyRequestsException"
+							],
+							"IntervalSeconds": 1,
+							"MaxAttempts": 3,
+							"BackoffRate": 2
+						  }
+						],
+						"Next": "Success"
+					  },
+					  "Fail": {
+						"Type": "Fail"
+					  },
+					  "Increase iteration number": {
+						"Comment": "When transitioning to this state the iteration number is incremented by 1",
+						"Next": "Wait 15 seconds",
+						"Parameters": {
+						  "Value.$": "States.MathAdd($.Counter.Value, 1)"
+						},
+						"ResultPath": "$.Counter",
+						"Type": "Pass"
+					  },
+					  "Increase number": {
+						"Comment": "When transitioning to this state the iteration number is incremented by 1",
+						"Next": "Call Scale to StartDB",
+						"Parameters": {
+						  "Value.$": "States.MathAdd($.Counter.Value, 1)"
+						},
+						"ResultPath": "$.Counter",
+						"Type": "Pass"
+					  },
+					  "Call info to Signal CloudFormation Failure": {
+						"Next": "Fail",
+						"OutputPath": "$.Payload",
+						"Parameters": {
+						  "FunctionName": "arn:aws:lambda:ap-southeast-2:965017399465:function:Logverz-Info:$LATEST",
+						  "Payload": {
+							"clientContext": {
+							  "LogicalResourceId.$": "$.initial.LogicalResourceId",
+							  "logStreamName.$": "$.initial.logStreamName",
+							  "Parameters.$": "States.Format('\\{\"Endpoint\": \"{}\"\\}',$.initial.ResponseURL)",
+							  "RequestId.$": "$.initial.RequestId",
+							  "StackId.$": "$.initial.StackId",
+							  "RequestType.$": "$.initial.RequestType",
+							  "apicall": "SignalResource",
+							  "cookie.$": "$.initial.cookie",
+							  "host": "LogverzStartDBstepfunction",
+							  "service": "cloudformation"
+							}
+						  }
+						},
+						"Resource": "arn:aws:states:::lambda:invoke",
+						"Retry": [
+						  {
+							"BackoffRate": 2,
+							"ErrorEquals": [
+							  "Lambda.ServiceException",
+							  "Lambda.AWSLambdaException",
+							  "Lambda.SdkClientException",
+							  "Lambda.TooManyRequestsException"
+							],
+							"IntervalSeconds": 1,
+							"MaxAttempts": 3
+						  }
+						],
+						"Type": "Task"
+					  },
+					  "Success": {
+						"Type": "Succeed"
+					  },
+					  "Wait 15 seconds": {
+						"Next": "Call Info to get instance status",
+						"Seconds": 15,
+						"Type": "Wait"
+					  },
+					  "Wait for DB start ( 3 min)": {
+						"Next": "Call Info to get instance status",
+						"Seconds": 180,
+						"Type": "Wait"
+					  }
+					}
+				  },
+				"RoleArn" : {
+					"Fn::GetAtt": ["ContinousCollectionStepFunctionRole", "Arn"]
+				},
+				"StateMachineName" : "Logverz-StartDBfunction",
+				"Tags": [{
+					"Key": "Function",
+					"Value": "Logverz"
+				}]
+			  }
+		},
+		"ContinousCollectionStepFunctionRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"Description": "TODO: Add proper scoping to the ContinousCollectionPolicy simmilar to {\"Fn::GetAtt\": [\"LogverzQueueMessages\", \"Arn\"]}",
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Effect": "Allow",
+							"Principal": {
+								"Service": ["states.amazonaws.com"]
+							},
+							"Action": "sts:AssumeRole"
+						}
+					]
+				},
+				"RoleName": {
+					"Fn::Sub": "Logverz-ContinousCollectionStepFunctionRole-${AWS::Region}"
+				}
+			}
+		},
+		"ContinousCollectionStepFunctionPolicy": {
+			"Type": "AWS::IAM::Policy",
+			"Properties": {
+				"PolicyName": {
+					"Fn::Sub": "Logverz-ContinousCollectionStepFunctionPolicy-${AWS::Region}"
+				},
+				"PolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Action": "kms:Decrypt",
+							"Effect": "Allow",
+							"Resource": "*"
+						},
+						{
+							"Action": [
+								"logs:CreateLogGroup",
+								"logs:CreateLogStream",
+								"logs:PutLogEvents"
+							],
+							"Effect": "Allow",
+							"Resource": "*"
+						},
+						{
+							"Effect": "Allow",
+							"Action": ["ssm:DescribeParameters"],
+							"Resource": "*"
+						},
+						{
+							"Action": ["ssm:GetParameter", "ssm:GetParameterHistory"],
+							"Effect": "Allow",
+							"Resource": {
+								"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/Logverz*"
+							}
+						},
+						{
+							"Sid":"AllowContinousCollection2CallLambdas",
+							"Action": [
+								"lambda:InvokeFunction"
+							],
+							"Effect": "Allow",
+							"Resource":  [{
+								"Fn::Sub": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:Logverz-Scale:$LATEST"
+							},
+							{
+								"Fn::Sub": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:Logverz-Info:$LATEST"
+							},
+							{
+								"Fn::Sub": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:Logverz-ContinousCollection:$LATEST"
+							}
+						]
+						}
+					]
+				},
+				"Roles": [
+					{
+						"Ref": "ContinousCollectionStepFunctionRole"
+					}
+				]
+			}
+		},
 		"SSMControllersList": {
 			"Type": "AWS::SSM::Parameter",
 			"Properties": {
@@ -1284,7 +1785,7 @@
 			}
 		},
 		"LogverzJobsQDeadLetter" : {
-			"Description" : "The Queue where the Search jobs are stored.",
+			"Description" : "The Queue where the failed messages (deadletters) are stored.",
 			"Value" :{
 				"Fn::GetAtt": ["LogverzJobsQDeadLetter", "Arn"]
 			},
@@ -1295,6 +1796,15 @@
 		"ScaleFunction":{
 			"Description":"Scale function arn",
 			"Value":{ "Fn::GetAtt" : [ "LogverzScaleFunction", "Arn" ] }
+		},
+		"ContinousCollectionFunction" : {
+			"Description" : "ContinousCollectionFunction function arn",
+			"Value" :{
+				"Fn::GetAtt": ["ContinousCollectionFunction", "Arn"]
+			},
+			"Export": {
+				"Name": "LogverzContinousCollectionFunction"
+			}
 		}
 	}
 }

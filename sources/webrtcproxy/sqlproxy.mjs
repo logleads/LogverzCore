@@ -22,9 +22,6 @@ const query = async (clientrequest, Registry, commonshared, engineshared, ddclie
     var ModelsPath = './sources/webrtcproxy/build/' // './build/SelectedModel.js'
   }
 
-  return await main(_, ssmclient, engineshared, commonshared, ddclient, docClient, Op)
-
-  async function main (_, ssmclient, engineshared, commonshared, ddclient, docClient, Op) {
     var details = {
       source: 'signal.js:handler',
       message: ''
@@ -101,7 +98,7 @@ const query = async (clientrequest, Registry, commonshared, engineshared, ddclie
     }
     else if (Mode.match('DeleteTable') !== null) {
       var DBTableName = clientrequest.DBTableName
-
+      // TODO replace this with engineshared.ConfigureDBDeleteTables
       const Model = Sequelize.Model
       class Query extends Model {}
       Query.init({}, {
@@ -149,10 +146,12 @@ const query = async (clientrequest, Registry, commonshared, engineshared, ddclie
 
     var connectionstate = await engineshared.CloseSQLConnection(sequelize)
     console.log(connectionstate)
-
-    var sqlresultstring = JSON.stringify(sqlresult)
+    //https://stackoverflow.com/questions/14432165/error-uncaught-syntaxerror-unexpected-token-with-json-parse
+    //Remove all controll characthers such as: https://codepoints.net/U+0019?lang=en
+    //var sqlresultstring = JSON.stringify(sqlresult).replace(/[\u0000-\u001F]+/g,"")
+    //https://stackoverflow.com/questions/20856197/remove-non-ascii-character-in-string
+    var sqlresultstring = JSON.stringify(sqlresult).replace(/[\u{0080}-\u{FFFF}]/gu,"")
     return sqlresultstring
-  }
 }
 
 async function SelectModel (ssmclient, commonshared, engineshared, ddclient, QueryType, DBEngineType, ModelsPath, fs, path, promisify, GetParameterCommand, PutItemCommand) {

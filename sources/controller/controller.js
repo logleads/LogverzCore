@@ -39,6 +39,7 @@ const dbenginememorylimits = [
 //Postgres: https://dba.stackexchange.com/questions/206448/postgresql-large-transaction-oom-killer
 // https://github.com/sequelize/sequelize/issues/15404 , https://www.enterprisedb.com/blog/tuning-maxwalsize-postgresql
 ]
+var usage = 'controller'
 let SQSQUEUENOTNULL = true
 const subfolderlist = []
 let tobeprocessed = []
@@ -54,7 +55,7 @@ if (process.env.Environment !== 'LocalDev') {
   var region = process.env.AWS_REGION
   var defaultsqsmessagesize = 50
   var WorkerFunction = process.env.WorkerFunction
-  var SelectedModelPath = ('file:///' + path.join(__dirname, 'build', 'SelectedModel.js').replace(/\\/g, '/'))
+  var SelectedModelPath = ('file:///' + path.join(__dirname, 'build', 'SelectedModel.mjs').replace(/\\/g, '/'))
   // './build/SelectedModel'
   var S3SelectQuery = process.env.S3SelectQuery
   var S3SelectParameter = process.env.S3SelectParameter
@@ -168,42 +169,27 @@ async function main (defaultsqsmessagesize, rdsclient, cbclient, sqsclient, ssmc
   const z0 = performance.now()
   console.log('1.) Starting execution')
 
-  const Model = Sequelize.Model
-  const DBAvalue = DatabaseParameters.split('<!!>')
-  let DBEngineType = DBAvalue.filter(s => s.includes('LogverzEngineType'))[0].split('=')[1]
-  const DBUserName = DBAvalue.filter(s => s.includes('LogverzDBUserName'))[0].split('=')[1]
-  const DBEndpointName = DBAvalue.filter(s => s.includes('LogverzDBEndpointName'))[0].split('=')[1]
-  const DBEndpointPort = DBAvalue.filter(s => s.includes('LogverzDBEndpointPort'))[0].split('=')[1]
-  const DBSecretRef = DBAvalue.filter(s => s.includes('LogverzDBSecretRef'))[0].split('=')[1]
-  const DBTableName = TableParameters.split('<!!>').filter(s => s.includes('TableName'))[0].split('=')[1]
-  const DBInstanceClass = DBAvalue.filter(s => s.includes('LogverzDBInstanceClass'))[0].split('=')[1]
-        DBEngineType = (DBEngineType.match('sqlserver-') ? 'mssql' : DBEngineType)
-
-  var details = {
-    source: 'controller.js:main/getssmparameter',
-    message: ''
-  }
-  var params = {
-    Name: DBSecretRef,
-    WithDecryption: true
-  }
-
-  let DBPassword = await commonshared.getssmparameter(ssmclient, GetParameterCommand, params, ddclient, PutItemCommand, details)
+  const dbparams =await engineshared.LookupDBParameters (DatabaseParameters, TableParameters, commonshared, ssmclient, ddclient,  GetParameterCommand, PutItemCommand)
   const buildstatus = await commonshared.getbuildstatus(cbclient, BatchGetBuildsCommand, [cbbuildid])
   // get who/what initated the codebuild run
   const username = buildstatus.builds[0].initiator
   const buildenvironment = buildstatus.builds[0].environment.computeType
   // if not authorized process exits;
-  await authorizecollection(username)
+  await engineshared.authorizecollection(_, docClient, QueryCommand, ddclient, PutItemCommand, commonshared, authenticationshared, S3Folders, username)
 
-  const NumberofWorkers = await EnvironmentMaxWokerCount(rdsclient, commonshared, scclient, cwclient, dbinstanceclasses, DBInstanceClass, DBEngineType, DBEndpointName, buildenvironment, PreferedWorkerNumber, S3SelectQuery)
+  // checking for previous queries that needs to be set inactive in prod environment
+  if (process.env.Environment !== 'LocalDev') {
+    await commonshared.deactivatequery(docClient, QueryCommand, UpdateCommand, dbparams.DatabaseName, dbparams.DBTableName, jobid)
+  }
+
+  const NumberofWorkers = await EnvironmentMaxWokerCount(rdsclient, commonshared, scclient, cwclient, dbinstanceclasses, dbparams.DBInstanceClass, dbparams.DBEngineType, dbparams.DBEndpointName, buildenvironment, PreferedWorkerNumber, S3SelectQuery)
 
   const workerlimiter = new Bottleneck({
     minTime: 200, // so that max 5 request is made per second.
     maxConcurrent: NumberofWorkers
   })
 
-  // check Lambda invocation context size  if its less than 3582 than ok send Schema with lambda invoke,
+  // used in Cloudformation custom schema mode, checking Lambda invocation context size  if its less than 3582 than ok send Schema with lambda invoke,
   var lambdamessagesize = (createmessage(jobid, jobid, S3SelectParameter, Schema)).length
 
   // if its more than the lambda invocation limit, than schema needs to be saved to Parameter store.
@@ -226,63 +212,12 @@ async function main (defaultsqsmessagesize, rdsclient, cbclient, sqsclient, ssmc
     Schema = ''
   }
 
-  DBPassword = DBPassword.Parameter.Value
-
-  Schema = engineshared.convertschema(Schema, DBEngineType)
-  fs.writeFileSync(fileURLToPath(SelectedModelPath), engineshared.constructmodel(Schema, 'controller'))
-  const DBName = 'Logverz'
-  const connectionstring = `${DBEngineType}://${DBUserName}:${DBPassword}@${DBEndpointName}:${DBEndpointPort}/${DBName}`
-  const sequaliseconfig = engineshared.ConfigureSequalize(DBEngineType)
-  let sequelize = new Sequelize(connectionstring, sequaliseconfig)
-  sequelize.options.logging = false // Disable logging
-
-  try {
-    await InitiateSQLConnection(sequelize, DBEngineType, connectionstring, DBName)
-    console.log('Connection has been established successfully.\n')
-  }
-  catch (e) {
-    const message = 'Error establishing SQL connection. Further details: \n'
-    console.error(message + e)
-    var details = {
-      source: 'controller.js:InitiateSQLConnection',
-      message: message + e,
-      jobid
-    }
-    await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'SQLConnect', 'Error', 'Infra', details, 'API')
-    process.exit(1)
-  }
-
-  // checking for previous queries that needs to be set inactive in prod environment
-  if (process.env.Environment !== 'LocalDev') {
-    const DatabaseName = DBAvalue.filter(s => s.includes('LogverzDBFriendlyName'))[0].split('=')[1]
-    const DBTableName = TableParameters.split('<!!>').filter(s => s.includes('TableName'))[0].split('=')[1]
-    await commonshared.deactivatequery(docClient, QueryCommand, UpdateCommand, DatabaseName, DBTableName, jobid)
-  }
-
-  // Verify that Invocations table exists, if not create it and the processing errors table,
-  try {
-    const initatequery = initiatetablesquery(DBEngineType)
-    await sequelize.query(initatequery)
-  }
-  catch (err) {
-    console.log('Invocations table does not exists creating it and Processingerrors table.')
-    await CreateSQLTable(sequelize, Model, engineshared.InvocationsModel, 'Invocation', 'Invocations')
-    await CreateSQLTable(sequelize, Model, engineshared.ProcessingErrorsModel(DBEngineType), 'ProcessingError', 'ProcessingErrors')
-  }
-
-
-  // const SelectedModel = require('./build/SelectedModel')
-  var SelectedModelpath = ('file:///' + path.join(__dirname, 'build', 'SelectedModel.js').replace(/\\/g, '/'))
-  const SelectedModel = (await import(SelectedModelpath)).SelectedModel
-
-  try {
-    await CreateSQLTable(sequelize, Model, SelectedModel, QueryType, DBTableName)
-    console.log('Table ' + DBTableName + ' for "' + QueryType + '" data type queries has been created.')
-  }
-  catch (e) {
-    console.error(e)
-  }
-
+  //Connect to Database and setup Tables
+  let sequelize
+  let Model = Sequelize.Model
+  sequelize = await engineshared.ConnectDBserver(sequelize, Sequelize, Schema, dbparams, fs, fileURLToPath, SelectedModelPath, ddclient, engineshared, commonshared, usage)
+              await engineshared.ConfigureDBCreateTables(sequelize, engineshared, dbparams, Model, SelectedModelPath, QueryType)
+  //await engineshared.ConnectNConfigureDBserver(sequelize, fs,  path, fileURLToPath, __dirname, ddclient, engineshared, Schema, Sequelize, dbparams, Model, SelectedModelPath, QueryType, usage)
   const z1 = performance.now()
 
   console.log('2.) Starting walk folders, ellipsed time from the beginning is ' + (z1 - z0) / 1000)
@@ -571,7 +506,8 @@ function submitlambdajobs2Q (throttledlambdajob, ddclient, sequelize, Model, Inv
 async function lambdajob (ddclient, sequelize, Model, InvocationsModel, jobid, S3SelectParameter) {
   if (SQSQUEUENOTNULL === true) {
     const invocationid = commonshared.makeid(16)
-    await invokelambda(invocationid, jobid, S3SelectParameter)
+    const clientcontext = createmessage(invocationid, jobid, S3SelectParameter, Schema)
+    await commonshared.invokelambda (lmdclient, InvokeCommand, clientcontext, WorkerFunction)
 
     //TODO ADD TRY CATCH
     console.log("invokedlambda id"+invocationid)
@@ -628,19 +564,6 @@ function createmessage (invocationid, jobid, S3SelectParameter, Schema) {
   return clientcontext
 }
 
-async function invokelambda (invocationid, jobid, S3SelectParameter) {
-  const clientcontext = createmessage(invocationid, jobid, S3SelectParameter, Schema)
-  const lambdaparams = {
-    ClientContext: clientcontext, // .toString('base64'),
-    FunctionName: WorkerFunction,
-    InvocationType: 'RequestResponse', // "RequestResponse" || "Event" // bydefault Requestreponse times out after 120 sec, hence the timout 900 000 value
-    LogType: 'None'
-  }
-
-  const command = new InvokeCommand(lambdaparams)
-  await lmdclient.send(command)
-}
-
 async function SelectSQLTable (sequelize, Model, SelectedModel, QueryType, DBTableName, QueryTypes, QueryParameters) {
   // TODO remove this function and use engineshared.selectsqltable.
   class Query extends Model {}
@@ -659,25 +582,6 @@ async function SelectSQLTable (sequelize, Model, SelectedModel, QueryType, DBTab
   else {
     return await Query.findByPk(QueryParameters)
   }
-}
-
-async function CreateSQLTable (sequelize, Model, SelectedModel, QueryType, DBTableName) {
-  return new Promise((resolve, reject) => {
-    class Entry extends Model {}
-    Entry.init(SelectedModel, {
-      sequelize,
-      modelName: QueryType,
-      freezeTableName: true,
-      tableName: DBTableName
-    }).then(
-      resolve(Entry.sync({
-        force: true
-      }))
-    ).catch(err => {
-      console.log(err)
-      reject(err)
-    })
-  })
 }
 
 async function populatesqs (sqsclient, SendMessageCommand, sqslimiter, allKeys, QueueURL, sqsmessagesize) {
@@ -870,55 +774,6 @@ async function DesribeAllENI () {
   return ENIlistArray
 }
 
-function initiatetablesquery (DBEngineType) {
-  if (DBEngineType === 'postgres') {
-    var initiatetables = 'SELECT 1 FROM public."Invocations"'
-  }
-  else if (DBEngineType === 'mysql') {
-    var initiatetables = 'SELECT 1 FROM Invocations'
-  }
-  else if (DBEngineType.match('mssql')) {
-    var initiatetables = 'SELECT 1 FROM dbo.Invocations'
-  }
-  else {
-    var initiatetables = 'null'
-    console.error('unknown unsupported DB option')
-  }
-  return initiatetables
-}
-
-async function authorizecollection (username) {
-  const S3Foldersarray = _.compact(S3Folders.split(';'))
-
-  // if not match Logverz-MasterController than check user authorization for given s3 folders.
-  if (username.match('Logverz-MasterController') === null) {
-    const usertype = 'UserAWS'
-    console.log("Checking authorization of '" + username + "'." + "Type:'UserAWS'.")
-    let userattributes = await authenticationshared.getidentityattributes(docClient, QueryCommand, username, usertype)
-    userattributes = userattributes.Items[0]
-    var S3authresult = authenticationshared.authorizeS3access(_, commonshared, userattributes, S3Foldersarray)
-  }
-  else {
-    // if match than authorization is granted. TODO , perform authoriation check on MasterController as well.
-    var S3authresult = 'ok'
-  }
-
-  if (S3authresult !== 'ok') {
-    const message = 'User not allowed to access one or more S3 locations. Further details: \n' + S3authresult.toString()
-    console.error(message)
-    const details = {
-      source: 'controller.js:authorizeS3access',
-      message,
-      jobid
-    }
-    await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'S3Access', 'Error', 'User', details, 'API')
-    process.exit(1)
-  }
-  else {
-    console.log(username + ' can access folders ' + S3Foldersarray)
-  }
-}
-
 async function GetConfiguration (directory, value) {
   // Kudos: https://stackoverflow.com/questions/71432755/how-to-use-dynamic-import-from-a-dependency-in-node-js
   const moduleText = fs.readFileSync(fileURLToPath(directory), 'utf-8').toString()
@@ -931,50 +786,6 @@ async function GetConfiguration (directory, value) {
     var data = (await import(moduleDataURL))
   }
   return data
-}
-
-async function InitiateSQLConnection (sequelize, DBEngineType, connectionstring, DBName) {
-
-  if (DBEngineType === 'mssql') {
-    // by default mssql does not have a Logverz database, so at first execution it needs to be created.
-
-    sequelize.options.validateBulkLoadParameters = true
-    sequelize.options.loginTimeout = 15
-
-    try {
-      await sequelize.authenticate()
-    }
-    catch (err) {
-      if (err.name === 'SequelizeAccessDeniedError') {
-
-        // At first execution Logverz DB is not present need to connect to a different db to verify credentials
-        // than create  Logverz DB and if successfull return authenticated true.
-        sequelize = new Sequelize(connectionstring)
-        sequelize.connectionManager.config.database = 'master'
-        sequelize.options.logging = false
-
-        // trying to authenticate a 2nd time either works (case of 1st execution) or errors (wrong credential).
-        // This error is caught in the main try catch
-        await sequelize.authenticate()
-
-        // connection succeeded creating mssql database
-        await sequelize.query('CREATE DATABASE ' + DBName)
-
-        // connectioning to newly created DB
-        sequelize = new Sequelize(connectionstring)
-        await sequelize.authenticate()
-
-      }
-      else {
-        console.log(err)
-      }
-    }
-  }
-  else {
-    //non mssql DB
-    await sequelize.authenticate()
-  }
-
 }
 
 function diskiocapacity(dbconfig, S3SelectQuery){

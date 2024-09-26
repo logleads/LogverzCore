@@ -1,17 +1,28 @@
 {
   "name": "Logverz",
   "description": "",
-  "version": "0.9.0",
+  "version": "0.9.2",
   "main": "info.js",
   "keywords": [],
   "repository": {
     "type": "git",
     "url": "https://logleads@dev.azure.com/logleads/Logverz/_git/Logverz"
   },
+  "type": "module",
   "author": "platformlead",
   "license": "LogLeads License 1.0",
   "dependencies": {
-    "aws-sdk": "^2.1677.0",
+    "@aws-sdk/client-account": "^3.645.0",
+    "@aws-sdk/client-auto-scaling": "^3.645.0",
+    "@aws-sdk/client-cloudformation": "^3.645.0",
+    "@aws-sdk/client-codebuild": "^3.645.0",
+    "@aws-sdk/client-cognito-identity-provider": "^3.645.0",
+    "@aws-sdk/client-dynamodb": "^3.645.0",
+    "@aws-sdk/client-ec2": "^3.645.0",
+    "@aws-sdk/client-rds": "^3.645.0",
+    "@aws-sdk/client-s3": "^3.645.0",
+    "@aws-sdk/client-ssm": "^3.645.0",
+    "@aws-sdk/lib-dynamodb": "^3.645.0",
     "jsonwebtoken": "^9.0.2",
     "lodash": "^4.17.21",
     "lokijs": "^1.5.12"

@@ -259,7 +259,7 @@ const apigatewayresponse = (input, headers, AllowedOrigins) => {
     var contenttype = 'application/json'
   }
 
-  if (headers.origin !== null && (AllowedOrigins.split(',').map(p => p.includes(headers.origin)).includes(true))) {
+  if (headers !== undefined && headers.origin !== null && (AllowedOrigins.split(',').map(p => p.includes(headers.origin)).includes(true))) {
     // set origin dynamically in case the response comes from a known / accepted source.
     var origin = headers.origin
   }
@@ -755,7 +755,6 @@ const deactivatequery = async (docClient, QueryCommand, UpdateCommand, DatabaseN
     IndexName: 'TableName'
   }
 
-  // const data = (await commonshared.queryDDB(docClient, queryparams)).Items
   const command = new QueryCommand(queryparams)
   var data = (await docClient.send(command)).Items
 
@@ -816,6 +815,10 @@ const masktoken = (maskedevent) => {
     maskedevent.headers.cookie = '****'
     maskedevent.multiValueHeaders.cookie = '****'
   }
+
+  if (maskedevent.clientContext!== undefined && maskedevent.clientContext.cookie !== undefined){
+    maskedevent.clientContext.cookie = '****'
+  }
   return maskedevent
 }
 
@@ -871,10 +874,338 @@ const maskcredentials = (mevent) => {
   return mevent
 }
 
+async function getallssmparameterhistory (commonshared, ssmclient, GetParameterHistoryCommand, ddclient, PutItemCommand, parametername) {
+  var parametersarray = []
+  var NextToken
+
+  do {
+    var batchofparameters = await getbatchofparametersHistory(ssmclient, GetParameterHistoryCommand, parametername, NextToken)
+
+    if (batchofparameters.Result === 'PASS') {
+      if (batchofparameters.Data.NextToken !== undefined) {
+        NextToken = batchofparameters.Data.NextToken
+      }
+    }
+    else {
+      var ssmallparamhistoryresult = parametername + ':  SSM Parameter retrieval failed.Because ' + batchofparameters.Data
+      var details = {
+        source: 'jobproducer.js:getallssmparameterhistory',
+        message: ssmallparamhistoryresult
+      }
+      await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'GetParameter', 'Error', 'Infra', details, 'API')
+    }
+
+    parametersarray = parametersarray.concat(batchofparameters.Data.Parameters)
+  } while (batchofparameters.Data.NextToken !== undefined)
+
+  return parametersarray.slice(-3) // return last 3 item.
+}
+
+async function getbatchofparametersHistory (ssmclient, GetParameterHistoryCommand, parametername, NextToken) {
+  if (NextToken) {
+    var params = {
+      Name: parametername,
+      // required
+      NextToken,
+      MaxResults: 50,
+      WithDecryption: false
+    }
+  }
+  else {
+    var params = {
+      Name: parametername,
+      // required
+      MaxResults: 50,
+      WithDecryption: false
+    }
+  }
+
+  const command = new GetParameterHistoryCommand(params)
+  try {
+    const data = await ssmclient.send(command)
+    var result = {
+      Result: 'PASS',
+      Data: data
+    }
+    return result
+  }
+  catch (err) {
+    var result = {
+      Result: 'Fail',
+      Data: err
+    }
+    return result
+  }
+}
+
+function matchexecutionwithparameterhistory (executionhistory, S3Folders, TableParameters) {
+  var match = false
+
+  for (var i = executionhistory.length-1; i >= 0; i--) {
+    var oneexecutionarray = executionhistory[i]
+    oneexecutionarray.Value.split('\n')
+
+    var EHTableParameters = oneexecutionarray.Value.split('\n').filter(s => s.includes('TableParameters'))[0].replace('TableParameters:', '').replace(';', '')
+    var EHS3Folders = oneexecutionarray.Value.split('\n').filter(s => s.includes('S3Folders'))[0].replace('S3Folders:', '').replace(';', '')
+    if (EHTableParameters === TableParameters && EHS3Folders === S3Folders) {
+      match = oneexecutionarray
+      console.log('match found')
+      break
+    }
+    else {
+      console.log('match false')
+    }
+  }
+
+  return match
+}
+
+const CFNExecutionIdentity = async (commonshared, ssmclient, GetParameterHistoryCommand, ddclient, PutItemCommand, ExecutionHistory, S3Folder, TableParameters) => {
+
+  console.log('Debug: At CloudFormation Start')
+  // in case of cloudformation, execution information is not availabe in the context, hence username (that iniated execution) is looked up from the history.
+  var retries = [1, 2, 3, 4]
+  // Result can be delayed hence the retry
+  for await (var attempt of retries) {
+    // user name who invoked the job is retrieved from Execution history
+    console.log('Attempt ' + attempt + ' of retriving the user from execution history')
+    // do try catch here
+
+    var executionhistory = await getallssmparameterhistory(commonshared, ssmclient, GetParameterHistoryCommand, ddclient, PutItemCommand, ExecutionHistory)
+
+    // result may not be the last item in case of frequent invocations hence the matching
+    var match = matchexecutionwithparameterhistory(executionhistory, S3Folder, TableParameters)
+    if (match !== false) {
+      break
+    }
+    else {
+      await timeout(4000)
+    }
+  }
+
+  if (match === false) {
+
+    var result = {
+      Result: 'Fail',
+      message: 'Something went wrong cloud not determine the user making the call. As no match was found in the Execution history.'
+    }
+  }
+  else {
+    var lastmodifieduserarn = match.LastModifiedUser
+
+    if (lastmodifieduserarn.match(':root') !== null) {
+      var username = 'root' // root ||admin
+    }
+    else {
+      var username = lastmodifieduserarn.split('/')[1]
+    }
+    var usertype = 'UserAWS'
+
+    var result = {
+      Result: 'PASS',
+      username,
+      usertype
+    }
+  }
+  return result
+}
+
+const JobExecutionAuthorization = async (_, authenticationshared, commonshared, docClient, QueryCommand, identity, identityresult, S3Folder ) => {
+
+  var userattributes = identity.chain().find({
+    Type: identityresult.usertype,
+    Name: identityresult.username
+  }).collection.data[0] 
+
+  if (userattributes === undefined) {
+    userattributes = await authenticationshared.getidentityattributes(docClient, QueryCommand, identityresult.username, identityresult.usertype)
+    userattributes = userattributes.Items[0]
+
+    if (userattributes !== undefined) {
+      identity.insert(userattributes)
+    }
+  }
+
+  if (userattributes !== undefined) {
+    // Doing S3 authorization here.
+    var S3Folder = S3Folder.replace('S3Folders:', '')
+    var S3Foldersarray = _.compact(S3Folder.split(';'))
+    var message = authenticationshared.authorizeS3access(_, commonshared, userattributes, S3Foldersarray)
+  }
+  else {
+    var message=  'User ' + username + ' does not exists in DynamoDB Logverz-Identities table. Could not check entitlement to validate access request.\nIdentity Sync may be needed.'
+  }
+  
+  return message
+}
+
+function timeout (ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+const invokelambda =async (lmdclient, InvokeCommand, clientcontext, FunctionName) =>{
+  
+  const lambdaparams = {
+    ClientContext: clientcontext, // .toString('base64'),
+    //FunctionName: WorkerFunction,
+    FunctionName,
+    InvocationType: 'RequestResponse', // "RequestResponse" || "Event" // bydefault Requestreponse times out after 120 sec, hence the timout 900 000 value
+    LogType: 'None'
+  }
+
+  const command = new InvokeCommand(lambdaparams)
+  const result =await lmdclient.send(command)
+  return result
+}
+
+const RecordQuery = async (_, ddclient, PutItemCommand, commonshared, onejob, selectedcontroller, type) => {
+
+  var S3Properties={}
+  if(onejob.TableParameters.stringValue!=undefined) {
+    //used for Master controller SQS automatic invocation of master controller.
+    S3Properties = JSON.parse(onejob.S3Properties.stringValue)
+    var TableParameters = onejob.TableParameters.stringValue.split('<!!>')
+    var DBvalue = onejob.DatabaseParameters.stringValue.split('<!!>')
+    var datatype =onejob.QueryType.stringValue
+    var QueryString =onejob.QueryString.stringValue
+    var JobID = onejob.JobID.stringValue
+  }
+  else{
+    //used for continous collection 
+    S3Properties.S3Folders = onejob.S3parameters
+    var TableParameters = onejob.TableParameters.split('<!!>')
+    var DBvalue = onejob.DatabaseParameters.split('<!!>')
+    var datatype =onejob.DataTypeSelector
+    var QueryString =onejob.QueryString
+    var JobID = 'continous_collection'
+  }
+  
+
+  var DDBTableName = 'Logverz-Queries'
+
+  var d = new Date()
+  var weeknumber = getWeekNumber(d) // new Date()
+  var hours = d.getHours()
+  var minutes = d.getMinutes()
+
+  var UsersQuery = commonshared.propertyvaluelookup(TableParameters.filter(t => t.includes('Creator')))
+  var TableOwners = _.uniqWith((UsersQuery + ',' + commonshared.propertyvaluelookup(TableParameters.filter(t => t.includes('TableOwners')))).split(','), _.isEqual)
+  var TableAccess = (commonshared.propertyvaluelookup(TableParameters.filter(t => t.includes('TableAccess')))).split(',')
+  var QueryName = commonshared.propertyvaluelookup(TableParameters.filter(t => t.includes('TableName'))) + '-W' + weeknumber[1] + getdayName(d) + 'T' + hours + ':' + minutes
+  var DatabaseName = DBvalue.filter(s => s.includes('LogverzDBFriendlyName'))[0].split('=')[1]
+
+  var QuerySettings = {
+    QueryString,
+    ComputeEnvironment: selectedcontroller,
+    JobID,
+    S3Folders: S3Properties.S3Folders,
+    Description: commonshared.propertyvaluelookup(TableParameters.filter(t => t.includes('TableDescription')))
+  }
+
+  var params = {
+    Item: {
+      UsersQuery: {
+        S: (UsersQuery)
+      }, // +"-Collection"
+      UnixTime: {
+        N: Date.now().toString()
+      },
+      QueryName: {
+        S: QueryName
+      }, // tablename+timeformat
+      QueryType: {
+        S: type
+      }, // Collection
+      TableName: {
+        S: (TableParameters.filter(t => t.includes('TableName'))[0].split('=')[1])
+      },
+      DatabaseName: {
+        S: DatabaseName
+      },
+      DataType: {
+        S: datatype
+      },
+      QuerySettings: {
+        M: {}
+      },
+      Access: {
+        L: []
+      },
+      Owners: {
+        L: []
+      },
+      Active: {
+        BOOL: true
+      },
+      Archive: {
+        BOOL: false
+      }
+    },
+    ReturnConsumedCapacity: 'TOTAL',
+    TableName: DDBTableName
+  }
+
+  var i
+  for (i = 0; i < Object.keys(QuerySettings).length; i++) {
+    var Name = Object.keys(QuerySettings)[i]
+    var Value = QuerySettings[Name]
+    params.Item.QuerySettings.M[Name] = {
+      S: Value
+    }
+  }
+
+  for (var j = 0; j < TableOwners.length; j++) {
+    var oneowner = {
+      S: TableOwners[j]
+    }
+    params.Item.Owners.L.push(oneowner)
+  }
+
+  for (var k = 0; k < TableAccess.length; k++) {
+    if (TableAccess[k] !== '') { // checking for empty string (Table access not set)
+      var oneaccess = {
+        S: TableAccess[k]
+      }
+      params.Item.Access.L.push(oneaccess)
+    }
+  }
+
+  const command = new PutItemCommand(params)
+  return await ddclient.send(command)
+}
+
+function getWeekNumber (d) {
+  // Copy date so don't modify original
+  d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+  // Set to nearest Thursday: current date + 4 - current day number
+  // Make Sunday's day number 7
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7))
+  // Get first day of year
+  var yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+  // Calculate full weeks to nearest Thursday
+  var weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7)
+  // Return array of year and week number
+  return [d.getUTCFullYear(), weekNo]
+}
+
+function getdayName (d) {
+  var weekday = new Array(7)
+  weekday[0] = 'Sun'
+  weekday[1] = 'Mon'
+  weekday[2] = 'Tue'
+  weekday[3] = 'Wed'
+  weekday[4] = 'Thu'
+  weekday[5] = 'Fri'
+  weekday[6] = 'Sat'
+  return weekday[d.getDay()]
+}
+
+
 export {
   getssmparameter, setssmparameter, receiveSQSMessage, makeid, timeConverter, AddDDBEntry, SelectDBfromRegistry, 
   DBpropertylookup, ValidateToken, apigatewayresponse, newcfnresponse, getquerystringparameter,
   eventpropertylookup, propertyvaluelookup, getcookies, S3GET, s3putdependencies, emptybucket,
   GroupAsgInstances, GetEC2InstancesMetrics, GetRDSInstancesMetrics, CreatePeriod, average, getbuildstatus,
-  walkfolders, TransformInputValues, ASGstatus, deactivatequery, masktoken, maskcredentials
+  walkfolders, TransformInputValues, ASGstatus, deactivatequery, masktoken, maskcredentials, CFNExecutionIdentity,
+  JobExecutionAuthorization, invokelambda, RecordQuery
 }

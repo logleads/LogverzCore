@@ -143,11 +143,11 @@ function Get-DockerContainer {
 
 if($env:Environment -eq "Windows"){
    $environmentpath="C:\Users\Administrator\Documents\LogverzCore\build\";
-   $region="";
+   $region="ap-southeast-2";
    $accountId="";
-   $webrtcbucket="Logverz-webrtcbucket-16ce0zxrawaf9";
+   $webrtcbucket="logverzdevenvironment-webrtcbucket-abrbbt1hfs9z";
    $heartbeatlocation=$environmentpath+"heartbeat.json"
-   $asgname="Logverz-WebRTC-M84ERFHFUB6L-LogverzClusterMultiITASG-11LJRA7WH7034"
+   $asgname="LogverzDevEnvironment-WebRTC-874EP32K82SN-LogverzWebRTCMultiITASG-wM6hZgC6JwTS"
 }
 else{
    $environmentpath="/home/ec2-user/";

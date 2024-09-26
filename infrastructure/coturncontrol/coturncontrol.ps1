@@ -285,12 +285,12 @@ if($env:Environment -eq "LocalDev"){
    #dev environment settings
    $environmentpath="C:/Users/Administrator/Documents/LogverzCore/build/"
    $coturnconfigdestination="C:\Users\Administrator\Documents\LogverzCore\build\turnserver.conf";
-   $instanceid="i-0fe135a4d9440ad04";
+   $instanceid="i-0b167d2ad40b3eeb6";
    $instanceType="t3.nano";
-   $publichostname="ec2-54-253-86-129.ap-southeast-2.compute.amazonaws.com"
-   $publichostipv4="172.31.24.233";
+   $publichostname="ec2-3-107-18-64.ap-southeast-2.compute.amazonaws.com"
+   $publichostipv4="172.31.16.121";
    $region="ap-southeast-2";
-   $webrtcbucket="Logverz-webrtcbucket-1o5zhzorn1r87";
+   $webrtcbucket="logverzdevenvironment-webrtcbucket-abrbbt1hfs9z";
 }
 else{
    $environmentpath="/home/ubuntu/";
@@ -438,11 +438,12 @@ if ($afterinitialperiod -and $($(Get-date).Minute % $getmetricsfrequency) -eq 0)
 
     
     if(($ASGSettings.Instances.Length -eq 1) -and ($turnserviceidlesetting.CoupledToProxy -eq $true)){
-        
+
         $WebRTCASGSettingsJSON= Invoke-Expression "aws autoscaling describe-auto-scaling-groups --auto-scaling-group-name $($(Get-Content -path $ASGNamePath|ConvertFrom-Json).WebRTCProxyASG) --region $region"
         $WebRTCASGSettings=$(ConvertFrom-Json $($WebRTCASGSettingsJSON|Out-String)).AutoScalingGroups[0]
         if ($WebRTCASGSettings.Instances.Length -ne 0){
            $readytostop=$false 
+           write-host "proxy is running not stopping the turn server."
         }
     }
 

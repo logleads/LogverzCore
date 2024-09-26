@@ -1660,7 +1660,7 @@
 			"Description": "The security groups for the databases ",
 			"Value":{"Ref":"DBSecGroup"},
 			"Export" : {
-				"Name" : "DBSecGroup"
+				"Name" : "LogverzDBSecurityGroup"
 			}
 		},
 		"SetConnectionParamsDB":{
@@ -1681,14 +1681,14 @@
 			"Description": "The bucket with Logverz application components",
 			"Value":{"Ref": "InitBucket"},
 			"Export" : {
-				"Name" : "InitBucket"
+				"Name" : "LogverzInitBucket"
 			}
 		},
 		"LogverzPrivateSubnetsGroup": {
 			"Export": {
 				"Name": "LogverzPrivateSubnetsGroup"
 			},
-			"Description": "The security groups for the databases ",
+			"Description": "PrivateSubnet group for RDS datbases only.",
 			"Value": {
 				"Ref": "LogverzDBSubnetGroupPrivate"
 			}
@@ -1697,9 +1697,23 @@
 			"Export": {
 				"Name": "LogverzPublicSubnetsGroup"
 			},
-			"Description": "The security groups for the databases ",
+			"Description": "PublicSubnet group for RDS datbases only",
 			"Value": {
 				"Ref": "LogverzDBSubnetGroupPublic"
+			}
+		},
+		"LogverzPrivateSubnets": {
+			"Export": {
+				"Name": "LogverzPrivateSubnets"
+			},
+			"Description": "List of VPC SubnetIds for all services",
+			"Value": {
+				"Fn::Join": [
+					",",
+					{
+						"Ref": "PrivateSubnet"
+					}
+				]
 			}
 		}
 	}

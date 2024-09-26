@@ -118,11 +118,12 @@ const p2pconnection = async (req, res) => {
       peer2.send(END_OF_FILE_MESSAGE)
     }
     else if (clientrequest.query != null) {
-      console.log('The Received Request:\n\n')
-      const receivedrequest = Buffer.from(data).toString('utf8')
-      console.log(receivedrequest)
-
+      console.log('\nThe Query:\n')
+      console.log(clientrequest.query)
+      //in case the query contains line breaks...
+      clientrequest.query=clientrequest.query.replaceAll('\n','')
       clientrequest = JSON.parse(clientrequest.query)
+
       // end users may use the escapes \" incorrectly, if thats the case we parse it again.
       // eslint-disable-next-line no-useless-escape
       if (clientrequest.query != null && clientrequest.query.includes('\"')) {
@@ -157,8 +158,9 @@ const p2pconnection = async (req, res) => {
       switch (clientrequest.Mode) {
         case 'Native': {
           let TablePermissions = []
-          const tableList = await gettablesofquery(commonshared, engineshared, Registry, clientrequest, XMLParser, gotablepath, execFile, _, sqlproxy, ddclient, docClient, ssmclient, GetParameterCommand, PutItemCommand, QueryCommand, Sequelize, Op, QueryTypes, UpdateCommand, axios, fs, path, promisify)
-
+          const tableList = await gettablesofquery(Sequelize, commonshared, engineshared, Registry, clientrequest, XMLParser, gotablepath, execFile, _, sqlproxy, ddclient, docClient, ssmclient, GetParameterCommand, PutItemCommand, QueryCommand, Op, QueryTypes, UpdateCommand, axios, fs, path, promisify)
+          console.log("tableList")
+          console.log(tableList)
           if ((isadmin || ispoweruser) && tableList.length > 0) {
             // we only allow Select statments for every one, if not select was issued the table list will be empty
             var isallallowed = true
@@ -175,7 +177,8 @@ const p2pconnection = async (req, res) => {
               status: 'Cloud not retrieve tablepermissions for query, make sure you only execute select statements'
             })
           }
-
+          console.log('isallallowed')
+          console.log(isallallowed)
           if (isallallowed) {
             var loglevel = 'Info'
             var details = {
@@ -343,7 +346,7 @@ async function getchannelname (peer2) {
   return channelvalue
 }
 
-async function gettablesofquery (commonshared, engineshared, Registry, clientrequest, XMLParser, gotablepath, execFile, _, sqlproxy, ddclient, docClient, ssmclient, GetParameterCommand, PutItemCommand, QueryCommand, Sequelize, Op, QueryTypes, UpdateCommand, axios, fs, path, promisify) {
+async function gettablesofquery (Sequelize, commonshared, engineshared, Registry, clientrequest, XMLParser, gotablepath, execFile, _, sqlproxy, ddclient, docClient, ssmclient, GetParameterCommand, PutItemCommand, QueryCommand, Op, QueryTypes, UpdateCommand, axios, fs, path, promisify) {
   const connectionstringsarray = _.reject(Registry.Parameter.Value.split('[[DBDELIM]]'), _.isEmpty)
   const dbp = commonshared.DBpropertylookup(connectionstringsarray, clientrequest.LogverzDBFriendlyName)
 
@@ -355,6 +358,7 @@ async function gettablesofquery (commonshared, engineshared, Registry, clientreq
       QueryParams: 'Explain(FORMAT JSON)(' + clientrequest.QueryParams + ')'
     }
     var executionplan = await sqlproxy.query(validationrequest, Registry.Parameter.Value, commonshared, engineshared, ddclient, docClient, ssmclient, GetParameterCommand, PutItemCommand, _, QueryCommand, Sequelize, Op, QueryTypes, UpdateCommand, axios, fs, path, promisify)
+    //console.log(JSON.stringify(executionplan))
     if (executionplan !== '[]') { // postgres type
       const Plans = JSON.parse(executionplan)[0]['QUERY PLAN'][0].Plan.Plans
       var tables = _.flatten(Plans.map(p => p['Relation Name']))

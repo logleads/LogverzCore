@@ -1,7 +1,7 @@
 version: 0.2
 env:
   variables:
-    NODE_VERSION: "20.16.0"
+    NODE_VERSION: "20.17.0"
 phases:
   install:
     runtime-versions:
@@ -45,8 +45,8 @@ phases:
     commands:
        - echo "Installing Golang framework, adding dependencies"
        - cd $initialpath && pwd && ls -la && cd sources/webrtcproxy
-       - curl https://dl.google.com/go/go1.21.9.linux-amd64.tar.gz --output go1.21.9.linux-amd64.tar.gz
-       - rm -rf /usr/local/go && tar -C /usr/local -xzf go1.21.9.linux-amd64.tar.gz &&  rm -rf ./go1.21.9.linux-amd64.tar.gz && export PATH=$PATH:/usr/local/go/bin
+       - curl https://dl.google.com/go/go1.22.7.linux-amd64.tar.gz --output go1.22.7.linux-amd64.tar.gz
+       - rm -rf /usr/local/go && tar -C /usr/local -xzf go1.22.7.linux-amd64.tar.gz &&  rm -rf ./go1.22.7.linux-amd64.tar.gz && export PATH=$PATH:/usr/local/go/bin
        - npm install -g browserify
        - echo "Building 'gotable' app for MySQL table validation."
        - /usr/local/go/bin/go mod tidy

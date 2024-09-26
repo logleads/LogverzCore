@@ -7,6 +7,7 @@ import { performance } from 'perf_hooks'
 import { fileURLToPath } from 'url'
 import path from 'path'
 import fs from 'fs'
+import loki from 'lokijs'
 // import https from 'https'
 // import { NodeHttpHandler } from '@smithy/node-http-handler'
 import _ from 'lodash'
@@ -24,6 +25,42 @@ const { TaskTimer } = pkg
 let rdsinsertsuccess = false
 let t0
 let sqsempty = 0
+let MaximumCacheTime = process.env.MaximumCacheTime
+
+if (typeof db === 'undefined') {
+  // the variable is defined
+  var db = new loki('db.json', {
+    autoupdate: true
+  })
+}
+
+if (db.collections.length === 0) {
+  if (MaximumCacheTime === undefined) {
+    MaximumCacheTime = 1
+  }
+  var i = 0
+  
+  var DBpasswordsCache = db.addCollection('Logverz-DBPasswords', {
+    ttl: MaximumCacheTime * 60 * 1000
+  })
+
+  var SchemasCache = db.addCollection('Logverz-Schemas', {
+    ttl: MaximumCacheTime * 60 * 1000
+  })
+
+  var ExecParamsCache = db.addCollection('Logverz-ExecParams', {
+    ttl: 3 * 60 * 1000 //up to 3 min 
+  })
+
+  var DBparamsCache = db.addCollection('Logverz-DBparams', {
+    ttl: MaximumCacheTime * 60 * 1000
+  })
+
+}
+
+const sqsclient = new SQSClient({})
+const ssmclient = new SSMClient({})
+const ddclient = new DynamoDBClient({})
 
 export const handler = async (event, context) => {
   if (process.env.Environment !== 'LocalDev') {
@@ -39,6 +76,7 @@ export const handler = async (event, context) => {
     var DebugInsert = process.env.DebugInsert
     var EngineBucket = process.env.EngineBucket
     console.log('REQUEST RECEIVED: ' + JSON.stringify(context))
+    console.log('THE EVENT: \n' + JSON.stringify(event) + '\n\n')
   }
   else {
     // Dev environment settings
@@ -49,26 +87,82 @@ export const handler = async (event, context) => {
     var region = mydev.region
     var FileName = mydev.FileName
     var context = mydev.context
+    var event = mydev.event
     var TestingTimeout = mydev.TestingTimeout
     var DebugInsert = mydev.DebugInsert
     var EngineBucket = mydev.EngineBucket
   }
 
-  const DBName = 'Logverz'
-  const DBAvalue = context.clientContext.DatabaseParameters.split('<!!>')
-  let DBEngineType = DBAvalue.filter(s => s.includes('LogverzEngineType'))[0].split('=')[1]
-  DBEngineType = (DBEngineType.match('sqlserver-') ? 'mssql' : DBEngineType)
-  const DBUserName = DBAvalue.filter(s => s.includes('LogverzDBUserName'))[0].split('=')[1] // "LogverzAdmin"
-  const DBEndpointName = DBAvalue.filter(s => s.includes('LogverzDBEndpointName'))[0].split('=')[1]
-  const DBEndpointPort = DBAvalue.filter(s => s.includes('LogverzDBEndpointPort'))[0].split('=')[1]
-  const DBFrendlyName = DBAvalue.filter(s => s.includes('LogverzDBFriendlyName'))[0].split('=')[1]
-  const QueueURL = context.clientContext.QueueURL
-  const S3SelectQuery = context.clientContext.S3SelectQuery
-  const S3SelectParameter = JSON.parse(context.clientContext.S3SelectParameter) // .replace("\\","")
-  const QueryType = context.clientContext.QueryType
-  const DBTableName = context.clientContext.DBTableName
-  var Schema = context.clientContext.Schema
-  const Model = Sequelize.Model
+  let executiontype
+  let DBFrendlyName
+  let DBPassword
+  let DBTableName
+  let Schema
+  let QueryType
+  let DBAvalue
+  let S3SelectQuery
+  let S3SelectParameter
+  let QueueURL
+  let jobid
+  let invocationid
+
+  if (context.clientContext === undefined){
+    executiontype="sqs"
+    let eventSourceARN=event.Records[0].eventSourceARN
+    let executionhistorykey="/Logverz/Engine/ExecutionHistory/"+eventSourceARN.split(':')[5].replace('Logverz_','')
+    DBFrendlyName= executionhistorykey.split('_')[0].split('/')[4]
+    QueryType=executionhistorykey.split('_')[executionhistorykey.split('_').length-2]
+    QueueURL=eventSourceARN.replaceAll(':','/').replace('arn/aws/sqs/','https://sqs').replace(region,'.'+region+'.amazonaws.com')
+    jobid = 'ContinousCollection'
+    invocationid =eventSourceARN.split(':')[5]
+    //https://sqs
+    //check here in cache if not there than download in parallel.
+    await InitialseCCparameters(commonshared, executionhistorykey, DBFrendlyName, DBPassword, QueryType, Schema, DBAvalue)
+    //const initialparameters =
+    //console.log(initialparameters)
+
+    DBPassword = DBpasswordsCache.chain().find({
+      Name: DBFrendlyName
+    }).collection.data[0].Value
+
+    Schema = SchemasCache.chain().find({
+      Name: QueryType
+    }).collection.data[0].Value
+
+    DBAvalue = DBparamsCache.chain().find({
+      Name: 'Registry'
+    }).collection.data[0].Value.split(',') 
+
+    let ExecutionHistory= ExecParamsCache.chain().find({
+      Name: executionhistorykey
+    }).collection.data[0].Value
+
+    S3SelectQuery= ExecutionHistory.split('\n').filter(s => s.includes('QueryString'))[0].split(':')[1].replace(';','')
+    DBTableName= ExecutionHistory.split('\n').filter(s => s.includes('TableParameters'))[0].replace('TableParameters:','').split('<!!>').filter(f => f.includes('TableName'))[0].split('=')[1]
+    S3SelectParameter=JSON.parse(Schema).S3SelectParameters.IO
+
+    let convertedschema=""
+    JSON.parse(Schema).Schema.map(s => convertedschema+=s.replace(/'/g, '"').replace(/,/g, ',\n'))
+    Schema ='{'+convertedschema+'}'
+
+  }
+  else{
+    executiontype="controller"
+    DBAvalue = context.clientContext.DatabaseParameters.split('<!!>')
+    QueryType = context.clientContext.QueryType
+    QueueURL = context.clientContext.QueueURL
+    Schema = context.clientContext.Schema
+    S3SelectQuery = context.clientContext.S3SelectQuery
+    S3SelectParameter = JSON.parse(context.clientContext.S3SelectParameter) // .replace("\\","")
+    DBFrendlyName = DBAvalue.filter(s => s.includes('LogverzDBFriendlyName'))[0].split('=')[1]
+    DBTableName = context.clientContext.DBTableName
+    jobid = context.clientContext.jobid
+    invocationid = context.clientContext.invocationid
+    const initialparameters = await initialseparameters(commonshared, Schema, QueryType, DBFrendlyName, ssmclient, GetParameterCommand, ddclient, PutItemCommand)
+    Schema = initialparameters.Schema
+    DBPassword = initialparameters.Password
+
+  }
 
   var header = true
   if (S3SelectParameter.InputSerialization.JsonType !== undefined) {
@@ -82,13 +176,14 @@ export const handler = async (event, context) => {
     var header = false
   }
 
-  const sqsclient = new SQSClient({})
-  const ssmclient = new SSMClient({})
-  const ddclient = new DynamoDBClient({})
-
-  const initialparameters = await initialseparameters(commonshared, Schema, QueryType, DBFrendlyName, ssmclient, GetParameterCommand, ddclient, PutItemCommand)
-  const DBPassword = initialparameters.Password
-  Schema = initialparameters.Schema
+  //shared parameters. 
+  let DBEngineType = DBAvalue.filter(s => s.includes('LogverzEngineType'))[0].split('=')[1]
+  DBEngineType = (DBEngineType.match('sqlserver-') ? 'mssql' : DBEngineType)
+  const DBUserName = DBAvalue.filter(s => s.includes('LogverzDBUserName'))[0].split('=')[1] // "LogverzAdmin"
+  const DBEndpointName = DBAvalue.filter(s => s.includes('LogverzDBEndpointName'))[0].split('=')[1]
+  const DBEndpointPort = DBAvalue.filter(s => s.includes('LogverzDBEndpointPort'))[0].split('=')[1]
+  const DBName = 'Logverz'
+  const Model = Sequelize.Model
 
   fs.writeFileSync(fileURLToPath(FileName), engineshared.constructmodel(Schema, 'worker'))
   var SelectedModel = (await import(FileName)).SelectedModel
@@ -97,7 +192,7 @@ export const handler = async (event, context) => {
 
   try {
     var sequelize = await InitiateConnection(DBEngineType, connectionstring) // sequelize,
-    console.log('SQL Server Connection has been established successfully.')
+    console.log('\nSQL Server Connection has been established successfully.')
   }
   catch (e) {
     console.log('Error establishing SQL Server connection. Further details: \n')
@@ -105,20 +200,33 @@ export const handler = async (event, context) => {
     process.exit()
   }
 
-  await StartLambdastate(ddclient, sequelize, Model, engineshared.InvocationsModel, context.clientContext.jobid, context.clientContext.invocationid)
-
   t0 = performance.now()
-  const timer = new TaskTimer(5000)
-  timer.on('tick', async () => {
-    await UpdateLambdaState(context, sequelize, Model, engineshared) 
-  })
-  timer.start()
-  // two actions are run in parallel:
-  // 1.) reporting lambda state to sql database,
-  // 2.) processing sqs messages via TASK function
-  await loop(sqsclient, sequelize, context, TestingTimeout, engineshared, commonshared, ddclient, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, type, header,DebugInsert,EngineBucket, region, FileName)
 
-  timer.stop()
+  if (executiontype === "controller") {
+    await StartLambdastate(ddclient, sequelize, Model, engineshared.InvocationsModel, jobid, invocationid)
+    const timer = new TaskTimer(5000)
+    timer.on('tick', async () => {
+      await UpdateLambdaState(context, sequelize, Model, engineshared, invocationid) 
+    })
+    timer.start()
+    // two actions are run in parallel:
+    // 1.) reporting lambda state to sql database,
+    // 2.) processing sqs messages via TASK function
+    await loop(sqsclient, sequelize, event, context, TestingTimeout, engineshared, commonshared, ddclient, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType,DebugInsert,EngineBucket, region, FileName, executiontype, invocationid, type, header)
+
+    timer.stop()
+  }
+  else{
+    //Continous collection
+    const t1 = performance.now()
+    await Task(sqsclient, engineshared, commonshared, ddclient, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, event, type, header, DebugInsert, EngineBucket, region, FileName, executiontype)
+    const t2 = performance.now()
+    const processingtime = (t2 - t1)
+    const ellipsedtime = (t2 - t0)
+    console.log('ellipsedtime ' + ellipsedtime)
+    i = i + 1
+    console.log('Lambda instance :' + invocationid + ' @ iteration ' + i + ' had processing time ' + (processingtime / 1000) + ' second(s).')
+  }
 
   return {
     statusCode: 200,
@@ -126,9 +234,9 @@ export const handler = async (event, context) => {
   }
 } // module exports
 
-async function loop (sqsclient, sequelize, context, TestingTimeout, engineshared, commonshared, ddclient, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, type, header, DebugInsert, EngineBucket, region, FileName) {
+async function loop (sqsclient, sequelize, event, context, TestingTimeout, engineshared, commonshared, ddclient, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, DebugInsert, EngineBucket, region, FileName, executiontype, invocationid, type, header) {
   
-  let i = 0
+  var i = 0
 
   try {
     let exitcondition = false
@@ -138,11 +246,13 @@ async function loop (sqsclient, sequelize, context, TestingTimeout, engineshared
         await timeout(TestingTimeout) // for testing log running lambdas
       }
       const t1 = performance.now()
-      await Task(sqsclient, engineshared, commonshared, ddclient, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header, DebugInsert, EngineBucket, region, FileName)
+      await Task(sqsclient, engineshared, commonshared, ddclient, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, event, type, header, DebugInsert, EngineBucket, region, FileName, executiontype)
       const t2 = performance.now()
       const processingtime = (t2 - t1)
       const ellipsedtime = (t2 - t0)
       console.log('ellipsedtime ' + ellipsedtime)
+      i = i + 1
+      console.log('Lambda instance :' + invocationid + ' @ iteration ' + i + ' had processing time ' + (processingtime / 1000) + ' second(s).')
 
       if (process.env.Environment === 'Windows') { // for local test environment
         var remainingtime = context.getRemainingTimeInMillis() - ellipsedtime
@@ -151,8 +261,6 @@ async function loop (sqsclient, sequelize, context, TestingTimeout, engineshared
         var remainingtime = context.getRemainingTimeInMillis()
       }
 
-      i = i + 1
-      console.log('Lambda instance :' + context.awsRequestId + ' @ iteration ' + i + ' had processing time ' + (processingtime / 1000) + ' second(s).')
       // End the loop execution when the conditions are meet.
       if ((remainingtime < (processingtime * 2)) || (remainingtime < 10000)) {
         exitcondition = true
@@ -166,25 +274,52 @@ async function loop (sqsclient, sequelize, context, TestingTimeout, engineshared
     console.log(err)
   }
 
-  console.log(`Reporting state of instance ${context.clientContext.invocationid} at ${new Date().toLocaleString()} : COMPLETED`)
+  console.log(`Reporting state of instance ${invocationid} at ${new Date().toLocaleString()} : COMPLETED`)
   // await CompleteLambdaState(context, sequelize, Model, engineshared)
   // await sequelize.close()
 }
 
-async function Task (sqsclient, engineshared, commonshared, ddclient, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, type, header, DebugInsert, EngineBucket, region, FileName) {
-  const sqsmessages = await commonshared.receiveSQSMessage(sqsclient, ReceiveMessageCommand, QueueURL, '1')
-
-  if (sqsmessages.Messages !== undefined) {
-    try {
-      var prefixarray = _.flatten(sqsmessages.Messages.map(msg => JSON.parse(msg.Body)))
-      var ReceiptHandle = sqsmessages.Messages.map(msg => msg.ReceiptHandle)
+async function Task (sqsclient, engineshared, commonshared, ddclient, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, event, type, header, DebugInsert, EngineBucket, region, FileName, executiontype) {
+  
+  let sqsmessages
+  var dataexists =false
+  if(executiontype === "controller"){
+    sqsmessages = await commonshared.receiveSQSMessage(sqsclient, ReceiveMessageCommand, QueueURL, '1')
+    if (sqsmessages.Messages !== undefined) {
+      try {
+        var prefixarray = _.flatten(sqsmessages.Messages.map(msg => JSON.parse(msg.Body)))
+        var ReceiptHandle = sqsmessages.Messages.map(msg => msg.ReceiptHandle)
+        dataexists =true
+      }
+      catch (e) {
+        console.log('Error parsing Message retrieved from SQS. Further details: \n')
+        console.error(e)
+        process.exit()
+      }
+    }  
+  }
+  else{
+    //executiontype==="sqs"
+    sqsmessages = parseevent4sqsmessages(event, QueueURL)
+    if (sqsmessages !== undefined){
+      try {
+        var prefixarray = sqsmessages.map(msg => [msg.key,msg.bucket,msg.region])
+        // s3parameters.Key = prefix[0]
+        // s3parameters.Bucket = prefix[1]
+        // const region = prefix[2]
+        // const params = s3parameters
+        var ReceiptHandle = sqsmessages.map(msg => msg.receiptHandle)
+        dataexists =true
+      }
+      catch (e) {
+        console.log('Error parsing Message retrieved from autmatic sqs invocation event. Further details: \n')
+        console.error(e)
+        process.exit()
+      }
     }
-    catch (e) {
-      console.log('Error parsing Message retrieved from SQS. Further details: \n')
-      console.error(e)
-      process.exit()
-    }
+  }
 
+  if (dataexists) {
     const s3results = await processS3data(prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, ddclient, sequelize, Model, type, header)
     const Transformeddata = DatatoSchemaTransformation(s3results, SelectedModel, S3SelectParameter, DBEngineType, type, header)
 
@@ -238,8 +373,8 @@ async function StartLambdastate(ddclient,sequelize, Model, InvocationsModel, job
 
 }
 
-async function UpdateLambdaState(context, sequelize, Model, engineshared)    {
-  console.log(`Reporting state of instance ${context.clientContext.invocationid} at ${new Date().toLocaleString()} : RUNNING`)
+async function UpdateLambdaState(context, sequelize, Model, engineshared, invocationid)    {
+  console.log(`Reporting state of instance ${invocationid} at ${new Date().toLocaleString()} : RUNNING`)
 
   const updatedfields = {
 
@@ -250,7 +385,7 @@ async function UpdateLambdaState(context, sequelize, Model, engineshared)    {
   }
   const conditions = {
     where: {
-      invocationid: context.clientContext.invocationid
+      invocationid: invocationid
     }
   }
 
@@ -744,13 +879,14 @@ function convertrawdata (plainstring) {
 }
 
 async function initialseparameters (commonshared, Schema, QueryType, DBFrendlyName, ssmclient, GetParameterCommand, ddclient, PutItemCommand) {
+  //Function is for classic collection paramters initialisation 
   if (Schema === '') {
     // It only retrieves schema parameter if the client context does not have it. Which happenes if the schema is big + query is big so the
     // total client context is close to or more than 3583bytes.https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html#API_Invoke_RequestSyntax
 
     var [DBPassword, SchemaObject] = await Promise.all([
       commonshared.getssmparameter(ssmclient, GetParameterCommand, {
-        Name: '/Logverz/Database/DefaultDBPassword',
+        Name: `/Logverz/Database/${DBFrendlyName}Password`,
         WithDecryption: true
       }, ddclient, PutItemCommand),
       commonshared.getssmparameter(ssmclient, GetParameterCommand, {
@@ -758,7 +894,8 @@ async function initialseparameters (commonshared, Schema, QueryType, DBFrendlyNa
       }, ddclient, PutItemCommand)
     ])
     const SchemaArray = JSON.parse(SchemaObject.Parameter.Value).Schema
-    var Schema = ('{' + SchemaArray.map(e => e + '\n') + '}').replace(/,'/g, '"').replace(/'/g, '"') // TODO add engineshared.convertschema()
+    var Schema = ('{' + SchemaArray.map(e => e + '\n') + '}').replace(/,'/g, '"').replace(/'/g, '"') 
+    // TODO investigate if adding engineshared.convertschema() is needed or not.
 
     var result = {
       Schema,
@@ -779,6 +916,104 @@ async function initialseparameters (commonshared, Schema, QueryType, DBFrendlyNa
 
   return result
 }
+
+async function InitialseCCparameters(commonshared, executionhistorykey, DBFrendlyName, DBPassword, QueryType, Schema, DBAvalue){
+  //Function is for continous collection parameters initialisation, it checks multipleparameters if those are in the cache
+  //than parallel conditionally executes the retrieval of missing parameter(s).
+
+  //checking cache to validate if value is available locally or not 
+  DBPassword = DBpasswordsCache.chain().find({
+    Name: DBFrendlyName
+  }).collection.data[0] 
+
+  let ExecutionHistory= ExecParamsCache.chain().find({
+    Name: executionhistorykey
+  }).collection.data[0] 
+
+  Schema = SchemasCache.chain().find({
+    Name: QueryType
+  }).collection.data[0] 
+
+  DBAvalue = DBparamsCache.chain().find({
+    Name: 'Registry'
+  }).collection.data[0] 
+  
+  const promises=[]
+
+  if (DBPassword === undefined) {
+    promises.push(new Promise(async (resolve, reject) => {
+       
+      let dbpasswordvalue= await commonshared.getssmparameter(ssmclient, GetParameterCommand, {
+          Name: `/Logverz/Database/${DBFrendlyName}Password`,
+            WithDecryption: true
+          }, ddclient, PutItemCommand)
+
+      let dbpasswordobj ={"Name": DBFrendlyName,"Value": dbpasswordvalue.Parameter.Value, "Recordtype":"DBpassword"}
+      DBpasswordsCache.insert(dbpasswordobj)
+      console.log('\nRetrieved '+DBFrendlyName+' password.')
+      resolve(dbpasswordobj)
+    }))
+  }
+  else{
+    console.log('\nCache contained '+DBFrendlyName+' password.')
+  }
+
+  if (ExecutionHistory === undefined) {
+    promises.push(new Promise(async (resolve, reject) => {
+      
+      let executionhistoryvalue= await commonshared.getssmparameter(ssmclient, GetParameterCommand, {
+          Name: executionhistorykey,
+            WithDecryption: false
+          }, ddclient, PutItemCommand)
+      let executionhistoryobj ={"Name": executionhistorykey,"Value": executionhistoryvalue.Parameter.Value , "Recordtype":"ExecutionHistory"}
+      ExecParamsCache.insert(executionhistoryobj)
+      console.log('\nRetrieved executionhistory'+executionhistorykey+' value.')
+      resolve(executionhistoryobj)
+    }))
+  }
+  else{
+    console.log('\nCache contained executionhistory'+executionhistorykey+' value.')
+  }
+
+  if (Schema === undefined) {
+     promises.push(new Promise(async (resolve, reject) => {
+      
+      let schemavalue= await commonshared.getssmparameter(ssmclient, GetParameterCommand, {
+          Name: ('/Logverz/Engine/Schemas/' + QueryType),
+            WithDecryption: false
+          }, ddclient, PutItemCommand)
+      let schemaobj ={"Name": QueryType,"Value": schemavalue.Parameter.Value , "Recordtype":"Schema"}
+      SchemasCache.insert(schemaobj)
+      console.log('\nRetrieved '+QueryType+' schema.')
+      resolve(schemaobj)
+    }))
+  }
+  else{
+    console.log('\nCache contained '+QueryType+' schema.')
+  }
+
+  if (DBAvalue === undefined) {
+    promises.push(new Promise(async (resolve, reject) => {
+       
+      let dbregistryvalue= await commonshared.getssmparameter(ssmclient, GetParameterCommand, {
+          Name: '/Logverz/Database/Registry',
+            WithDecryption: false
+          }, ddclient, PutItemCommand)
+
+      let dbregistryobj ={"Name": 'Registry',"Value": dbregistryvalue.Parameter.Value, "Recordtype":"DBRegistry"}
+      DBparamsCache.insert(dbregistryobj)
+      console.log('\nRetrieved \'/Logverz/Database/Registry\' key\'s value.')
+      resolve(dbregistryobj)
+    }))
+  }
+  else{
+    console.log('\nCache contained \'/Logverz/Database/Registry\' key\'s value.')
+  }
+
+  await Promise.all(promises)
+  //const resolved = await Promise.all(promises)
+  //return resolved
+} 
 
 async function UpdateSqlEntry (sequelize, Model, SelectedModel, QueryType, DBTableName, updatedfields, conditions) {
  
@@ -835,6 +1070,23 @@ async function GetConfiguration (directory, value) {
     var data = (await import(moduleDataURL))
   }
   return data
+}
+
+function parseevent4sqsmessages(event, QueueURL){
+
+  let data=event.Records.map(r=> {
+    return {
+      "receiptHandle": r.receiptHandle,
+      "bucket": JSON.parse(r.body).Records[0].s3.bucket.name,
+      "key": JSON.parse(r.body).Records[0].s3.object.key,
+      "region":JSON.parse(r.body).Records[0].awsRegion,
+      QueueURL
+    }
+  })
+
+  //JSON.parse(event.Records[0].body).Records[0].s3.bucket.name
+  //console.log(Messages)
+  return  data
 }
 
   // Testing setup: After initiate connection, before loop:

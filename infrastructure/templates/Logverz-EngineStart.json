@@ -60,7 +60,7 @@
 		},
 		"PreferedWorkerNumber": {
 			"Type": "String",
-			"Description": "You can specify the number of worker lambdas running in parallel. For most cases automaticaly determined setting is correct. If you specify a number keep in mind selected controller capabilities, aws account limits and check concurrent executions.",
+			"Description": "You can specify the number of worker lambdas running in parallel. For most cases automaticaly determined setting is correct. If you specify a number keep in mind selected database (disk memory) capabilities, aws account limits and check concurrent executions.",
 			"Default": "auto"
 		},
 		"DatasetAccess": {
@@ -164,7 +164,8 @@
 						"StartJob": { "Ref": "StartJob" },
 						"JOBQueueURL": { "Ref": "LogverzJobsQueue" },
 						"AllowedOrigins": "http://localhost:8080,http://127.0.0.1:8080,https://testapi.logleads.com",
-						"MaximumCacheTime": {"Ref": "MaximumCacheTime"}
+						"MaximumCacheTime": {"Ref": "MaximumCacheTime"},
+						"ExecutionHistory": {"Ref": "ExecutionHistory"}
 					}
 				},
 				"FunctionName": "Logverz-JobProducer",

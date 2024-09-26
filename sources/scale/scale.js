@@ -110,7 +110,7 @@ export const handler = async (event, context) => {
     IdleTime = JSON.parse(IdleTime.Parameter.Value)
     AutoScalingGroupList = JSON.parse(AutoScalingGroupList.Parameter.Value)
     var AutoScalingGroupNames = Object.values(AutoScalingGroupList)
-    var connectionstringsarray = _.reject(DBRegistry.Parameter.Value.split('[[DBDELIM]]'), _.isEmpty)
+    var connectionstringsarray = _.reject(DBRegistry.Parameter.Value.replaceAll('\n','').split('[[DBDELIM]]'), _.isEmpty)
     var dbpropertiesarray = JoinDBinstanceproperties(commonshared, IdleTime, connectionstringsarray)
 
     // describe status of asg and rds instances.
@@ -144,8 +144,17 @@ export const handler = async (event, context) => {
     return result
   }
   else {
-    // API GW execution.
-    var tokenobject = commonshared.ValidateToken(jwt, event.headers, cert)
+    // API GW execution or Stepfunction execution 
+    if(event.clientContext !== undefined){
+      // step function call
+      var authparameters =event.clientContext
+    }
+    else{
+      //apigw based call
+      var authparameters =event.headers
+    }
+
+    var tokenobject = commonshared.ValidateToken(jwt, authparameters, cert)
     console.log(tokenobject)
     if (tokenobject.state === true) {
       var username = tokenobject.value.user.split(':')[1]
@@ -168,7 +177,7 @@ export const handler = async (event, context) => {
   }
 
   if (message === 'ok') {
-    // its comming from authorized source: aws events or api gateway
+    // its comming from authorized source: aws events or api gateway or stepfunction
     console.log('Calling Main')
     var reply = await main(asgclient, rdsclient, ddclient, event, commonshared, authenticationshared, _, userattributes, region, accountnumber)
   }
@@ -189,9 +198,20 @@ export const handler = async (event, context) => {
 
 async function main (asgclient, rdsclient, ddclient, event, commonshared, authenticationshared, _, userattributes, region, accountnumber) {
   console.log('main')
-  const service = commonshared.getquerystringparameter(event.queryStringParameters.service)
-  var apicall = commonshared.getquerystringparameter(event.queryStringParameters.apicall)
-  var parameters = commonshared.getquerystringparameter(event.queryStringParameters.Parameters)
+
+  if(event.clientContext !== undefined){
+    // step function call
+    var service = commonshared.getquerystringparameter(event.clientContext.service)
+    var apicall = commonshared.getquerystringparameter(event.clientContext.apicall)
+    var parameters = commonshared.getquerystringparameter(event.clientContext.Parameters)
+  }
+  else{
+    //std api gw calls
+    var service = commonshared.getquerystringparameter(event.queryStringParameters.service)
+    var apicall = commonshared.getquerystringparameter(event.queryStringParameters.apicall)
+    var parameters = commonshared.getquerystringparameter(event.queryStringParameters.Parameters)
+  }
+
   var resource = authenticationshared.setIAMresource(apicall, parameters, region, accountnumber)
 
   var action = {
@@ -322,6 +342,7 @@ async function StartStopDBCluster (rdsclient, StartDBClusterCommand, StopDBClust
 
   try {
     var settings = await rdsclient.send(command)
+    var result = settings.DBCluster
     console.log(message)
     var clientreply = {
       status: 200,
@@ -332,7 +353,7 @@ async function StartStopDBCluster (rdsclient, StartDBClusterCommand, StopDBClust
       source: sourceid,
       message
     }
-    var result = settings.DBCluster
+    
     await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', action, 'Info', 'User', details, 'API')
   }
   catch (error) {
@@ -365,18 +386,19 @@ async function StartDBInstance (rdsclient, StartDBInstanceCommand, ddclient, Put
 
   try {
     var settings = await rdsclient.send(command)
+    var result = settings.DBInstance.DBInstanceStatus
     var message = 'Staring DB instance ' + params.DBInstanceIdentifier + ' was succesfull.'
     console.log(message)
     var clientreply = {
       status: 200,
-      data: JSON.stringify(result),
+      data: { origin: { "DBInstanceStatus":result}},
       header: {}
     }
     var details = {
       source: 'scale.js:StartDBInstance',
       message
     }
-    var result = settings.DBInstance
+    
     await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'ScaleUpRDS', 'Info', 'User', details, 'API')
   }
   catch (error) {
@@ -391,7 +413,7 @@ async function StartDBInstance (rdsclient, StartDBInstanceCommand, ddclient, Put
     await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'ScaleSystem', 'Error', 'Infra', details, 'API')
     var clientreply = {
       status: 500,
-      data: error.message,
+      data: { origin: {"DBInstanceStatus": error.message}},
       header: {}
     }
     var result = 'error'
@@ -410,6 +432,7 @@ async function StopDBInstance (rdsclient, StopDBInstanceCommand, ddclient, PutIt
 
   try {
     var settings = await rdsclient.send(command)
+    var result = settings.DBInstance
     var message = 'Stopping DB instance ' + params.DBInstanceIdentifier + ' was succesfull.'
     console.log(message)
     var clientreply = {
@@ -421,7 +444,7 @@ async function StopDBInstance (rdsclient, StopDBInstanceCommand, ddclient, PutIt
       source: 'scale.js:StopDBInstance',
       message
     }
-    var result = settings.DBInstance
+    
     await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'ScaleDownRDS', 'Info', 'User', details, 'API')
   }
   catch (error) {

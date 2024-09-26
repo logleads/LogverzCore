@@ -32,6 +32,11 @@ if (typeof db === 'undefined') {
   })
 }
 
+var tokenconfig={
+    algorithm: 'RS512',
+    expiresIn: '8h'
+}
+
 if (db.collections.length === 0) {
   if (MaximumCacheTime === undefined) {
     MaximumCacheTime = 1
@@ -195,7 +200,7 @@ async function main (event, ssmclient, lmdclient, ddclient, docClient, commonsha
       var authorization = await ValidateUserAccess(commonshared, authenticationshared, docClient, requestoridentity, params)
       if (authorization === true) {
         // Authentication success, Authorizatin success, user exits in database
-        var token = createtoken(jwt, domain, username, privateKey.Parameter.Value, passphrase.Parameter.Value)
+        var token = authenticationshared.createtoken(jwt, domain, username, privateKey.Parameter.Value, passphrase.Parameter.Value, tokenconfig)
         var message = cognitosuccess(token, params, username, result)
       }
       else {
@@ -389,7 +394,7 @@ async function InvokeScale (lmdclient, params) {
   // var clientcontext = Buffer.from(invocationparameters).toString('base64') ;
 
   // TODO get idletime ssm key and only invoke scale if the StartAtUserLogin parameter is set to true in any of the components
-
+  //TODO use commonshared.invokelambda , look at the difference of InvocationType
   var lambdaparams = {
     // ClientContext: clientcontext,//.toString('base64'),
     FunctionName: params.ScaleFunction,
@@ -456,19 +461,6 @@ function createrequestbody (type, accountnumber, username, password, mfavalue, m
   return FormData
 }
 
-function createtoken (jwt, domain, username, privateKey, passphrase) {
-  var token = jwt.sign({
-    user: (domain + ':' + username)
-  }, {
-    key: privateKey,
-    passphrase
-  }, {
-    algorithm: 'RS512',
-    expiresIn: '8h'
-  })
-  return token
-}
-
 async function createIAMAuthresponse (commonshared, authenticationshared, ddclient, docClient, state, domain, username, privateKey, passphrase, headers, AllowedOrigins) {
   console.log('Authentication status: ' + state + ', User: ' + username)
 
@@ -484,7 +476,7 @@ async function createIAMAuthresponse (commonshared, authenticationshared, ddclie
     if (authorization === true) {
       var loglevel = 'Info'
       var message = `{"user" : "${username}","status":"Authenticated"}`
-      var token = createtoken(jwt, domain, username, privateKey, passphrase)
+      var token = authenticationshared.createtoken(jwt, domain, username, privateKey, passphrase, tokenconfig)
       params = {
         status: 200,
         data: message,

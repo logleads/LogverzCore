@@ -246,6 +246,12 @@
 								{"Fn::Sub":"arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/Logverz-Engine*"},
 								{"Fn::Sub":"arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:log-stream:"}
 							]
+						},
+						{
+							"Sid": "ContinousCollectionStepFunctionInfoFailedNotification",
+							"Effect": "Allow",
+							"Action": "cloudformation:SignalResource",
+							"Resource": "*"
 						}
 					]
 				},
@@ -2042,7 +2048,7 @@
 				"Role": {
 					"Fn::GetAtt": ["LogverzInfoRole", "Arn"]
 				},
-				"Runtime": "nodejs18.x",
+				"Runtime": "nodejs20.x",
 				"Timeout": "30",
 				"MemorySize":"512"
 			}

@@ -5,6 +5,8 @@
 
 const allowdenyaction = (_, statements, userrequest) => {
   // get here the deny statements evaluate those first.
+
+  //TODO add here case of Logverz:System api calls start or describe of rds database the allow, so that the step function to start database run in its dedicated (Logverz:System)identity. 
   const denystatments = []
   _.forEach(statements, onestatement => {
     const checkthis = _.omit(onestatement, 'PolicyName')
@@ -868,6 +870,10 @@ const setIAMresource = (apicall, parameters, region, accountnumber) => {
     var ssmparameter = (JSON.parse(parameters)).AutoScalingGroupName
     var resource = ssmparameter
   }
+  else if (apicall.match('SignalResource')) {
+    var endpoint = decodeURIComponent((JSON.parse(parameters)).Endpoint)
+    var resource = endpoint
+  }
   else {
     console.log('ERROR: setIAMresource: not specified api call (modify authenticationshared.js)')
   }
@@ -875,10 +881,20 @@ const setIAMresource = (apicall, parameters, region, accountnumber) => {
   return resource
 }
 
+const createtoken =(jwt, domain, username, privateKey, passphrase, tokenconfig) =>{
+  var token = jwt.sign({
+    user: (domain + ':' + username)
+  }, {
+    key: privateKey,
+    passphrase
+  }, tokenconfig)
+  return token
+}
+
 export {
   getidentityattributes, authorize, AssociateUserPolicies, UptadeAssociatedUserPolicy, getuserstatements, allowdenyaction,
   retriveIAMidentities, retrieveresourcepolicy, authorizeS3access, resourceaccessauthorization, admincheck, powerusercheck,
-  usercheck, setIAMresource
+  usercheck, setIAMresource, createtoken
 }
 
 // export {

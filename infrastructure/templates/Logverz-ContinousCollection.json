@@ -1,0 +1,337 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Description": "Initiate Continous Data Collection using CloudFormation",
+	"Metadata": {
+		"AWS::CloudFormation::Interface": {
+			"ParameterGroups": [
+				{
+					"Label": {
+						"default": "Query configuration"
+					},
+					"Parameters": ["S3Bucket", "S3Prefix", "S3Suffix", "DataTypeSelector", "QueryString"]
+				},
+				{
+					"Label": {
+						"default": "Database configuration"
+					},
+					"Parameters": ["DBServerAlias", "DatasetName", "DatasetDescription", "DatasetOwners", "DatasetAccess"]
+				},
+				{
+					"Label": {
+						"default": "Continous Collection Processing"
+					},
+					"Parameters": ["MaximumWorkerNumber","MaxBatchWaitTime","ToggleOnOff"]
+				}
+			]
+		}
+	},
+	"Parameters": {
+		"S3Bucket": {
+			"Type": "String",
+			"MinLength": "3",
+			"MaxLength": "63",
+			"Default": "yourbucket",
+			"Description": "Specify one bucket only. Make sure no white spaces are present!"
+		},
+		"S3Prefix": {
+			"Type": "String",
+			"MaxLength": "256",
+			"Default": "top_folder/any/number/of/subfolders",
+			"Description": "Specify one folder. Make sure that the specified path is *not overlapping*. Eg look at the two paths top_folder/_any_/number/of/subfolders, top_folder/_other_/number/of/subfolders. You may use '_any_' or '_other_' subfolders to create two seprate rules. However if you use 'topfolder' you can only create one rule as top_folder contains all sub folders."
+		},
+		"S3Suffix": {
+			"Type": "String",
+			"MaxLength": "256",
+			"Default": "",
+			"Description": "Use this to filter for filetypes eg specify \".jpg\" to have only jpeg files apply."
+		},
+		"DataTypeSelector": {
+			"Type": "String",
+			"Default": "set this to an existing schema",
+			"Description": "The dataformat/schema of the files located in the specified S3 bucket(s).Use short form such as \"CloudTrail\", \"ApplicationLB\", \"VPCFlow\" etc. Make sure no white spaces are present!"
+		},
+		"MaximumWorkerNumber": {
+			"Type": "Number",
+			"Description": "You can specify the number of worker lambdas running in parallel for this queue, default 2. Keep in mind selected database (disk memory) capabilities, aws account limits and check concurrent executions.",
+			"Default": 2,
+			"MinValue": 1,
+			"MaxValue":20
+		},
+		"QueryString": {
+			"Type": "String",
+			"Default": "",
+			"Description": "Specify here the S3 select query parameters. Syntax changes on datatype for example \"SELECT * FROM S3Object[*].Records[*] s\" or \"SELECT * FROM S3Object s\", for additional examples check https://docs.logverz.io/docs/Data%20Collection/CollectionRules For complex queries, before execution we recommend testing on the S3 console or CLI. "
+		},
+		"DBServerAlias": {
+			"Type": "String",
+			"Default": "DefaultDB",
+			"Description": "The friendly/short name of the target database server. Make sure no white spaces are present!"
+		},
+		"DatasetName": {
+			"Type": "String",
+			"Default": "datasetCC",
+			"MinLength": "1",
+			"MaxLength": "63",
+			"Description": "Database table name, (make sure there are no white spaces) a name convention such as team_projectname_task or personname_issue_number max 63 characters. Please specify a unique name, otherwise the existing table will be overwritten.Importatnt! Changing the name during an update replaces the DB table."
+		},
+		"DatasetDescription": {
+			"Type": "String",
+			"Default": "The settings used to create the data in the dataset",
+			"MinLength": "0",
+			"MaxLength": "500",
+			"Description": "You can record here the settings used to create the dataset, like logs creation intervall time, services involved, api call types purpose of the data any additional information on retention or sharing instructions."
+		},
+        "DatasetAccess": {
+			"Type": "String",
+			"Description": "You can specify here addititional users and IAM groups, example:admin:UserAWS,LogverzUsers-region:GroupAWS, who will have read access to the dataset.",
+			"Default": ""
+		},
+		"DatasetOwners": {
+			"Type": "String",
+			"Default": "",
+			"MinLength": "0",
+			"MaxLength": "500",
+			"Description": "Besides the creator, who is automatically the owner of the dataset, you can specify here addititional users and IAM groups, example: admin:UserAWS,LogverzUsers:GroupAWS, who will also be owners of the specified dataset."
+		},
+		"ToggleOnOff": {
+			"AllowedValues": [
+				"true",
+				"false"
+			],
+			"Default": "true",
+			"Description": "Pausing signaling not yet implemented, currently its allways on.",
+			"Type": "String"
+		},
+		"MaxBatchWaitTime":{
+			"Type": "Number",
+			"Default": 30,
+			"Description": "Wait till configured seconds (default 30, max 300) for 10 files to process as a batch. If number of files at 30 sec mark (from first file) are eg 8 it will start execution of 8 files. If after eg 4th second 10th file arrives it will start execution.",
+			"MinValue": 0,
+			"MaxValue":300
+		}
+	},
+	"Mappings": {},
+	"Conditions": {
+		"isworking": {
+            "Fn::Equals": [
+                "true",
+                "true"
+            ]
+        },
+		"ispresent": {
+			"Fn::Equals": [
+			"{ \"Ref\": \"someparameter\" }",
+			"something"
+			]
+		}
+	},
+	"Resources": {
+		"ContinousCollectionResource": {
+			"Type": "Custom::LambdaFunction",
+			"Condition" : "isworking",
+			"Properties": {
+				"ServiceToken": {"Fn::ImportValue":"LogverzContinousCollectionFunction"
+				},
+				"DBServerAlias": {
+					"Ref": "DBServerAlias"
+				},
+				"JOBQueueARN":{ "Fn::GetAtt" : ["ContinousCollectionJobQueue", "Arn"]},
+				"MaximumWorkerNumber": {
+					"Ref": "MaximumWorkerNumber"
+				},
+				"S3parameters": {
+					"Fn::Sub": [
+						"S3Bucket=${S3Bucket}<!!>S3Prefix=${S3Prefix}<!!>S3Suffix=${S3Suffix}",
+						{
+							"S3Bucket": {
+								"Ref": "S3Bucket"
+							},
+							"S3Prefix": {
+								"Ref": "S3Prefix"
+							},
+							"S3Suffix": {
+								"Ref": "S3Suffix"
+							}
+						}
+					]
+				},
+				"DataTypeSelector": {
+					"Ref": "DataTypeSelector"
+				},
+				"QueryString": {
+					"Ref": "QueryString"
+				},
+				"TableParameters": {
+					"Fn::Sub": [
+						"TableName=${DatasetName}<!!>TableDescription=${DatasetDescription}<!!>TableOwners=${DatasetOwners}<!!>TableAccess=${DatasetAccess}",
+						{
+							"DatasetName": {
+								"Ref": "DatasetName"
+							},
+							"DatasetDescription": {
+								"Ref": "DatasetDescription"
+							},
+							"DatasetOwners": {
+								"Ref": "DatasetOwners"
+							},
+							"DatasetAccess": {
+								"Ref": "DatasetAccess"
+							}
+						}
+					]
+				},
+				"ExecutionHistory": {
+					"Fn::Sub": [
+						"/Logverz/Engine/ExecutionHistory/${DBServerAlias}_${DatasetName}_${DataTypeSelector}_Queue",
+						{
+							"DBServerAlias": {
+								"Ref": "DBServerAlias"
+							},
+							"DatasetName": {
+								"Ref": "DatasetName"
+							}
+						}
+					]
+				},
+				"MaxBatchWaitTime": {"Ref": "MaxBatchWaitTime"},
+				"StackName" : {"Ref": "AWS::StackName"}
+			}
+		},
+		"ContinousCollectionJobQueue": {
+			"Type": "AWS::SQS::Queue",
+			"Properties": {
+				"MessageRetentionPeriod": "7200",
+				"QueueName": {
+					"Fn::Sub": [
+						"Logverz_${DBServerAlias}_${DatasetName}_${DataTypeSelector}_Queue",
+						{
+							"DBServerAlias": {
+								"Ref": "DBServerAlias"
+							},
+							"DatasetName": {
+								"Ref": "DatasetName"
+							}
+						}
+					]
+				},
+				"RedrivePolicy": {
+					"deadLetterTargetArn": 
+					{"Fn::ImportValue":"LogverzJobsQDeadLetter"},
+					"maxReceiveCount": 6
+				},
+				"Tags": [{
+					"Key": "Function",
+					"Value": "Logverz"
+				}],
+				"VisibilityTimeout": "180"
+			}
+		},
+		"ExecutionHistory": {
+			"Type": "AWS::SSM::Parameter",
+			"Properties": {
+				"Name": {
+					"Fn::Sub": [
+						"/Logverz/Engine/ExecutionHistory/${DBServerAlias}_${DatasetName}_${DataTypeSelector}_Queue",
+						{
+							"DBServerAlias": {
+								"Ref": "DBServerAlias"
+							},
+							"DatasetName": {
+								"Ref": "DatasetName"
+							}
+						}
+					]
+				},
+				"Type": "String",
+				"Value": {
+					"Fn::Sub": [
+						"S3Folders:${S3Bucket};\nDataTypeSelector:${DataTypeSelector};\nQueryString:${QueryString};\nTableParameters:${TableParameters};\n",
+						{
+							"S3Bucket": {
+								"Ref": "S3Bucket"
+							},
+							"DataTypeSelector": {
+								"Ref": "DataTypeSelector"
+							},
+							"QueryString": {
+								"Ref": "QueryString"
+							},
+							"ExecutionHistory": {
+								"Fn::Sub": [
+									"${DBServerAlias}_${DatasetName}_${DataTypeSelector}_Queue",
+									{
+										"DBServerAlias": {
+											"Ref": "DBServerAlias"
+										},
+										"DatasetName": {
+											"Ref": "DatasetName"
+										}
+									}
+								]
+							},
+							"TableParameters": {
+								"Fn::Sub": [
+									"TableName=${DatasetName}<!!>TableDescription=${DatasetDescription}<!!>TableOwners=${DatasetOwners}<!!>TableAccess=${DatasetAccess}",
+									{
+										"DatasetName": {
+											"Ref": "DatasetName"
+										},
+										"DatasetDescription": {
+											"Ref": "DatasetDescription"
+										},
+										"DatasetOwners": {
+											"Ref": "DatasetOwners"
+										},
+										"DatasetAccess": {
+											"Ref": "DatasetAccess"
+										}
+									}
+								]
+							}
+						}
+					]
+				},
+				"Description": "Contains the details of Queries executions.Do not change manually!"
+			}
+		},
+		"ContinousCollectionJobQueuePolicy": {
+			"Type": "AWS::SQS::QueuePolicy",
+			"Properties": {
+				"PolicyDocument": {
+					"Version": "2012-10-17",
+					"Id": "Allow Account access to this queue",
+					"Statement": [{
+						"Effect": "Allow",
+						"Principal": {
+							"Service": "s3.amazonaws.com"
+						},
+						"Action": "SQS:*",
+						"Resource": { "Fn::GetAtt" : ["ContinousCollectionJobQueue", "Arn"]},
+						"Condition": {
+							"ArnLike": {
+							  	"aws:SourceArn": {
+									"Fn::Sub": [
+										"arn:aws:s3:::${S3Bucket}",
+										{
+											"S3Bucket": {
+												"Ref": "S3Bucket"
+											}
+										}
+									]
+								}
+							  
+							}
+						}
+					}]
+				},
+				"Queues": [{
+					"Ref": "ContinousCollectionJobQueue"
+				}
+				]
+
+			}
+		}
+	},
+	"Outputs": {
+	}
+}

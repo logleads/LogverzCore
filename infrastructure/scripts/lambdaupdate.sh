@@ -15,6 +15,7 @@ LambdaList[Logverz-Worker]=worker.zip
 LambdaList[Logverz-Scale]=scale.zip
 LambdaList[Logverz-SetConnectionParamsDB]=setconnectionparamsdb.zip
 LambdaList[Logverz-Info]=info.zip
+LambdaList[Logverz-ContinousCollection]=collection.zip
 #LambdaList[Logverz-Initiate]=init.zip #function is updated by user by providing path in Cloudformation template
 
 s3prefix="bin"

@@ -122,7 +122,6 @@ update-lambda -lambdafunctionname "Logverz-Initiate"`
               -lambdafunctionbundle "\sources\init\init.zip"
 
 
-
 #Job Producer -------------------------------------------------------------------
 create-Bundle -zipfilename "jobproducer.zip" `
               -projectpath $projectpath `
@@ -134,6 +133,20 @@ create-Bundle -zipfilename "jobproducer.zip" `
 update-lambda -lambdafunctionname "Logverz-JobProducer"`
               -projectpath $projectpath `
               -lambdafunctionbundle "\sources\jobproducer\build\jobproducer.zip"
+
+
+
+#Continous collection -------------------------------------------------------------------
+create-Bundle -zipfilename "collection.zip" `
+              -projectpath $projectpath `
+              -componentpath "\sources\collection"`
+              -files "collection.js","package.json","package-lock.json"`
+              -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\authenticationsharedv3.js",  "\sources\shared\enginesharedv3.mjs"
+
+
+update-lambda -lambdafunctionname "Logverz-ContinousCollection"`
+              -projectpath $projectpath `
+              -lambdafunctionbundle "\sources\collection\build\collection.zip"
 
 #httprelay-------------------------------------------------------------------
 create-Bundle -zipfilename "httprelay.zip" `
@@ -202,8 +215,8 @@ update-lambda -lambdafunctionname "Logverz-MasterController"`
 create-Bundle -zipfilename "info.zip" `
                     -projectpath $projectpath `
                     -componentpath "\sources\info"`
-                    -files "db.js","info.js","package.json","package-lock.json"`
-                    -extrafiles "\sources\shared\commonshared.js","\sources\shared\package.json","\sources\shared\authenticationshared.js"
+                    -files "info.js","package.json","package-lock.json"`
+                    -extrafiles "\sources\shared\commonsharedv3.js","\sources\shared\authenticationsharedv3.js"
 
 update-lambda -lambdafunctionname "Logverz-Info"`
               -projectpath $projectpath `

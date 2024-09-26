@@ -287,8 +287,8 @@ async function heartbeatFunc (db, ASGName, idletime, heartbeatlocation) {
     //   AutoScalingGroupNames: [ASGName]
     // })
 
-    const asgminimum = asgsettings.AutoScalingGroups[0].Instances.length === (asgsettings.AutoScalingGroups[0].MinSize)
-    var contentobject = updateHearthbeatfilecontent(heartbeatlocation, instanceId, userscollection, asgminimum)
+    const asgminimum = asgsettings[0].Instances.length === (asgsettings[0].MinSize)
+    var contentobject = updateHearthbeatfilecontent(instanceId, userscollection, asgminimum)
 
     if (asgminimum) {
       console.log(instanceId + " @C: Autoscaling group Instance count is at the minium can't stop instance to scale back further.")
@@ -296,7 +296,7 @@ async function heartbeatFunc (db, ASGName, idletime, heartbeatlocation) {
       await writeHBfile(heartbeatlocation, contentobject)
     }
     else {
-      if (asgsettings.AutoScalingGroups[0].Instances.length === (asgsettings.AutoScalingGroups[0].MinSize + 1)) {
+      if ((asgsettings[0].Instances.length === 1) || (asgsettings[0].Instances.length === (asgsettings[0].MinSize + 1))) {
         // determine if instance is the last downscalable instance (mincount+1) or not. If last the scaledown time can be longer.
         var idletimecontainer = timeagominutes(idletime.WebRTCProxy.LastContainer)
       }
@@ -335,13 +335,13 @@ async function heartbeatFunc (db, ASGName, idletime, heartbeatlocation) {
       else {
         i = ++i
         await writeHBfile(heartbeatlocation, contentobject)
-        console.log(instanceId + ' @B: No user connected, however last Connected time was less than the specified ' + idletimecontainer + ' idle time.')
+        console.log(instanceId + ' @B: No user connected, however last Connected time '+instanceproperties.LastUserConnection+ ' was less than the specified ' + idletimecontainer + ' idle time.')
       }
     }
   }
   else {
     i = ++i
-    var contentobject = updateHearthbeatfilecontent(heartbeatlocation, instanceId, userscollection, null)
+    var contentobject = updateHearthbeatfilecontent(instanceId, userscollection, null)
     await writeHBfile(heartbeatlocation, contentobject)
     const d = new Date()
     const minutes = d.getMinutes()
@@ -353,11 +353,11 @@ async function heartbeatFunc (db, ASGName, idletime, heartbeatlocation) {
   // console.log("It's a live");
 }
 
-function updateHearthbeatfilecontent (heartbeatlocation, instanceId, userscollection, asgminimum) {
+function updateHearthbeatfilecontent (instanceId, userscollection, asgminimum) {
   const agounix = timeagominutes(10) // 10 minutes ago
   const lastupdate = Date.now()
   try {
-    var contentobject = JSON.parse(fs.readFileSync(heartbeatlocation, {
+    var contentobject = JSON.parse(fs.readFileSync(path.join(__dirname,'build','heartbeat.json'), {
       encoding: 'utf8',
       flag: 'r'
     }))
@@ -371,6 +371,7 @@ function updateHearthbeatfilecontent (heartbeatlocation, instanceId, userscollec
         LastUserConnection: lastupdate
       }]
     }
+    console.log(error)
   }
 
   const instancelocation = _.findKey(contentobject.Instances, function (i) {

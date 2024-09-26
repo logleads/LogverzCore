@@ -54,106 +54,10 @@ export const handler = async (event, context) => {
   var messagequeueurl = selectmessagequeue(SQSMessageQueues, selectedcontroller)
   var buildresult = await startbuild(cbclient, selectedcontroller, onejob, ComputeEnvironment, messagequeueurl, WorkerFunction) // QueryType
 
-  await RecordQuery(ddclient, commonshared, onejob, selectedcontroller)
+  var type ='C' //C means general colleciton
+  await commonshared.RecordQuery(_, ddclient, PutItemCommand, commonshared, onejob, selectedcontroller, type)
 
   console.log('finished')
-}
-
-async function RecordQuery (ddclient, commonshared, onejob, selectedcontroller) {
-  var TableParameters = onejob.TableParameters.stringValue.split('<!!>')
-  var DBvalue = onejob.DatabaseParameters.stringValue.split('<!!>')
-  var S3Properties = JSON.parse(onejob.S3Properties.stringValue)
-  var DDBTableName = 'Logverz-Queries'
-
-  var d = new Date()
-  var weeknumber = getWeekNumber(d) // new Date()
-  var hours = d.getHours()
-  var minutes = d.getMinutes()
-
-  var UsersQuery = commonshared.propertyvaluelookup(TableParameters.filter(t => t.includes('Creator')))
-  var TableOwners = _.uniqWith((UsersQuery + ',' + commonshared.propertyvaluelookup(TableParameters.filter(t => t.includes('TableOwners')))).split(','), _.isEqual)
-  var TableAccess = (commonshared.propertyvaluelookup(TableParameters.filter(t => t.includes('TableAccess')))).split(',')
-  var QueryName = commonshared.propertyvaluelookup(TableParameters.filter(t => t.includes('TableName'))) + '-W' + weeknumber[1] + getdayName(d) + 'T' + hours + ':' + minutes
-  var DatabaseName = DBvalue.filter(s => s.includes('LogverzDBFriendlyName'))[0].split('=')[1]
-
-  var QuerySettings = {
-    QueryString: onejob.QueryString.stringValue,
-    ComputeEnvironment: selectedcontroller,
-    JobID: onejob.JobID.stringValue,
-    S3Folders: S3Properties.S3Folders,
-    Description: commonshared.propertyvaluelookup(TableParameters.filter(t => t.includes('TableDescription')))
-  }
-
-  var params = {
-    Item: {
-      UsersQuery: {
-        S: (UsersQuery)
-      }, // +"-Collection"
-      UnixTime: {
-        N: Date.now().toString()
-      },
-      QueryName: {
-        S: QueryName
-      }, // tablename+timeformat
-      QueryType: {
-        S: 'C'
-      }, // Collection
-      TableName: {
-        S: (TableParameters.filter(t => t.includes('TableName'))[0].split('=')[1])
-      },
-      DatabaseName: {
-        S: DatabaseName
-      },
-      DataType: {
-        S: onejob.QueryType.stringValue
-      },
-      QuerySettings: {
-        M: {}
-      },
-      Access: {
-        L: []
-      },
-      Owners: {
-        L: []
-      },
-      Active: {
-        BOOL: true
-      },
-      Archive: {
-        BOOL: false
-      }
-    },
-    ReturnConsumedCapacity: 'TOTAL',
-    TableName: DDBTableName
-  }
-
-  var i
-  for (i = 0; i < Object.keys(QuerySettings).length; i++) {
-    var Name = Object.keys(QuerySettings)[i]
-    var Value = QuerySettings[Name]
-    params.Item.QuerySettings.M[Name] = {
-      S: Value
-    }
-  }
-
-  for (var j = 0; j < TableOwners.length; j++) {
-    var oneowner = {
-      S: TableOwners[j]
-    }
-    params.Item.Owners.L.push(oneowner)
-  }
-
-  for (var k = 0; k < TableAccess.length; k++) {
-    if (TableAccess[k] !== '') { // checking for empty string (Table access not set)
-      var oneaccess = {
-        S: TableAccess[k]
-      }
-      params.Item.Access.L.push(oneaccess)
-    }
-  }
-
-  const command = new PutItemCommand(params)
-  await ddclient.send(command)
 }
 
 function selectmessagequeue (SQSMessageQueues, selectedcontroller) {
@@ -473,32 +377,6 @@ async function startbuild (cbclient, selectedcontroller, onejob, ComputeEnvironm
 
 function timeout (ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
-}
-
-function getWeekNumber (d) {
-  // Copy date so don't modify original
-  d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
-  // Set to nearest Thursday: current date + 4 - current day number
-  // Make Sunday's day number 7
-  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7))
-  // Get first day of year
-  var yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
-  // Calculate full weeks to nearest Thursday
-  var weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7)
-  // Return array of year and week number
-  return [d.getUTCFullYear(), weekNo]
-}
-
-function getdayName (d) {
-  var weekday = new Array(7)
-  weekday[0] = 'Sun'
-  weekday[1] = 'Mon'
-  weekday[2] = 'Tue'
-  weekday[3] = 'Wed'
-  weekday[4] = 'Thu'
-  weekday[5] = 'Fri'
-  weekday[6] = 'Sat'
-  return weekday[d.getDay()]
 }
 
 function getenvironmentsize (LogVolume) {

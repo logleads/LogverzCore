@@ -1,3 +1,4 @@
+/* eslint-disable array-callback-return */
 /* eslint-disable no-redeclare */
 /* eslint-disable no-var */
 /* eslint brace-style: ["error", "stroustrup"] */
@@ -88,6 +89,7 @@ export const handler = async (event, context) => {
     var cert = process.env.PublicKey
     var apigateway = false
     var AllowedOrigins = process.env.AllowedOrigins
+    var ExecutionHistory =process.env.ExecutionHistory
     console.log('REQUEST RECEIVED: \n' + JSON.stringify(context) + '\n\n')
     console.log('THE EVENT: \n' + JSON.stringify(event) + '\n\n')
   }
@@ -116,8 +118,9 @@ export const handler = async (event, context) => {
     var S3Folders = mydev.S3Folders
     var TableParameters = mydev.TableParameters
     var apigateway = mydev.apigateway
+    var ExecutionHistory = mydev.ExecutionHistory 
   }
-
+  let identityresult =""
   const sqsclient = new SQSClient({})
   const ddclient = new DynamoDBClient({
     region
@@ -136,108 +139,26 @@ export const handler = async (event, context) => {
   if (apigateway === true) {
     // console.log("Debug: At ApiGW Start");
     // If request is comming from API GW check authentication and authorization to call the function.
-    var tokenobject = commonshared.ValidateToken(jwt, event.headers, cert)
-    console.log(tokenobject)
-    if (tokenobject.state === true) {
-      var username = tokenobject.value.user.split(':')[1]
-      var usertype = 'User' + tokenobject.value.user.split(':')[0]
-      var userattributes = identity.chain().find({
-        Type: usertype,
-        Name: username
-      }).collection.data[0] // ?.data()
-
-      if (userattributes === undefined) {
-        var userattributes = await authenticationshared.getidentityattributes(docClient, QueryCommand, username, usertype)
-        userattributes = userattributes.Items[0]
-        identity.insert(userattributes)
-      }
-      var Resource = 'undefined'
-      if (event.requestContext.resourcePath === '/Start/Job') {
-        Resource = 'arn:aws:apigateway:' + region + '::/restapis/' + RestApiId + '/resources/' + StartJob + '/methods/POST'
-      }
-
-      var action = {
-        Resource,
-        Operation: 'apigateway:POST'
-      }
-      var authorization = authenticationshared.authorize(_, commonshared, action, userattributes)
-      if (authorization.status !== 'Allow') {
-        // request not authorized
-        message = authorization.Reason
-        console.log(message)
-      }
-      // else message remains ok and execution continues;
-    }
-    else {
-      // invalid token
-      message = tokenobject.value
-    }
+     identityresult = await ApiGWExecutionIdentity(authenticationshared, commonshared, docClient, jwt, event, cert, region, RestApiId, StartJob)
   }
   else {
-    console.log('Debug: At CloudFormation Start')
-    // in case of cloudformation, execution information is not availabe in the context, hence username (that iniated execution) is looked up from the history.
-    var retries = [1, 2, 3, 4]
-    // Result can be delayed hence the retry
-    for await (var attempt of retries) {
-      // user name who invoked the job is retrieved from Execution history
-      console.log('Attempt ' + attempt + ' of retriving the user from execution history')
-      // do try catch here
-
-      var executionhistory = await getallssmparameterhistory(commonshared, ssmclient, GetParameterHistoryCommand, ddclient, PutItemCommand, '/Logverz/Engine/ExecutionHistory')
-
-      // result may not be the last item in case of frequent invocations hence the matching
-      var match = matchexecutionwithparameterhistory(executionhistory, S3Folders, TableParameters)
-      if (match !== false) {
-        break
-      }
-      else {
-        await timeout(4000)
-      }
-    }
-
-    if (match === false) {
-      message = 'Something went wrong cloud not determine the user making the call. As no match was found in the Execution history.'
-    }
-    else {
-      var lastmodifieduserarn = match.LastModifiedUser
-
-      if (lastmodifieduserarn.match(':root') !== null) {
-        var username = 'root' // root ||admin
-      }
-      else {
-        var username = lastmodifieduserarn.split('/')[1]
-      }
-      var usertype = 'UserAWS'
-    }
+     identityresult = await commonshared.CFNExecutionIdentity(commonshared, ssmclient, GetParameterHistoryCommand, ddclient, PutItemCommand, ExecutionHistory, S3Folders, TableParameters)
   }
 
-  // Regardless how the function was called, check if user has access to specified s3 resources.
-  if (message === 'ok') {
+    // Regardless how the function was called, check if user has access to specified s3 resources.
+  if (message === 'ok' || identityresult.Result === 'PASS') {
     //console.log('Debug: At S3 authorization check Start')
-    var userattributes = identity.chain().find({
-      Type: usertype,
-      Name: username
-    }).collection.data[0] // ?.data()
-    if (userattributes === undefined) {
-      userattributes = await authenticationshared.getidentityattributes(docClient, QueryCommand, username, usertype)
-      userattributes = userattributes.Items[0]
-
-      if (userattributes !== undefined) {
-        identity.insert(userattributes)
-      }
-    }
-
-    if (userattributes !== undefined) {
-      // Doing S3 authorization here.
-      var S3Folders = S3Folders.replace('S3Folders:', '')
-      var S3Foldersarray = _.compact(S3Folders.split(';'))
-      var message = authenticationshared.authorizeS3access(_, commonshared, userattributes, S3Foldersarray)
-    }
-    else {
-      message = 'User ' + username + ' does not exists in DynamoDB Logverz-Identities table. Could not check entitlement to validate access request.\nIdentity Sync may be needed.'
+    const authorizationresult= await commonshared.JobExecutionAuthorization(_, authenticationshared, commonshared, docClient, QueryCommand, identity, identityresult, S3Folders) 
+    if (authorizationresult !== 'ok') {
+      // identity not authorized, hence we update the message with the details, if authorized function returns okay
+      message=authorizationresult.message
     }
   }
-
+  else{
+    //could not determine the identity making the call 
+    message =identityresult.message
+  }
+  
   // if previous steps of authentication and authorization are successfull send messages
   if (message === 'ok') {
     //console.log('Debug: At retrevingthe Schema')
@@ -277,7 +198,7 @@ export const handler = async (event, context) => {
       console.log(message)
     }
 
-    TableParameters += '<!!>Creator=' + username + ':' + usertype
+    TableParameters += '<!!>Creator=' + identityresult.username + ':' + identityresult.usertype
 
     var JobID = uniqueNamesGenerator({
       dictionaries: [adjectives, animals],
@@ -301,7 +222,7 @@ export const handler = async (event, context) => {
         PreferedWorkerNumber
       },
       QueryType: DataType,
-      Creator: (username + ':' + usertype)
+      Creator: (identityresult.username + ':' + identityresult.usertype)
     }
 
     var reply
@@ -340,6 +261,7 @@ export const handler = async (event, context) => {
       return commonshared.apigatewayresponse(reply, event.headers, AllowedOrigins)
     }
   }
+
 }
 
 async function sendSQSMessage (sqsclient, SendMessageCommand, JOBQueueURL, MessageAttributes) {
@@ -403,94 +325,62 @@ async function sendSQSMessage (sqsclient, SendMessageCommand, JOBQueueURL, Messa
   }
 }
 
-async function getbatchofparametersHistory (ssmclient, GetParameterHistoryCommand, parametername, NextToken) {
-  if (NextToken) {
-    var params = {
-      Name: parametername,
-      // required
-      NextToken,
-      MaxResults: 50,
-      WithDecryption: false
-    }
-  }
-  else {
-    var params = {
-      Name: parametername,
-      // required
-      MaxResults: 50,
-      WithDecryption: false
-    }
-  }
+async function ApiGWExecutionIdentity(authenticationshared, commonshared, docClient, jwt, event, cert, region, RestApiId, StartJob){
+  
+  var tokenobject = commonshared.ValidateToken(jwt, event.headers, cert)
+    console.log(tokenobject)
+    if (tokenobject.state === true) {
+      var username = tokenobject.value.user.split(':')[1]
+      var usertype = 'User' + tokenobject.value.user.split(':')[0]
+      var userattributes = identity.chain().find({
+        Type: usertype,
+        Name: username
+      }).collection.data[0] // ?.data()
 
-  const command = new GetParameterHistoryCommand(params)
-  try {
-    const data = await ssmclient.send(command)
-    var result = {
-      Result: 'PASS',
-      Data: data
-    }
-    return result
-  }
-  catch (err) {
-    var result = {
-      Result: 'Fail',
-      Data: err
-    }
-    return result
-  }
-}
-
-async function getallssmparameterhistory (commonshared, ssmclient, GetParameterHistoryCommand, ddclient, PutItemCommand, parametername) {
-  var parametersarray = []
-  var NextToken
-
-  do {
-    var batchofparameters = await getbatchofparametersHistory(ssmclient, GetParameterHistoryCommand, parametername, NextToken)
-
-    if (batchofparameters.Result === 'PASS') {
-      if (batchofparameters.Data.NextToken !== undefined) {
-        NextToken = batchofparameters.Data.NextToken
+      if (userattributes === undefined) {
+        var userattributes = await authenticationshared.getidentityattributes(docClient, QueryCommand, username, usertype)
+        userattributes = userattributes.Items[0]
+        identity.insert(userattributes)
       }
+      var Resource = 'undefined'
+      if (event.requestContext.resourcePath === '/Start/Job') {
+        Resource = 'arn:aws:apigateway:' + region + '::/restapis/' + RestApiId + '/resources/' + StartJob + '/methods/POST'
+      }
+
+      var action = {
+        Resource,
+        Operation: 'apigateway:POST'
+      }
+      var authorization = authenticationshared.authorize(_, commonshared, action, userattributes)
+      if (authorization.status !== 'Allow') {
+        // request not authorized
+        var message = authorization.Reason
+        console.log(message)
+        var result = {
+          Result: 'Fail',
+          message
+        }
+      }
+      else{
+        var result = {
+          Result: 'PASS',
+          username,
+          usertype
+        }
+
+      }
+      // else message remains ok and execution continues;
     }
     else {
-      var ssmallparamhistoryresult = parametername + ':  SSM Parameter retrieval failed.Because ' + batchofparameters.Data
-      var details = {
-        source: 'jobproducer.js:getallssmparameterhistory',
-        message: ssmallparamhistoryresult
+      // invalid token
+      var message = tokenobject.value
+      var result = {
+        Result: 'Fail',
+        message
       }
-      await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'GetParameter', 'Error', 'Infra', details, 'API')
     }
 
-    parametersarray = parametersarray.concat(batchofparameters.Data.Parameters)
-  } while (batchofparameters.Data.NextToken !== undefined)
-
-  return parametersarray.slice(-3) // return last 3 item.
-}
-
-function matchexecutionwithparameterhistory (executionhistory, S3Folders, TableParameters) {
-  var match = false
-
-  for (var i = 0; i < executionhistory.length; i++) {
-    var oneexecutionarray = executionhistory[i]
-    oneexecutionarray.Value.split('\n')
-
-    var EHTableParameters = oneexecutionarray.Value.split('\n').filter(s => s.includes('TableParameters'))[0].replace('TableParameters:', '').replace(';', '')
-    var EHS3Folders = oneexecutionarray.Value.split('\n').filter(s => s.includes('S3Folders'))[0].replace('S3Folders:', '').replace(';', '')
-    if (EHTableParameters === TableParameters && EHS3Folders === S3Folders) {
-      match = oneexecutionarray
-      console.log('match found')
-      break
-    }
-    else {
-      console.log('match false')
-    }
-  }
-
-  return match
-}
-
-function timeout (ms) {
-  return new Promise(resolve => setTimeout(resolve, ms))
+    return result
 }
 
 async function GetConfiguration (directory, value) {
@@ -506,3 +396,4 @@ async function GetConfiguration (directory, value) {
   }
   return data
 }
+
