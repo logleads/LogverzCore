@@ -689,7 +689,7 @@ const walkfolders = async (_, ListObjectsV2Command, ddclient, PutItemCommand, co
   } // for
 }
 
-const TransformInputValues = async (s3client, GetBucketLocationCommand, S3Folders, S3EnumerationDepth, _) => {
+const TransformInputValues = async (s3client, GetBucketLocationCommand, S3Folders, StgEnumerationDepth, _) => {
   var Patharray = []
   var extendedpatharray=[]
   var delimiter = '/'
@@ -701,7 +701,7 @@ const TransformInputValues = async (s3client, GetBucketLocationCommand, S3Folder
       var prefix = oneresult.split('/').slice(3).join('/')
       var bucket = oneresult.split('/').slice(1)[1]
       var currentdepth = prefix.split('/').length - 1
-      var maxdepth = parseInt(S3EnumerationDepth) + currentdepth
+      var maxdepth = parseInt(StgEnumerationDepth) + currentdepth
       Patharray.push([prefix, bucket, delimiter, maxdepth])
     })
   }
@@ -710,7 +710,7 @@ const TransformInputValues = async (s3client, GetBucketLocationCommand, S3Folder
     var prefix = oneresult.split('/').slice(3).join('/')
     var bucket = oneresult.split('/').slice(1)[1]
     var currentdepth = prefix.split('/').length - 1
-    var maxdepth = parseInt(S3EnumerationDepth) + currentdepth
+    var maxdepth = parseInt(StgEnumerationDepth) + currentdepth
     Patharray.push([prefix, bucket, delimiter, maxdepth])
   }
 
@@ -1060,19 +1060,23 @@ const invokelambda =async (lmdclient, InvokeCommand, clientcontext, FunctionName
 
 const RecordQuery = async (_, ddclient, PutItemCommand, commonshared, onejob, selectedcontroller, type) => {
 
-  var S3Properties={}
+  var StgProperties={}
   if(onejob.TableParameters.stringValue!=undefined) {
     //used for Master controller SQS automatic invocation of master controller.
-    S3Properties = JSON.parse(onejob.S3Properties.stringValue)
+    StgProperties = JSON.parse(onejob.StgProperties.stringValue)
     var TableParameters = onejob.TableParameters.stringValue.split('<!!>')
     var DBvalue = onejob.DatabaseParameters.stringValue.split('<!!>')
-    var datatype =onejob.QueryType.stringValue
-    var QueryString =onejob.QueryString.stringValue
-    var JobID = onejob.JobID.stringValue
+    var Query = JSON.parse(onejob.Query.stringValue)
+    //var datatype =onejob.QueryType.stringValue
+    var datatype = JSON.stringify(Query.DataType).replaceAll('"','')
+    //var QueryString =onejob.QueryString.stringValue
+    var QueryString =JSON.stringify(Query.QueryString)
+   // var JobID = onejob.JobID.stringValue
+    var JobID = JSON.stringify(Query.JobID)
   }
   else{
     //used for continous collection 
-    S3Properties.S3Folders = onejob.S3parameters
+    StgProperties.StgFolders = onejob.S3parameters
     var TableParameters = onejob.TableParameters.split('<!!>')
     var DBvalue = onejob.DatabaseParameters.split('<!!>')
     var datatype =onejob.DataTypeSelector
@@ -1098,7 +1102,7 @@ const RecordQuery = async (_, ddclient, PutItemCommand, commonshared, onejob, se
     QueryString,
     ComputeEnvironment: selectedcontroller,
     JobID,
-    S3Folders: S3Properties.S3Folders,
+    StgFolders: StgProperties.StgFolders,
     Description: commonshared.propertyvaluelookup(TableParameters.filter(t => t.includes('TableDescription')))
   }
 

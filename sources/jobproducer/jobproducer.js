@@ -48,8 +48,8 @@ export const handler = async (event, context) => {
     var region = arnList[3]
     var request = JSON.parse(event.body)
     var JOBQueueURL = process.env.JOBQueueURL
-    var S3Folders = request.S3Folders
-    var S3EnumerationDepth = request.S3EnumerationDepth
+    var StgFolders = request.S3Folders
+    var StgEnumerationDepth = request.S3EnumerationDepth
     var DataType = request.DataType
     var QueryString = request.QueryString // TODO do try catch lookup
     // var CustomQueryParameters=`CustomQuerySchema=${request.Parameters[0].CustomS3Select}<!!>CustomQueryString=${request.Parameters[0].CustomQueryString}<!!>CustomS3Select=${request.Parameters[0].CustomS3Select}`;
@@ -76,8 +76,8 @@ export const handler = async (event, context) => {
     var arnList = (context.invokedFunctionArn).split(':')
     var region = arnList[3]
     var JOBQueueURL = event.ResourceProperties.JOBQueueURL
-    var S3Folders = event.ResourceProperties.S3Folders // "S3Folders:"+
-    var S3EnumerationDepth = event.ResourceProperties.S3EnumerationDepth
+    var StgFolders = event.ResourceProperties.S3Folders
+    var StgEnumerationDepth = event.ResourceProperties.S3EnumerationDepth
     var DataType = event.ResourceProperties.DataTypeSelector
     var QueryString = event.ResourceProperties.QueryString
     var CustomQueryParameters = event.ResourceProperties.CustomQueryParameters
@@ -101,7 +101,7 @@ export const handler = async (event, context) => {
     var authenticationshared = mydev.authenticationshared
     var region = mydev.region
     var JOBQueueURL = mydev.JOBQueueURL
-    var S3EnumerationDepth = mydev.S3EnumerationDepth
+    var StgEnumerationDepth = mydev.StgEnumerationDepth
     var DataType = mydev.DataType
     var QueryString = mydev.QueryString
     var CustomQueryParameters = mydev.CustomQueryParameters
@@ -115,7 +115,7 @@ export const handler = async (event, context) => {
     var StartJob = mydev.StartJob
     var AllowedOrigins = mydev.AllowedOrigins
     var event = mydev.event
-    var S3Folders = mydev.S3Folders
+    var StgFolders = mydev.StgFolders
     var TableParameters = mydev.TableParameters
     var apigateway = mydev.apigateway
     var ExecutionHistory = mydev.ExecutionHistory 
@@ -142,13 +142,13 @@ export const handler = async (event, context) => {
      identityresult = await ApiGWExecutionIdentity(authenticationshared, commonshared, docClient, jwt, event, cert, region, RestApiId, StartJob)
   }
   else {
-     identityresult = await commonshared.CFNExecutionIdentity(commonshared, ssmclient, GetParameterHistoryCommand, ddclient, PutItemCommand, ExecutionHistory, S3Folders, TableParameters)
+     identityresult = await commonshared.CFNExecutionIdentity(commonshared, ssmclient, GetParameterHistoryCommand, ddclient, PutItemCommand, ExecutionHistory, StgFolders, TableParameters)
   }
 
     // Regardless how the function was called, check if user has access to specified s3 resources.
   if (message === 'ok' || identityresult.Result === 'PASS') {
     //console.log('Debug: At S3 authorization check Start')
-    const authorizationresult= await commonshared.JobExecutionAuthorization(_, authenticationshared, commonshared, docClient, QueryCommand, identity, identityresult, S3Folders) 
+    const authorizationresult= await commonshared.JobExecutionAuthorization(_, authenticationshared, commonshared, docClient, QueryCommand, identity, identityresult, StgFolders) 
     if (authorizationresult !== 'ok') {
       // identity not authorized, hence we update the message with the details, if authorized function returns okay
       message=authorizationresult.message
@@ -181,15 +181,17 @@ export const handler = async (event, context) => {
 
       var SchemaParameterObject = JSON.parse(SchemaObject.Parameter.Value)
       var Schema = ('{' + SchemaParameterObject.Schema.map(e => e + '\n') + '}').replace(/,'/g, '"').replace(/'/g, '"')
-
-      var S3SelectParameter = SchemaParameterObject.S3SelectParameters.IO
+      var Transforms = ('[' + SchemaParameterObject.TransForms.map(e => JSON.stringify(e) + '\n') + ']').replace(/,'/g, '"').replace(/'/g, '"')
+      var Indexes="[]"
+      var StgSelectParameter = SchemaParameterObject.S3SelectParameters.IO
       var DatabaseParameters = commonshared.SelectDBfromRegistry(_, Registry, DatabaseParameters)
+
       console.log(QueryString)
     }
     else if (DataType !== '') {
       var CustomQueryParametersArray = CustomQueryParameters.split('<!!>')
       var Schema = CustomQueryParametersArray.filter(s => s.includes('CustomQuerySchema'))[0].split('=')[1]
-      var S3SelectParameter = CustomQueryParametersArray.filter(s => s.includes('CustomS3Select'))[0].split('=')[1]
+      var StgSelectParameter = CustomQueryParametersArray.filter(s => s.includes('CustomS3Select'))[0].split('=')[1]
       var QueryString = CustomQueryParametersArray.filter(s => s.includes('CustomQueryString'))[0].split('=')[1]
       console.log(QueryString)
     }
@@ -206,13 +208,16 @@ export const handler = async (event, context) => {
     });
 
     var MessageAttributes = {
-      JobID,
-      S3Properties: {
-        S3Folders,
-        S3EnumerationDepth,
-        S3SelectParameter
+      StgProperties: {
+        StgFolders,
+        StgEnumerationDepth,
+        StgSelectParameter
       },
-      QueryString,
+      Query: {
+        QueryString,
+        DataType,
+        JobID
+      },
       Schema,
       DatabaseParameters,
       TableParameters,
@@ -221,7 +226,8 @@ export const handler = async (event, context) => {
         AllocationStrategy,
         PreferedWorkerNumber
       },
-      QueryType: DataType,
+      Transforms,
+      Indexes,
       Creator: (identityresult.username + ':' + identityresult.usertype)
     }
 
@@ -268,17 +274,13 @@ async function sendSQSMessage (sqsclient, SendMessageCommand, JOBQueueURL, Messa
   // https://github.com/aws/aws-sdk-js/issues/745
   var params = {
     MessageAttributes: {
-      S3Properties: {
+      StgProperties: {
         DataType: 'String',
-        StringValue: JSON.stringify(MessageAttributes.S3Properties)
+        StringValue: JSON.stringify(MessageAttributes.StgProperties)
       },
-      QueryString: {
+      Query: {
         DataType: 'String',
-        StringValue: MessageAttributes.QueryString
-      },
-      QueryType: {
-        DataType: 'String',
-        StringValue: MessageAttributes.QueryType
+        StringValue: JSON.stringify(MessageAttributes.Query)
       },
       Schema: {
         DataType: 'String',
@@ -292,13 +294,17 @@ async function sendSQSMessage (sqsclient, SendMessageCommand, JOBQueueURL, Messa
         DataType: 'String',
         StringValue: MessageAttributes.TableParameters
       },
+      Transforms: {
+        DataType: 'String',
+        StringValue: MessageAttributes.Transforms
+      },
+      Indexes: {
+        DataType: 'String',
+        StringValue: MessageAttributes.Indexes
+      },
       ComputeEnvironment: {
         DataType: 'String',
         StringValue: JSON.stringify(MessageAttributes.ComputeEnvironment)
-      },
-      JobID: {
-        DataType: 'String',
-        StringValue: MessageAttributes.JobID
       }
     },
     MessageBody: '',

@@ -10,13 +10,22 @@ import fs from 'fs'
 import loki from 'lokijs'
 // import https from 'https'
 // import { NodeHttpHandler } from '@smithy/node-http-handler'
+import { sdkStreamMixin } from '@smithy/util-stream'
 import _ from 'lodash'
 import pkg from 'tasktimer'
-import { Sequelize } from 'sequelize'
-import { S3Client, SelectObjectContentCommand, PutObjectCommand } from '@aws-sdk/client-s3'
+//import * as fflate from 'fflate'
+
+import yauzl from 'yauzl'
+import pako from 'pako'
+
+import Papa from 'papaparse';
+
+import { Sequelize, QueryTypes } from 'sequelize'
+import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
 import { SQSClient, ReceiveMessageCommand, DeleteMessageCommand } from '@aws-sdk/client-sqs'
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm'
 import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb'
+
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -62,7 +71,27 @@ const sqsclient = new SQSClient({})
 const ssmclient = new SSMClient({})
 const ddclient = new DynamoDBClient({})
 
+/*
+Function logic: 
+1) download data from referenced url.
+
+2) determine if data is zipped or not, unzip if needed. 
+
+3) check if there is any where condition in the query
+   a) if no: 
+    Than do data to schema conversion using destination db constraints  
+   insert directly to destination db. 
+
+   b) if yes:
+    Than do data to schema conversion using sqlite db constraints  
+    insert data to sqlite and run users's query 
+    use the outcome- result and insert it to destination db.
+
+4) delete sqs message 
+
+*/
 export const handler = async (event, context) => {
+
   if (process.env.Environment !== 'LocalDev') {
     // Prod lambda function settings
     var commonsharedpath = ('file:///' + path.join(__dirname, 'shared', 'commonsharedv3.js').replace(/\\/g, '/'))
@@ -72,9 +101,11 @@ export const handler = async (event, context) => {
     const arnList = (context.invokedFunctionArn).split(':')
     var region = arnList[3]
     var FileName = ('file:///' + path.join('tmp', 'SelectedModel.mjs').replace(/\\/g, '/')) // '/tmp/SelectedModel.js'
+    var transformconfigpath= ('file:///' + path.join('tmp', 'transformconfig.js').replace(/\\/g, '/'))
     var TestingTimeout = process.env.TestingTimeout
     var DebugInsert = process.env.DebugInsert
     var EngineBucket = process.env.EngineBucket
+    var TransformsModule= '' //placeholder
     console.log('REQUEST RECEIVED: ' + JSON.stringify(context))
     console.log('THE EVENT: \n' + JSON.stringify(event) + '\n\n')
   }
@@ -86,11 +117,13 @@ export const handler = async (event, context) => {
     var commonshared = mydev.commonshared
     var region = mydev.region
     var FileName = mydev.FileName
+    var transformconfigpath= mydev.transformconfigpath
     var context = mydev.context
     var event = mydev.event
     var TestingTimeout = mydev.TestingTimeout
     var DebugInsert = mydev.DebugInsert
     var EngineBucket = mydev.EngineBucket
+    var TransformsModule= mydev.TransformsModule
   }
 
   let executiontype
@@ -98,35 +131,34 @@ export const handler = async (event, context) => {
   let DBPassword
   let DBTableName
   let Schema
-  let QueryType
+  let DataType
   let DBAvalue
-  let S3SelectQuery
-  let S3SelectParameter
+  let QueryString
+  let StgSelectParameter
   let QueueURL
   let jobid
   let invocationid
+  let TransformConfig
 
   if (context.clientContext === undefined){
     executiontype="sqs"
     let eventSourceARN=event.Records[0].eventSourceARN
     let executionhistorykey="/Logverz/Engine/ExecutionHistory/"+eventSourceARN.split(':')[5].replace('Logverz_','')
     DBFrendlyName= executionhistorykey.split('_')[0].split('/')[4]
-    QueryType=executionhistorykey.split('_')[executionhistorykey.split('_').length-2]
+    DataType=executionhistorykey.split('_')[executionhistorykey.split('_').length-2]
     QueueURL=eventSourceARN.replaceAll(':','/').replace('arn/aws/sqs/','https://sqs').replace(region,'.'+region+'.amazonaws.com')
     jobid = 'ContinousCollection'
     invocationid =eventSourceARN.split(':')[5]
     //https://sqs
     //check here in cache if not there than download in parallel.
-    await InitialseCCparameters(commonshared, executionhistorykey, DBFrendlyName, DBPassword, QueryType, Schema, DBAvalue)
-    //const initialparameters =
-    //console.log(initialparameters)
+    await InitialseCCparameters(commonshared, executionhistorykey, DBFrendlyName, DBPassword, DataType, Schema, DBAvalue)
 
     DBPassword = DBpasswordsCache.chain().find({
       Name: DBFrendlyName
     }).collection.data[0].Value
 
     Schema = SchemasCache.chain().find({
-      Name: QueryType
+      Name: DataType
     }).collection.data[0].Value
 
     DBAvalue = DBparamsCache.chain().find({
@@ -137,9 +169,10 @@ export const handler = async (event, context) => {
       Name: executionhistorykey
     }).collection.data[0].Value
 
-    S3SelectQuery= ExecutionHistory.split('\n').filter(s => s.includes('QueryString'))[0].split(':')[1].replace(';','')
+    QueryString= ExecutionHistory.split('\n').filter(s => s.includes('QueryString'))[0].split(':')[1].replace(';','')
     DBTableName= ExecutionHistory.split('\n').filter(s => s.includes('TableParameters'))[0].replace('TableParameters:','').split('<!!>').filter(f => f.includes('TableName'))[0].split('=')[1]
-    S3SelectParameter=JSON.parse(Schema).S3SelectParameters.IO
+    StgSelectParameter=JSON.parse(Schema).S3SelectParameters.IO
+    TransformConfig = JSON.parse(Schema).TransformConfig
 
     let convertedschema=""
     JSON.parse(Schema).Schema.map(s => convertedschema+=s.replace(/'/g, '"').replace(/,/g, ',\n'))
@@ -149,31 +182,20 @@ export const handler = async (event, context) => {
   else{
     executiontype="controller"
     DBAvalue = context.clientContext.DatabaseParameters.split('<!!>')
-    QueryType = context.clientContext.QueryType
+    DataType = context.clientContext.DataType
     QueueURL = context.clientContext.QueueURL
     Schema = context.clientContext.Schema
-    S3SelectQuery = context.clientContext.S3SelectQuery
-    S3SelectParameter = JSON.parse(context.clientContext.S3SelectParameter) // .replace("\\","")
+    QueryString = context.clientContext.QueryString
+    StgSelectParameter = JSON.parse(context.clientContext.StgSelectParameter.replace('\n','\\n').replace('"""','"\\""')) // replace linebreak with escpaed linebreak and """ with escaped version "\""
+    TransformConfig = JSON.parse(context.clientContext.TransformConfig)
     DBFrendlyName = DBAvalue.filter(s => s.includes('LogverzDBFriendlyName'))[0].split('=')[1]
     DBTableName = context.clientContext.DBTableName
     jobid = context.clientContext.jobid
     invocationid = context.clientContext.invocationid
-    const initialparameters = await initialseparameters(commonshared, Schema, QueryType, DBFrendlyName, ssmclient, GetParameterCommand, ddclient, PutItemCommand)
+    const initialparameters = await initialseparameters(commonshared, Schema, DataType, DBFrendlyName, ssmclient, GetParameterCommand, ddclient, PutItemCommand)
     Schema = initialparameters.Schema
     DBPassword = initialparameters.Password
 
-  }
-
-  var header = true
-  if (S3SelectParameter.InputSerialization.JsonType !== undefined) {
-    var type = 'JSON'
-  }
-  else if (S3SelectParameter.InputSerialization.CSV.FileHeaderInfo === 'USE') {
-    var type = 'CSV'
-  }
-  else {
-    var type = 'CSV'
-    var header = false
   }
 
   //shared parameters. 
@@ -191,7 +213,7 @@ export const handler = async (event, context) => {
   const connectionstring = `${DBEngineType}://${DBUserName}:${DBPassword}@${DBEndpointName}:${DBEndpointPort}/${DBName}`
 
   try {
-    var sequelize = await InitiateConnection(DBEngineType, connectionstring) // sequelize,
+    var sequelize = await InitiateConnection(DBEngineType, connectionstring)
     console.log('\nSQL Server Connection has been established successfully.')
   }
   catch (e) {
@@ -203,23 +225,22 @@ export const handler = async (event, context) => {
   t0 = performance.now()
 
   if (executiontype === "controller") {
-    await StartLambdastate(ddclient, sequelize, Model, engineshared.InvocationsModel, jobid, invocationid)
+    await StartLambdastate(commonshared, ddclient, sequelize, Model, engineshared.InvocationsModel, jobid, invocationid)
     const timer = new TaskTimer(5000)
     timer.on('tick', async () => {
       await UpdateLambdaState(context, sequelize, Model, engineshared, invocationid) 
     })
     timer.start()
-    // two actions are run in parallel:
-    // 1.) reporting lambda state to sql database,
-    // 2.) processing sqs messages via TASK function
-    await loop(sqsclient, sequelize, event, context, TestingTimeout, engineshared, commonshared, ddclient, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType,DebugInsert,EngineBucket, region, FileName, executiontype, invocationid, type, header)
+    
+    
+    await loop(sqsclient, sequelize, event, context, TestingTimeout, engineshared, commonshared, ddclient, StgSelectParameter, DataType, QueueURL, QueryString, Model, SelectedModel, DBTableName, DBEngineType,DebugInsert,EngineBucket, region, FileName, executiontype, invocationid, transformconfigpath)
 
     timer.stop()
   }
   else{
     //Continous collection
     const t1 = performance.now()
-    await Task(sqsclient, engineshared, commonshared, ddclient, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, event, type, header, DebugInsert, EngineBucket, region, FileName, executiontype)
+    await Task(sqsclient, engineshared, commonshared, ddclient, StgSelectParameter, DataType, QueueURL, QueryString, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, event, DebugInsert, EngineBucket, region, FileName, executiontype, transformconfigpath)
     const t2 = performance.now()
     const processingtime = (t2 - t1)
     const ellipsedtime = (t2 - t0)
@@ -234,7 +255,357 @@ export const handler = async (event, context) => {
   }
 } // module exports
 
-async function loop (sqsclient, sequelize, event, context, TestingTimeout, engineshared, commonshared, ddclient, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, Model, SelectedModel, DBTableName, DBEngineType, DebugInsert, EngineBucket, region, FileName, executiontype, invocationid, type, header) {
+async function filterdata(filearray, QueryString, commonshared, sequelize, Model, SelectedModel, DataType, DBEngineType, DBTableName, DebugInsert, EngineBucket, region, FileName, TransformsModule, transformconfigpath){
+    
+    if(QueryString.toLowerCase().includes('where') ){
+      
+      console.log('got where')
+      //troubleshoot data processing issues with presistent storage option
+      //let newfilefullname=FileName.replace("SelectedModel.mjs",'test.db')
+      const sequelizelocal = new Sequelize({
+        dialect: 'sqlite',
+        storage: ':memory:'
+        //storage: fileURLToPath(newfilefullname)
+      })
+
+      //Creating in memory sqlite database table for local querying
+      await createTempTable(sequelizelocal, Model, SelectedModel, DataType, DBTableName)
+
+      //inserting data to in memory sqlite database for local querying
+      await InsertData(commonshared, sequelizelocal, Model, SelectedModel, DataType, DBTableName, filearray, DebugInsert, EngineBucket, region, FileName)
+
+      const matchingresult = await sequelizelocal.query(QueryString , {
+        type: QueryTypes.SELECT,
+      })
+
+      convertdatatosqlschema(matchingresult, SelectedModel, 'sqlite')
+      convertdatatosqlschema(matchingresult, SelectedModel, DBEngineType)
+      
+      //inserting the matching converted data to the destination db
+      if (matchingresult.length !== 0){
+        rdsinsertsuccess=await InsertData(commonshared, sequelize, Model, SelectedModel, DataType, DBTableName, matchingresult, DebugInsert, EngineBucket, region, FileName)
+        return rdsinsertsuccess
+      } 
+    }
+    else{
+      console.log('not where')
+      //testing
+      //let result =await TransformsModule.transformdata(filearray, transformconfigpath)
+
+      convertdatatosqlschema(filearray, SelectedModel, DBEngineType)
+      //inserting the matching converted data to the destination db
+      if (filearray.length !== 0){
+        //just for local testing... not needed in production setup.
+        //await createTempTable(sequelize, Model, SelectedModel, DataType, DBTableName)
+
+        rdsinsertsuccess=await InsertData(commonshared, sequelize, Model, SelectedModel, DataType, DBTableName, filearray, DebugInsert, EngineBucket, region, FileName)
+        return rdsinsertsuccess
+      }
+    }
+
+}
+
+async function createTempTable(sequelize, Model, SelectedModel, DataType, DBTableName){
+
+  class Entry extends Model {}
+  await Entry.init(SelectedModel, {
+    sequelize,
+    modelName: DataType,
+    tableName: DBTableName,
+    freezeTableName: true
+  })
+ sequelize.options.logging = false
+  await sequelize.sync({force: true})
+
+}
+
+async function loaddata(prefixarray){
+
+  const data= await loadfroms3(prefixarray)
+  
+  return data
+}
+
+async function loadfroms3(prefixarray){
+  
+  const promises=[]
+  const t0 = performance.now();
+  prefixarray.map(prefix => {
+      
+      promises.push(
+        new Promise(async (resolve, reject) => {
+          const region = prefix[2]
+          const s3client = new S3Client({ region })
+          const Body  = s3client.send(
+            new GetObjectCommand({
+              Bucket: prefix[1],
+              Key:  prefix[0],
+            })
+          )
+        resolve(Body)
+      }))
+  })
+          
+  const resolved = await Promise.all(promises)
+  console.log('Finished retriving ' + promises.length + ' file')
+  const t1 = performance.now();
+  console.log("Took " + (t1 - t0).toFixed(2) + " milliseconds.");
+  return resolved
+}
+
+async function preprocessdata(bytestreamarray, StgSelectParameter, sequelize, SelectedModel, Model, engineshared, DBEngineType, ddclient, context ){
+  
+  const t0 = performance.now();
+
+  const promises=[]
+  bytestreamarray.map(bytestream => {
+    promises.push(preprocesss3data(bytestream, StgSelectParameter, sequelize, SelectedModel, Model, engineshared, DBEngineType, ddclient, context ))
+  }) 
+
+  const resolved = await Promise.all(promises)
+
+  let results = _.compact(_.flatten(resolved))
+
+  if ((results.length != 0) &&(StgSelectParameter.InputSerialization.RootElement !== undefined) && (typeof results[0][StgSelectParameter.InputSerialization.RootElement] === 'object')) {
+    // its a list of elements
+    const combined = []
+    results.map(r => combined.push(r[StgSelectParameter.InputSerialization.RootElement]))
+    results = _.flatten(combined)
+  }
+  else{
+    
+  }
+
+  console.log('Finished preprocessing  ' + bytestreamarray.length + ' file')
+  const t1 = performance.now();
+  console.log("Took " + (t1 - t0).toFixed(2) + " milliseconds.");
+  return results
+}
+
+async function preprocesss3data(bytestream, StgSelectParameter, sequelize, SelectedModel, Model, engineshared, DBEngineType, ddclient, context ){
+
+  const filename = bytestream.Body.req.path.split('?')[0]
+  const body = await sdkStreamMixin(bytestream.Body).transformToByteArray()
+  
+  //just for local testing not needed in production setup.
+  //const body = fs.readFileSync('./sources/worker/build/file.log.gz',{ flag: 'r' })
+
+  if (bytestream.ContentType  ===  "application/x-zip-compressed" || bytestream.ContentType === 'application/zip' || StgSelectParameter.InputSerialization.Compression ==='ZIP'){
+    var strData = await unzipdata(body, filename, sequelize, Model, engineshared, DBEngineType, ddclient, context,'ZIP')
+    //remove starting and ending linebreaks from text (messes up csv operations)
+    if (strData !==undefined){
+
+      try{
+      strData = strData.replace(/^\s+|\s+$/g, '');
+      } 
+      catch(error){
+        console.log(error)
+      }
+    }
+    else{
+      console.log("error unzipping: " + filename)
+      return ''
+    }
+
+    var processeddata = handle_processing(bytestream,StgSelectParameter,strData,SelectedModel )
+    return processeddata
+  }
+  else if (bytestream.ContentEncoding === 'gzip' || StgSelectParameter.InputSerialization.Compression ==='GZIP'){
+      //Compressed files either content encoding is set or the schema specifies GZIP
+    var strData = await unzipdata(body, filename, sequelize, Model, engineshared, DBEngineType, ddclient, context,'GZIP')
+    //remove starting and ending linebreaks from text (messes up csv operations)
+    if (strData !==undefined){
+
+      try{
+      strData = strData.replace(/^\s+|\s+$/g, '');
+      } 
+      catch(error){
+        console.log(error)
+      }
+    }
+    else{
+      console.log("error unzipping: " + filename)
+      return ''
+    }
+
+    var processeddata = handle_processing(bytestream,StgSelectParameter,strData,SelectedModel )
+    return processeddata
+  }
+  else{
+  //Non compressed file
+    var processeddata
+    let  strData = new TextDecoder().decode(body)
+    //remove starting and ending linebreaks from text (messes up csv operations)
+    if (strData !==undefined){
+
+      try{
+      strData = strData.replace(/^\s+|\s+$/g, '');
+      } 
+      catch(error){
+        console.log(error)
+      }
+    }
+    else{
+      console.log("error processing: " + filename)
+      return ''
+    }
+
+    var processeddata = handle_processing(bytestream,StgSelectParameter,strData,SelectedModel )
+    return processeddata
+
+  }
+ 
+}
+
+function handle_processing(bytestream,StgSelectParameter,strData,SelectedModel ){
+  var processeddata
+
+    if ((bytestream.ContentType ==='application/json'|| StgSelectParameter.InputSerialization.JsonType !== undefined) && strData !== undefined){
+      // Convert to Object
+      processeddata = JSON.parse(strData)
+      return processeddata
+    }
+    else if (strData !== undefined && StgSelectParameter.InputSerialization.CSV.FileHeaderInfo !== false){
+      // Convert to Object
+      let papaconfig=createpapaconfig(StgSelectParameter)
+      let processeddata =Papa.parse(strData,papaconfig).data
+
+      return processeddata
+    }
+    else{
+      //The text file does not have a header row so we need to combine the header information from the schema with the data from the file.
+      //console.log('at csv without header')
+      let processeddata = []
+      const headers = Object.keys(SelectedModel)
+
+      let papaconfig=createpapaconfig(StgSelectParameter)
+      var intermedatedata =Papa.parse(strData,papaconfig)
+  
+      for (let i = 0; i < intermedatedata.data.length; i++) {
+        
+        let oneentry =intermedatedata.data[i]
+        if (intermedatedata.data[i].length > 1 && oneentry !== '' && oneentry !== null ) {
+          processeddata.push(_.zipObject(headers, oneentry))
+        } // if oneentry not empty
+      } // for i entries
+     
+      return processeddata
+    }
+
+}
+
+function createpapaconfig(StgSelectParameter){
+
+  let config={}
+  if(StgSelectParameter.InputSerialization.CSV.FieldDelimiter !== undefined){
+    config['delimiter'] =StgSelectParameter.InputSerialization.CSV.FieldDelimiter
+  }
+
+  if(StgSelectParameter.InputSerialization.CSV.RecordDelimiter !== undefined){
+    config['newline'] =StgSelectParameter.InputSerialization.CSV.RecordDelimiter
+  }
+
+  if(StgSelectParameter.InputSerialization.CSV.QuoteCharacter !== undefined){
+    config['quoteChar'] =StgSelectParameter.InputSerialization.CSV.QuoteCharacter
+  }
+  
+  if(StgSelectParameter.InputSerialization.CSV.FileHeaderInfo !== undefined && StgSelectParameter.InputSerialization.CSV.FileHeaderInfo == 'USE'){
+    config['header'] =StgSelectParameter.InputSerialization.CSV.FileHeaderInfo
+  }
+
+  return config
+}
+
+async function unzipdata(body, filename, sequelize, Model, engineshared, DBEngineType, ddclient, context, type ){
+  
+  try{
+    if ( type === "GZIP"){
+      //https://github.com/nodeca/pako/issues/236 and ..139
+      const string= pako.inflate(new Uint8Array(body), { to: 'string', chunkSize: 1024*1024 })
+      // const decompressed = fflate.decompressSync(body) // const string = new TextDecoder().decode(decompressed)
+      //fflate did not work, for the reason mentioned above, possible solution at: https://github.com/101arrowz/fflate/issues/46
+      if(string.length < body.length) {
+        console.log("\n probable issue with decompressing " + filename +" the uncompressed bit stream length is smaller than the original.")
+      }
+      return string
+    }
+    else if (type === "ZIP"){
+      
+      const object = await unzipToVariable(Buffer.from(body))
+      let key=Object.keys(object)
+      if (key.length > 1){
+
+        console.log('\n\n Error multiple files per zip archive is not supported!\nUse zip archives with single file in them!')
+        //TODO handle multiple files in one zip case
+       
+      }
+      else{
+        let string =object[key]
+        return string
+      }
+    }
+
+  }
+  catch(error){
+    const mydata = {
+      jobid: context.clientContext.jobid,
+      invocationid: context.clientContext.invocationid,
+      updateunixtime: Date.now(),
+      path: 'worker.js:unzipdata',
+      loggroup: context.logGroupName,
+      logstream: context.logStreamName,
+      errormessage: 'Error processing '+ filename +' '+ error.message
+    }
+
+    const AddSQLEntryresult = await AddSqlEntry(sequelize, Model, engineshared.ProcessingErrorsModel(DBEngineType), 'ProcessingError', 'ProcessingErrors', mydata)
+    // checks for SQL insert success/failure if failed records it in DynamoDb.
+    if (AddSQLEntryresult.Result !== 'PASS') {
+      const details = {
+        source: 'Worker.js:AddSqlEntry',
+        message: 'failed to insert processing errors to SQL table, because: ' + result.Data,
+        jobid: context.clientContext.jobid
+      }
+      await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'SQLInsert', 'Error', 'Infra', details, 'API')
+    }
+  }
+}
+
+// Function to extract ZIP contents and return them in a variable
+async function unzipToVariable(buffer) {
+  return new Promise((resolve, reject) => {
+    const files = {}; // Object to store file contents
+
+    yauzl.fromBuffer(buffer, { lazyEntries: true }, (err, zipfile) => {
+      if (err) return reject(err);
+
+      zipfile.readEntry();
+
+      zipfile.on("entry", (entry) => {
+        if (/\/$/.test(entry.fileName)) {
+          // Directory; skip it
+          zipfile.readEntry();
+        } else {
+          // File
+          zipfile.openReadStream(entry, (err, readStream) => {
+            if (err) return reject(err);
+
+            const chunks = [];
+            readStream.on("data", (chunk) => chunks.push(chunk));
+            readStream.on("end", () => {
+              files[entry.fileName] = Buffer.concat(chunks).toString(); // Convert Buffer to string
+              zipfile.readEntry();
+            });
+          });
+        }
+      });
+
+      zipfile.on("end", () => resolve(files));
+    });
+  });
+}
+
+
+async function loop (sqsclient, sequelize, event, context, TestingTimeout, engineshared, commonshared, ddclient, StgSelectParameter, DataType, QueueURL, QueryString, Model, SelectedModel, DBTableName, DBEngineType, DebugInsert, EngineBucket, region, FileName, executiontype, invocationid, transformconfigpath) {
   
   var i = 0
 
@@ -246,7 +617,7 @@ async function loop (sqsclient, sequelize, event, context, TestingTimeout, engin
         await timeout(TestingTimeout) // for testing log running lambdas
       }
       const t1 = performance.now()
-      await Task(sqsclient, engineshared, commonshared, ddclient, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, event, type, header, DebugInsert, EngineBucket, region, FileName, executiontype)
+      await Task(sqsclient, engineshared, commonshared, ddclient, StgSelectParameter, DataType, QueueURL, QueryString, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, event, DebugInsert, EngineBucket, region, FileName, executiontype, transformconfigpath)
       const t2 = performance.now()
       const processingtime = (t2 - t1)
       const ellipsedtime = (t2 - t0)
@@ -271,15 +642,15 @@ async function loop (sqsclient, sequelize, event, context, TestingTimeout, engin
     } while (!exitcondition)
   }
   catch (err) {
+    if (err.message != "ConnectionManager.getConnection was called after the connection manager was closed!"){
     console.log(err)
+    }
   }
 
   console.log(`Reporting state of instance ${invocationid} at ${new Date().toLocaleString()} : COMPLETED`)
-  // await CompleteLambdaState(context, sequelize, Model, engineshared)
-  // await sequelize.close()
 }
 
-async function Task (sqsclient, engineshared, commonshared, ddclient, S3SelectParameter, QueryType, QueueURL, S3SelectQuery, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, event, type, header, DebugInsert, EngineBucket, region, FileName, executiontype) {
+async function Task(sqsclient, engineshared, commonshared, ddclient, StgSelectParameter, DataType, QueueURL, QueryString, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, event, DebugInsert, EngineBucket, region, FileName, executiontype, transformconfigpath) {
   
   let sqsmessages
   var dataexists =false
@@ -304,15 +675,11 @@ async function Task (sqsclient, engineshared, commonshared, ddclient, S3SelectPa
     if (sqsmessages !== undefined){
       try {
         var prefixarray = sqsmessages.map(msg => [msg.key,msg.bucket,msg.region])
-        // s3parameters.Key = prefix[0]
-        // s3parameters.Bucket = prefix[1]
-        // const region = prefix[2]
-        // const params = s3parameters
         var ReceiptHandle = sqsmessages.map(msg => msg.receiptHandle)
         dataexists =true
       }
       catch (e) {
-        console.log('Error parsing Message retrieved from autmatic sqs invocation event. Further details: \n')
+        console.log('Error parsing Message retrieved from automatic sqs invocation event. Further details: \n')
         console.error(e)
         process.exit()
       }
@@ -320,19 +687,12 @@ async function Task (sqsclient, engineshared, commonshared, ddclient, S3SelectPa
   }
 
   if (dataexists) {
-    const s3results = await processS3data(prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, ddclient, sequelize, Model, type, header)
-    const Transformeddata = DatatoSchemaTransformation(s3results, SelectedModel, S3SelectParameter, DBEngineType, type, header)
 
-    // Only call InsertData if Transformed data is not null;
-    if (Transformeddata.length !== 0) {
-      rdsinsertsuccess=await InsertData(commonshared, sequelize, Model, SelectedModel, QueryType, DBTableName, Transformeddata, DebugInsert, EngineBucket, region, FileName)
-      await deleteSQSMessage(sqsclient, QueueURL, ReceiptHandle, rdsinsertsuccess)
-    }
-    else {
-      //if there was no data we can delete the  sqs message 
-      rdsinsertsuccess = true
-      await deleteSQSMessage(sqsclient, QueueURL, ReceiptHandle, rdsinsertsuccess)
-    }
+    const bytestream = await loaddata(prefixarray)
+    const filearray = await preprocessdata(bytestream, StgSelectParameter, sequelize, SelectedModel, Model, engineshared, DBEngineType, ddclient, context )
+    const rdsinsertsuccess = await filterdata(filearray, QueryString, commonshared, sequelize, Model, SelectedModel, DataType, DBEngineType, DBTableName, DebugInsert, EngineBucket, region, FileName, TransformsModule, transformconfigpath)
+    await deleteSQSMessage(sqsclient, QueueURL, ReceiptHandle, rdsinsertsuccess)
+
   }
   else if (sqsempty > 2) {
     console.log('\nQueue was empty for prolonged time stopping lambda function\n')
@@ -349,17 +709,15 @@ async function Task (sqsclient, engineshared, commonshared, ddclient, S3SelectPa
   }
 }
 
-async function StartLambdastate(ddclient,sequelize, Model, InvocationsModel, jobid, invocationid){
+async function StartLambdastate(commonshared, ddclient,sequelize, Model, InvocationsModel, jobid, invocationid){
   const mydata = {
     jobid,
     invocationid,
     status: 'INVOKED',
     updateunixtime: Date.now()
   }
-  //const AddSQLEntryresult = await engineshared.AddSqlEntry(sequelize, Model, InvocationsModel, 'Invocation', 'Invocations', mydata)
 
   var AddSQLEntryresult =await AddSqlEntry(sequelize, Model, InvocationsModel, 'Invocation', 'Invocations', mydata)
-
    
   // checks for SQL insert success/failure if failed records it in DynamoDb.
   if (AddSQLEntryresult.Result !== 'PASS') {
@@ -407,16 +765,17 @@ async function CompleteLambdaState(context, sequelize, Model, engineshared){
 
 }
 
-async function InsertData (commonshared, sequelize, Model, SelectedModel, QueryType, DBTableName, Transformeddata, DebugInsert, EngineBucket, region, FileName) {
+async function InsertData (commonshared, sequelize, Model, SelectedModel, DataType, DBTableName, Transformeddata, DebugInsert, EngineBucket, region, FileName) {
   
   class Entry extends Model {}
   await Entry.init(SelectedModel, {
     sequelize,
-    modelName: QueryType,
+    modelName: DataType,
     tableName: DBTableName,
     freezeTableName: true
   })
-  var rdsinsertsuccess
+
+  var insertsuccess
   const t = await sequelize.transaction();
 
   try {
@@ -425,9 +784,10 @@ async function InsertData (commonshared, sequelize, Model, SelectedModel, QueryT
     })
     
     await t.commit();
-    rdsinsertsuccess = true
+    insertsuccess = true
     console.log('SQL Server BulkEntry  has been completed successfully. Number of rows: ' + Transformeddata.length)
-    return rdsinsertsuccess
+    
+    return insertsuccess
 
   } catch (err) {
     console.log(err.message, "\nline: ",err.original.line)
@@ -439,182 +799,19 @@ async function InsertData (commonshared, sequelize, Model, SelectedModel, QueryT
       const s3client = new S3Client({region})
       console.log('Starting SQL commands debug file upload')
       await commonshared.s3putdependencies(newfilefullname, EngineBucket, s3client, PutObjectCommand, fs, fileURLToPath, 'DebugInsert/'+filenamepart)
-      // setTimeout(function () {
-          rdsinsertsuccess = false
+      
+      insertsuccess = false
           // Transaction has been rolled back
           // err is whatever rejected the promise chain returned to the transaction callback
-          await t.rollback()
-          return  rdsinsertsuccess
-      // }, 1500);
+      await t.rollback()
+      return  insertsuccess
     }
     else{
-      rdsinsertsuccess = false
+      insertsuccess = false
       // Transaction has been rolled back
       // err is whatever rejected the promise chain returned to the transaction callback
       await t.rollback()
-      return   rdsinsertsuccess
-    }
-  }
-} // insert data function
-
-async function processS3data (prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, ddclient, sequelize, Model, type, header) {
-  // source: https://docs.aws.amazon.com/AWSJavaScriptSDK/latest/AWS/S3.html#selectObjectContent-property
-
-  const s3parameters = {
-    Bucket: '',
-    Key: '',
-    ExpressionType: 'SQL',
-    Expression: S3SelectQuery,
-    InputSerialization: {
-      CompressionType: S3SelectParameter.InputSerialization.Compression
-    },
-    OutputSerialization: {}
-  }
-
-  if (type === 'JSON') {
-    s3parameters.InputSerialization.JSON = {}
-    s3parameters.InputSerialization.JSON.Type = S3SelectParameter.InputSerialization.JsonType
-    s3parameters.OutputSerialization.JSON = {}
-    s3parameters.OutputSerialization.JSON.RecordDelimiter = ','
-  }
-  else if (type === 'CSV') {
-    if (header === false) {
-      s3parameters.InputSerialization.CSV = {}
-      s3parameters.OutputSerialization.CSV = S3SelectParameter.OutputSerialization.CSV
-    }
-    else {
-      s3parameters.OutputSerialization.JSON = {}
-      s3parameters.OutputSerialization.JSON.RecordDelimiter = ','
-    }
-    s3parameters.InputSerialization.CSV = S3SelectParameter.InputSerialization.CSV
-  }
-  else if (S3SelectParameter.InputSerialization.Parquet !== undefined) {
-    console.log('Parquet support to be done!')
-  }
-
-
-  const promises = prefixarray.map(prefix => {
-    s3parameters.Key = prefix[0]
-    s3parameters.Bucket = prefix[1]
-    const region = prefix[2]
-    const params = s3parameters
-    const s3client = new S3Client({ region })
-    return FilteredS3data(ddclient, s3client, params, context, engineshared, commonshared, sequelize, Model, DBEngineType, type, header)
-  }) // prefixarray.map
-
-  const resolved = await Promise.all(promises)
-  let results = _.compact(_.flatten(resolved))
-
-  if ((S3SelectParameter.InputSerialization.RootElement !== undefined) && (typeof results[0][S3SelectParameter.InputSerialization.RootElement] === 'object')) {
-    // its a list of elements
-    const combined = []
-    results.map(r => combined.push(r.Records))
-    results = _.flatten(combined)
-  }
-
-  console.log('Number of events ' + results.length + ' \n')
-  return results
-}
-
-async function FilteredS3data (ddclient, s3client, params, context, engineshared, commonshared, sequelize, Model, DBEngineType, type, header) {
-  const asyncIterableStreamToString = (asyncIterable) =>
-    new Promise(async (resolve, reject) => {
-      try {
-        const chunks = [new Uint8Array()]
-        for await (const selectObjectContentEventStream of asyncIterable) {
-          if (selectObjectContentEventStream.Records) {
-            if (selectObjectContentEventStream.Records.Payload) {
-              chunks.push(selectObjectContentEventStream.Records.Payload)
-            }
-          }
-
-          if (selectObjectContentEventStream.End) {
-            resolve(Buffer.concat(chunks).toString('utf8'))
-          }
-        }
-      }
-      catch (err) {
-        console.error(err)
-        reject(err)
-      }
-    }
-    )
-
-  const command = new SelectObjectContentCommand(params)
-  var result
-  try {
-    const response = await s3client.send(command)
-
-    if (response.$metadata.httpStatusCode === 200) {
-      if (response.Payload) {
-        const body = await asyncIterableStreamToString(response.Payload)
-
-        if (type === 'JSON') {
-          result = convertrawdata(body)
-        }
-        else if (type === 'CSV' && header === true) {
-          result = convertrawdata(body)
-        }
-        else if (type === 'CSV' && header === false) {
-          result = {
-            Result: 'PASS',
-            Data: body
-          }
-        }
-        // console.log(body)
-      }
-      else {
-        console.warn(`S3Select did not have payload for ${bucketName}/${key}`)
-      }
-    }
-    else if (response.error !== null) {
-      const errorstring = response.httpResponse.stream.req._header
-      const file = errorstring.match(/POST.*?select.*/g)
-      const bucket = errorstring.match(/Host:.*/g)
-      // this is the compacted errormessage
-      const errormessagedatabase = 'Error Processing request: \n' + file + '\n' + bucket + '\nReason:\n' + Buffer.from(response.httpResponse.body).toString('utf8')
-      // this is the full errormessage:
-      let errormessageconsole = 'Error Processing request: \n' + errorstring + '\n------------------------------------------------------------------\n'
-      errormessageconsole += Buffer.from(response.httpResponse.body).toString('utf8')
-      console.log(errormessageconsole)
-      result = {
-        Result: 'Fail',
-        Data: errormessagedatabase
-      }
-    }
-  }
-  catch (e) {
-    var errormessage ="\n   S3Error:  "+e.message+"\n   Bucket:   "+e.$response.body.req.host+"\n   File:  "+ e.$response.body.req.path.split('?')[0]
-    console.log(errormessage)
-    result = {
-      Result: 'Fail',
-      Data: errormessage
-    }
-  }
-
-  if (result.Result === 'PASS') {
-    return result.Data
-  }
-  else {
-    const mydata = {
-      jobid: context.clientContext.jobid,
-      invocationid: context.clientContext.invocationid,
-      updateunixtime: Date.now(),
-      path: 'worker.js:FilteredS3data.req.on.complete',
-      loggroup: context.logGroupName,
-      logstream: context.logStreamName,
-      errormessage: result.Data
-    }
-    // const AddSQLEntryresult = await engineshared.AddSqlEntry(sequelize, Model, engineshared.ProcessingErrorsModel(DBEngineType), 'ProcessingError', 'ProcessingErrors', mydata)
-    const AddSQLEntryresult = await AddSqlEntry(sequelize, Model, engineshared.ProcessingErrorsModel(DBEngineType), 'ProcessingError', 'ProcessingErrors', mydata)
-    // checks for SQL insert success/failure if failed records it in DynamoDb.
-    if (AddSQLEntryresult.Result !== 'PASS') {
-      const details = {
-        source: 'Worker.js:AddSqlEntry',
-        message: 'failed to insert processing errors to SQL table, because: ' + result.Data,
-        jobid: context.clientContext.jobid
-      }
-      await commonshared.AddDDBEntry(ddclient, PutItemCommand, 'Logverz-Invocations', 'SQLInsert', 'Error', 'Infra', details, 'API')
+      return   insertsuccess
     }
   }
 }
@@ -675,56 +872,6 @@ async function InitiateConnection (DBEngineType, connectionstring) {
   return sequelize
 }
 
-function DatatoSchemaTransformation (s3results, SelectedModel, S3SelectParameter, DBEngineType, type, header) {
-  if (type === 'JSON') {
-    var finalarray = convertdatatosqlschema(s3results, SelectedModel, DBEngineType)
-  }
-  else if (type === 'CSV' && header === true) {
-    var finalarray = convertdatatosqlschema(s3results, SelectedModel, DBEngineType)
-  }
-  else if (type === 'CSV' && header === false) {
-    var intermediatearray = []
-    const headers = Object.keys(SelectedModel)
-
-    _.forEach(s3results, onefile => {
-      const temparray = []
-      let entries = []
-      entries = onefile.split(S3SelectParameter.OutputSerialization.CSV.RecordDelimiter)
-
-      for (let i = 0; i < entries.length; i++) {
-        if (S3SelectParameter.OutputSerialization.CSV.FieldDelimiter === ' ') {
-          var oneentry = entries[i].match(/(?:[^\s"]+|"[^"]*")+/g)
-        }
-        else {
-          var oneentry = entries[i].split(S3SelectParameter.OutputSerialization.CSV.FieldDelimiter)
-        }
-
-        if (oneentry !== '' && oneentry !== null) {
-          oneentry = oneentry.map(oe => {
-            if (oe.match(/^".*"$/)) {
-              oe = oe.substring(1, oe.length - 1) // remove starting " and ending " charchters...
-            }
-            return oe
-          })
-          temparray.push(_.zipObject(headers, oneentry))
-        } // if oneentry not empty
-      } // for i entries
-      intermediatearray.push(temparray)
-    })
-    var intermediatearray = _.compact(_.flatten(intermediatearray))
-    // debug dump location 1:
-    // fs.writeFileSync(fileURLToPath("file:///C:\\...path...\\intermediatearray.json"), JSON.stringify(intermediatearray))
-    var finalarray = convertdatatosqlschema(intermediatearray, SelectedModel, DBEngineType)
-    // debug dump location 2:
-    // fs.writeFileSync(fileURLToPath("file:///C:\\...path...\\finalarray.json"), JSON.stringify(finalarray))
-  }
-  else {
-    console.log('Parquet filetype not yet supported')
-  }
-
-  return finalarray
-}
-
 function timeout (ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -758,11 +905,27 @@ async function deleteSQSMessage (sqsclient, QueueURL, ReceiptHandles, rdsinserts
 function convertdatatosqlschema (s3results, SelectedModel, DBEngineType) {
   const array = []
   const themodel = SelectedModel
+
   _.forEach(s3results, existingentry => {
+
     for (const Modelskey in SelectedModel) {
       let value = existingentry[Modelskey]
       const type = (themodel[Modelskey]).type.key
-      if ((DBEngineType === 'mssql') && (typeof (value) === 'object')) {
+
+      if((DBEngineType === 'sqlite') && (type === 'JSON')) {
+         // convert data from string to json as sequalise v6 query of json datatype returns a string simmilar to:
+        // https://sequelize.org/master/manual/other-data-types.html#mssql
+        try {
+          value = JSON.parse(value)
+        }
+        catch (error) {
+          console.log('Could not parse json')
+          console.log(JSON.stringify(error))
+          value = 'error processingfield'
+        }
+        existingentry[Modelskey] = value
+      }
+      else if ((DBEngineType === 'mssql') && (typeof (value) === 'object')) {
         // convert data from json to string as mssql does not have JSON datatype
         // https://sequelize.org/master/manual/other-data-types.html#mssql
         try {
@@ -841,44 +1004,7 @@ function convertdatatosqlschema (s3results, SelectedModel, DBEngineType) {
   return array
 }
 
-function convertrawdata (plainstring) {
-  // eslint-disable-next-line no-useless-escape
-  plainstring = plainstring.replace(/\,$/, '')
-  // Add into JSON 'array'
-  plainstring = `[${plainstring}]`
-  try {
-    var JSONobject = JSON.parse(plainstring)
-  }
-  catch (e) {
-    console.log(e)
-    var result = {
-      Result: 'Fail',
-      Data: e
-    }
-  }
-
-  try {
-    var firstproperty= Object.keys(JSONobject[0])[0]
-    if (firstproperty === JSONobject[0][firstproperty]){
-      //this is a bug in s3 select that it returns the csv header fields as values during csv input to json output conversion
-      // eg: {"line_num":"line_num","identity_line_item_id":"identity_line_item_id","3rd","4th" etc...} 
-      //because of that if the first objects property name and property value is the same we discard that first array element. 
-      JSONobject.shift()
-    }    
-  }
-  catch(e){
-    console.log(e)
-  }
-
-  var result = {
-    Result: 'PASS',
-    Data: JSONobject
-  } // encapsulating state of data to PASS/FAIL JSON object.
-
-  return result
-}
-
-async function initialseparameters (commonshared, Schema, QueryType, DBFrendlyName, ssmclient, GetParameterCommand, ddclient, PutItemCommand) {
+async function initialseparameters (commonshared, Schema, DataType, DBFrendlyName, ssmclient, GetParameterCommand, ddclient, PutItemCommand) {
   //Function is for classic collection paramters initialisation 
   if (Schema === '') {
     // It only retrieves schema parameter if the client context does not have it. Which happenes if the schema is big + query is big so the
@@ -890,7 +1016,7 @@ async function initialseparameters (commonshared, Schema, QueryType, DBFrendlyNa
         WithDecryption: true
       }, ddclient, PutItemCommand),
       commonshared.getssmparameter(ssmclient, GetParameterCommand, {
-        Name: ('/Logverz/Engine/Schemas/' + QueryType)
+        Name: ('/Logverz/Engine/Schemas/' + DataType)
       }, ddclient, PutItemCommand)
     ])
     const SchemaArray = JSON.parse(SchemaObject.Parameter.Value).Schema
@@ -917,7 +1043,7 @@ async function initialseparameters (commonshared, Schema, QueryType, DBFrendlyNa
   return result
 }
 
-async function InitialseCCparameters(commonshared, executionhistorykey, DBFrendlyName, DBPassword, QueryType, Schema, DBAvalue){
+async function InitialseCCparameters(commonshared, executionhistorykey, DBFrendlyName, DBPassword, DataType, Schema, DBAvalue){
   //Function is for continous collection parameters initialisation, it checks multipleparameters if those are in the cache
   //than parallel conditionally executes the retrieval of missing parameter(s).
 
@@ -931,7 +1057,7 @@ async function InitialseCCparameters(commonshared, executionhistorykey, DBFrendl
   }).collection.data[0] 
 
   Schema = SchemasCache.chain().find({
-    Name: QueryType
+    Name: DataType
   }).collection.data[0] 
 
   DBAvalue = DBparamsCache.chain().find({
@@ -979,17 +1105,17 @@ async function InitialseCCparameters(commonshared, executionhistorykey, DBFrendl
      promises.push(new Promise(async (resolve, reject) => {
       
       let schemavalue= await commonshared.getssmparameter(ssmclient, GetParameterCommand, {
-          Name: ('/Logverz/Engine/Schemas/' + QueryType),
+          Name: ('/Logverz/Engine/Schemas/' + DataType),
             WithDecryption: false
           }, ddclient, PutItemCommand)
-      let schemaobj ={"Name": QueryType,"Value": schemavalue.Parameter.Value , "Recordtype":"Schema"}
+      let schemaobj ={"Name": DataType,"Value": schemavalue.Parameter.Value , "Recordtype":"Schema"}
       SchemasCache.insert(schemaobj)
-      console.log('\nRetrieved '+QueryType+' schema.')
+      console.log('\nRetrieved '+DataType+' schema.')
       resolve(schemaobj)
     }))
   }
   else{
-    console.log('\nCache contained '+QueryType+' schema.')
+    console.log('\nCache contained '+DataType+' schema.')
   }
 
   if (DBAvalue === undefined) {
@@ -1015,12 +1141,12 @@ async function InitialseCCparameters(commonshared, executionhistorykey, DBFrendl
   //return resolved
 } 
 
-async function UpdateSqlEntry (sequelize, Model, SelectedModel, QueryType, DBTableName, updatedfields, conditions) {
+async function UpdateSqlEntry (sequelize, Model, SelectedModel, DataType, DBTableName, updatedfields, conditions) {
  
     class DBEntry extends Model {}
     await DBEntry.init(SelectedModel, {
       sequelize,
-      modelName: QueryType,
+      modelName: DataType,
       tableName: DBTableName,
       freezeTableName: true
     })
@@ -1030,12 +1156,12 @@ async function UpdateSqlEntry (sequelize, Model, SelectedModel, QueryType, DBTab
 
 }
 
-async function AddSqlEntry(sequelize, Model, SelectedModel, QueryType, DBTableName, mydata) {
+async function AddSqlEntry(sequelize, Model, SelectedModel, DataType, DBTableName, mydata) {
 
   class DBEntry extends Model {}
   await DBEntry.init(SelectedModel, {
     sequelize,
-    modelName: QueryType,
+    modelName: DataType,
     tableName: DBTableName,
     freezeTableName: true
   })
@@ -1088,21 +1214,22 @@ function parseevent4sqsmessages(event, QueueURL){
   //console.log(Messages)
   return  data
 }
-
   // Testing setup: After initiate connection, before loop:
-  // var prefixarray=[
-  //     [
-  //       "key",
-  //       "bucket",
-  //       "region"
-  //     ],
-  //     [
-  //       "key",
-  //       "bucket",
-  //       "region"
-  //     ]
-  // ]
-  // var s3results = await processS3data(prefixarray, S3SelectQuery, S3SelectParameter, context, DBEngineType, engineshared, commonshared, ddclient, sequelize, Model, type, header)
-  // var Transformeddata = DatatoSchemaTransformation(s3results, SelectedModel, S3SelectParameter, DBEngineType, type, header)
-  // await InsertData(commonshared, sequelize, Model, SelectedModel, QueryType, DBTableName, Transformeddata, DebugInsert, EngineBucket, region, FileName)
-  // await timeout(2000)
+  /*
+  var prefixarray=[
+      [
+        "key",
+        "bucket",
+        "region"
+      ],
+      [
+        "key",
+        "bucket",
+        "region"
+      ]
+  ]
+
+  const bytestream = await loaddata(prefixarray)
+  const filearray = await preprocessdata(bytestream, StgSelectParameter, sequelize, SelectedModel, Model, engineshared, DBEngineType, ddclient, context )
+  await filterdata(filearray, QueryString, commonshared, sequelize, Model, SelectedModel, DataType, DBEngineType, DBTableName, DebugInsert, EngineBucket, region, FileName, TransformsModule, transformconfigpath)
+*/

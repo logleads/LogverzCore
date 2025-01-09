@@ -14,7 +14,7 @@ import Bottleneck from 'bottleneck'
 import { NodeHttpHandler } from '@smithy/node-http-handler'
 import { S3Client, ListObjectsV2Command, GetBucketLocationCommand } from '@aws-sdk/client-s3'
 import { CodeBuildClient, BatchGetBuildsCommand } from '@aws-sdk/client-codebuild'
-import { SQSClient, SendMessageCommand, GetQueueAttributesCommand } from '@aws-sdk/client-sqs'
+import { SQSClient, SendMessageCommand, GetQueueAttributesCommand, PurgeQueueCommand } from '@aws-sdk/client-sqs'
 import { SSMClient, GetParameterCommand, DeleteParameterCommand, PutParameterCommand } from '@aws-sdk/client-ssm'
 import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocumentClient, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb'
@@ -56,12 +56,13 @@ if (process.env.Environment !== 'LocalDev') {
   var defaultsqsmessagesize = 50
   var WorkerFunction = process.env.WorkerFunction
   var SelectedModelPath = ('file:///' + path.join(__dirname, 'build', 'SelectedModel.mjs').replace(/\\/g, '/'))
+  var TransformConfig = JSON.stringify(process.env.Transforms)
   // './build/SelectedModel'
-  var S3SelectQuery = process.env.S3SelectQuery
-  var S3SelectParameter = process.env.S3SelectParameter
-  var QueryType = process.env.QueryType
-  var S3EnumerationDepth = process.env.S3EnumerationDepth
-  var S3Folders = process.env.S3Folders
+  var QueryString = process.env.QueryString
+  var StgSelectParameter = process.env.StgSelectParameter
+  var DataType = process.env.DataType
+  var StgEnumerationDepth = process.env.StgEnumerationDepth
+  var StgFolders = process.env.StgFolders
   var DatabaseParameters = process.env.DatabaseParameters
   var TableParameters = process.env.TableParameters
   var Schema = process.env.Schema
@@ -69,8 +70,8 @@ if (process.env.Environment !== 'LocalDev') {
   var jobid = process.env.JobID
   var PreferedWorkerNumber = process.env.PreferedWorkerNumber
   var cbbuildid = process.env.CODEBUILD_BUILD_ID
-  console.log('s3folders:')
-  console.log(S3Folders)
+  console.log('StgFolders:')
+  console.log(StgFolders)
   console.log('CurrentBuildID:')
   console.log(cbbuildid)
 }
@@ -87,11 +88,12 @@ else {
   var defaultsqsmessagesize = mydev.defaultsqsmessagesize
   var WorkerFunction = mydev.WorkerFunction
   var SelectedModelPath = mydev.SelectedModelPath
-  var S3SelectQuery = mydev.S3SelectQuery
-  var S3SelectParameter = mydev.S3SelectParameter
-  var QueryType = mydev.QueryType
-  var S3EnumerationDepth = mydev.S3EnumerationDepth
-  var S3Folders = mydev.S3Folders
+  var TransformConfig = JSON.stringify(mydev.Transforms)
+  var QueryString = mydev.QueryString
+  var StgSelectParameter = mydev.StgSelectParameter
+  var DataType = mydev.DataType
+  var StgEnumerationDepth = mydev.StgEnumerationDepth
+  var StgFolders = mydev.StgFolders
   var PreferedWorkerNumber = mydev.PreferedWorkerNumber
   var DatabaseParameters = mydev.DatabaseParameters
   var TableParameters = mydev.TableParameters
@@ -106,6 +108,9 @@ else {
   var socketnumber = Math.max(100, Math.round(PreferedWorkerNumber * 1.2))
 }
 
+// console.log('typeof StgSelectParameter')
+// console.log(typeof StgSelectParameter )
+// console.log(StgSelectParameter )
 // Limits the number of subfolders queried parallel.
 const s3limiter = new Bottleneck({
   // maxConcurrent: 10
@@ -175,14 +180,17 @@ async function main (defaultsqsmessagesize, rdsclient, cbclient, sqsclient, ssmc
   const username = buildstatus.builds[0].initiator
   const buildenvironment = buildstatus.builds[0].environment.computeType
   // if not authorized process exits;
-  await engineshared.authorizecollection(_, docClient, QueryCommand, ddclient, PutItemCommand, commonshared, authenticationshared, S3Folders, username)
+  await engineshared.authorizecollection(_, docClient, QueryCommand, ddclient, PutItemCommand, commonshared, authenticationshared, StgFolders, username)
 
   // checking for previous queries that needs to be set inactive in prod environment
   if (process.env.Environment !== 'LocalDev') {
     await commonshared.deactivatequery(docClient, QueryCommand, UpdateCommand, dbparams.DatabaseName, dbparams.DBTableName, jobid)
   }
 
-  const NumberofWorkers = await EnvironmentMaxWokerCount(rdsclient, commonshared, scclient, cwclient, dbinstanceclasses, dbparams.DBInstanceClass, dbparams.DBEngineType, dbparams.DBEndpointName, buildenvironment, PreferedWorkerNumber, S3SelectQuery)
+  //TODO check queue properties using function getSQSqueueProperties and if queue messages count >0 run purge: https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/sqs/command/PurgeQueueCommand/
+
+
+  const NumberofWorkers = await EnvironmentMaxWokerCount(rdsclient, commonshared, scclient, cwclient, dbinstanceclasses, dbparams.DBInstanceClass, dbparams.DBEngineType, dbparams.DBEndpointName, buildenvironment, PreferedWorkerNumber, QueryString)
 
   const workerlimiter = new Bottleneck({
     minTime: 200, // so that max 5 request is made per second.
@@ -190,14 +198,14 @@ async function main (defaultsqsmessagesize, rdsclient, cbclient, sqsclient, ssmc
   })
 
   // used in Cloudformation custom schema mode, checking Lambda invocation context size  if its less than 3582 than ok send Schema with lambda invoke,
-  var lambdamessagesize = (createmessage(jobid, jobid, S3SelectParameter, Schema)).length
+  var lambdamessagesize = (createmessage(jobid, jobid, StgSelectParameter, Schema)).length
 
   // if its more than the lambda invocation limit, than schema needs to be saved to Parameter store.
   if ((lambdamessagesize + 4) >= 3582) {
     const ssmpath = '/Logverz/Engine/Schemas/'
-    QueryType = `Temporary/${jobid}`
+    DataType = `Temporary/${jobid}`
     const ssmparams = {
-      Name: (ssmpath + QueryType),
+      Name: (ssmpath + DataType),
       Value: Schema,
       Description: 'Temporary Large Schema',
       Tier: 'Advanced',
@@ -216,21 +224,21 @@ async function main (defaultsqsmessagesize, rdsclient, cbclient, sqsclient, ssmc
   let sequelize
   let Model = Sequelize.Model
   sequelize = await engineshared.ConnectDBserver(sequelize, Sequelize, Schema, dbparams, fs, fileURLToPath, SelectedModelPath, ddclient, engineshared, commonshared, usage)
-              await engineshared.ConfigureDBCreateTables(sequelize, engineshared, dbparams, Model, SelectedModelPath, QueryType)
-  //await engineshared.ConnectNConfigureDBserver(sequelize, fs,  path, fileURLToPath, __dirname, ddclient, engineshared, Schema, Sequelize, dbparams, Model, SelectedModelPath, QueryType, usage)
+              await engineshared.ConfigureDBCreateTables(sequelize, engineshared, dbparams, Model, SelectedModelPath, DataType)
+
   const z1 = performance.now()
 
-  console.log('2.) Starting walk folders, ellipsed time from the beginning is ' + (z1 - z0) / 1000)
+  console.log('2.) Starting walk folders, elipsed time from the beginning (in seconds) is ' + ((z1 - z0) / 1000).toFixed(2))
   // TODO: CACHE MODE which  SAVE sallKeys to S3 than read it from there
   const s3client = new S3Client({})
-  tobeprocessed = await commonshared.TransformInputValues(s3client, GetBucketLocationCommand, S3Folders, S3EnumerationDepth, _)
+  tobeprocessed = await commonshared.TransformInputValues(s3client, GetBucketLocationCommand, StgFolders, StgEnumerationDepth, _)
 
   do {
     await commonshared.walkfolders(_, ListObjectsV2Command, ddclient, PutItemCommand, commonshared, tobeprocessed, subfolderlist, getCommonPrefixes, 'controller.js', jobid)
   }
   while (((subfolderlist.length + tobeprocessed.length) !== 0) && (tobeprocessed.length !== 0))
   const z2 = performance.now()
-  console.log('3.) Finished walk folders, elipsed time ' + ((z2 - z1) / 1000) + ' from start walking folder and ' + ((z2 - z0) / 1000) + ' from the beginning\n4.) Starting enumerating keys, this could take couple of minutes or more depending on the data volume')
+  console.log('3.) Finished walk folders, elipsed time (in seconds) ' + ((z2 - z1) / 1000).toFixed(2) + ' from start walking folder and ' + ((z2 - z0) / 1000).toFixed(2) + ' from the beginning\n4.) Starting enumerating keys, this could take couple of minutes or more depending on the data volume')
 
   const alltasksresolved = await s3limiter.schedule(() => {
     const allTasks = subfolderlist.map(
@@ -244,7 +252,7 @@ async function main (defaultsqsmessagesize, rdsclient, cbclient, sqsclient, ssmc
   })
 
   const z3 = performance.now()
-  console.log('5.) Finished enumerating keys elipsed time ' + ((z3 - z2) / 1000) + ' from finised walking folders and ' + ((z2 - z0) / 1000) + ' from the beginning')
+  console.log('5.) Finished enumerating keys elipsed time (in seconds) ' + ((z3 - z2) / 1000).toFixed(2) + ' from finised walking folders and ' + ((z2 - z0) / 1000).toFixed(2) + ' from the beginning')
   var allKeys = _.flatten(alltasksresolved)
   var allKeys = allKeys.filter(item => item[0].endsWith('/') === false) // to remove directories
   var sumfilesize = allKeys.map(s =>s[3]).reduce((accumulator, currentValue) => accumulator + currentValue,0)
@@ -252,10 +260,10 @@ async function main (defaultsqsmessagesize, rdsclient, cbclient, sqsclient, ssmc
 
   // TODO: dontwait for all files to be enumerated but do file enumeration and SQL population in parralell
   // TODO: handle allkeys zero case (no acces to bucket or non existent bucket etc.)
-var sqsmessagesize=setsqsmessagesize(defaultsqsmessagesize, allKeys.length, sumfilesize, QueryType)
+var sqsmessagesize=setsqsmessagesize(defaultsqsmessagesize, allKeys.length, sumfilesize, DataType)
  populatesqs(sqsclient, SendMessageCommand, sqslimiter, allKeys, QueueURL, sqsmessagesize)
 
-  await controllambdajobs(workerlimiter, ddclient, ssmclient, sequelize, Model, engineshared.InvocationsModel, QueueURL, S3SelectParameter, jobid, NumberofWorkers)
+  await controllambdajobs(workerlimiter, ddclient, ssmclient, sequelize, Model, engineshared.InvocationsModel, QueueURL, StgSelectParameter, jobid, NumberofWorkers)
 
   console.log('\n\n FINISHED EXECUTION at: ' + Date.now() + ', ' + commonshared.timeConverter(Date.now()) + ' local time.\n\n')
   process.exit()
@@ -263,7 +271,7 @@ var sqsmessagesize=setsqsmessagesize(defaultsqsmessagesize, allKeys.length, sumf
   // entries matched and  inserted to database, number of erros etc. And the settings that where used to create the table.
 }
 
-async function EnvironmentMaxWokerCount (rdsclient, commonshared, scclient, cwclient, dbinstanceclasses, DBInstanceClass, DBEngineType, DBEndpointName, buildenvironment, PreferedWorkerNumber, S3SelectQuery) {
+async function EnvironmentMaxWokerCount (rdsclient, commonshared, scclient, cwclient, dbinstanceclasses, DBInstanceClass, DBEngineType, DBEndpointName, buildenvironment, PreferedWorkerNumber, QueryString) {
 
   const maxworkercount = []
   const monitoringtimeperiod = 5 // min
@@ -325,7 +333,7 @@ async function EnvironmentMaxWokerCount (rdsclient, commonshared, scclient, cwcl
 
   console.log('Database storage type ('+dbconfig.StorageType + ') Database storage capacity ' + dbconfig.AllocatedStorage +' GB\n')
 
-  var diskcapacity =diskiocapacity(dbconfig, S3SelectQuery)
+  var diskcapacity =diskiocapacity(dbconfig, QueryString)
   maxworkercount.push(diskcapacity)
   // // describe vpc network interfaces
   // const EniList = await DesribeAllENI()
@@ -419,7 +427,7 @@ async function EnvironmentMaxWokerCount (rdsclient, commonshared, scclient, cwcl
   return NumberofWorkers
 }
 
-async function controllambdajobs (workerlimiter, ddclient, ssmclient, sequelize, Model, InvocationsModel, QueueURL, S3SelectParameter, jobid, NumberofWorkers) {
+async function controllambdajobs (workerlimiter, ddclient, ssmclient, sequelize, Model, InvocationsModel, QueueURL, StgSelectParameter, jobid, NumberofWorkers) {
   // wait 3 seconds for the queue to be populated.
   console.log('Determined initial number of workers ' + NumberofWorkers)
   await new Promise((resolve, reject) => setTimeout(resolve, 3000)) // wait a bit so that sqs queue is not empty at later check
@@ -431,7 +439,7 @@ async function controllambdajobs (workerlimiter, ddclient, ssmclient, sequelize,
   if (initialqueuelength !== 0) { // checks for initial queue length if SQS is empty at start, than no need to start worker lambdas.
     var jobquelength = Math.ceil(NumberofWorkers * 1.2)
     console.log('Internal jobqueue length: ' + jobquelength)
-    submitlambdajobs2Q(throttledlambdajob, ddclient, sequelize, Model, InvocationsModel, jobid, S3SelectParameter, jobquelength)
+    submitlambdajobs2Q(throttledlambdajob, ddclient, sequelize, Model, InvocationsModel, jobid, StgSelectParameter, jobquelength)
 
     let exitcondition = false
     do {
@@ -464,7 +472,7 @@ async function controllambdajobs (workerlimiter, ddclient, ssmclient, sequelize,
         console.log('placing worker jobs to internal queue\n')
         console.log(JSON.stringify(counts) + '\n')
         var jobquelength = Math.ceil(NumberofWorkers * 0.75)
-        submitlambdajobs2Q(throttledlambdajob, ddclient, sequelize, Model, InvocationsModel, jobid, S3SelectParameter, jobquelength)
+        submitlambdajobs2Q(throttledlambdajob, ddclient, sequelize, Model, InvocationsModel, jobid, StgSelectParameter, jobquelength)
         var newcounts = workerlimiter.counts()
         console.log('internal queue state' + JSON.stringify(newcounts))
       }
@@ -473,7 +481,7 @@ async function controllambdajobs (workerlimiter, ddclient, ssmclient, sequelize,
       if ((SQSQUEUENOTNULL === false) && (runninglambdas.length < 1)) {
         exitcondition = true
         var newcounts = workerlimiter.counts()
-        console.log('exit condition met.\nInternal que state' + JSON.stringify(newcounts) + '\n' + 'SQS queue length: ' + queuelength + '\nRunning lambdas:' + runninglambdas.length + '\n')
+        console.log('exit condition met.\nInternal que state: ' + JSON.stringify(newcounts) + '\n' + 'SQS queue length: ' + JSON.stringify(queuelength) + '\nRunning lambdas:' + runninglambdas.length + '\n')
       }
     } while (!exitcondition)
 
@@ -482,31 +490,33 @@ async function controllambdajobs (workerlimiter, ddclient, ssmclient, sequelize,
     await timeout(5000)
   } // if queue length !==0
 
-  // Check if QueryType is "Temporary/jobid", than delete it.
-  if (QueryType.match('Temporary/') !== null) {
+  // Check if DataType is "Temporary/jobid", than delete it.
+  if (DataType.match('Temporary/') !== null) {
     const params = {
-      Name: '/Logverz/Engine/Schemas/' + QueryType
+      Name: '/Logverz/Engine/Schemas/' + DataType
     }
     const command = new DeleteParameterCommand(params)
     await ssmclient.send(command)
   }
 }
 
-function submitlambdajobs2Q (throttledlambdajob, ddclient, sequelize, Model, InvocationsModel, jobid, S3SelectParameter, jobquelength) {
+function submitlambdajobs2Q (throttledlambdajob, ddclient, sequelize, Model, InvocationsModel, jobid, StgSelectParameter, jobquelength) {
   // this is the internal queue (based on bottleneck), that controlls lambda execution ensures that exactly NumberofWorkers lambda jobs are running
   const newjobs = []
   for (let i = 0; i < jobquelength; i++) {
     newjobs.push(i)
   }
 
-  newjobs.map(j => throttledlambdajob(ddclient, sequelize, Model, InvocationsModel, jobid, S3SelectParameter, j))
+  newjobs.map(j => throttledlambdajob(ddclient, sequelize, Model, InvocationsModel, jobid, StgSelectParameter, j))
   console.log('placed ' + JSON.stringify(jobquelength) + ' worker jobs in internal queue')
 }
 
-async function lambdajob (ddclient, sequelize, Model, InvocationsModel, jobid, S3SelectParameter) {
+async function lambdajob (ddclient, sequelize, Model, InvocationsModel, jobid, StgSelectParameter) {
   if (SQSQUEUENOTNULL === true) {
     const invocationid = commonshared.makeid(16)
-    const clientcontext = createmessage(invocationid, jobid, S3SelectParameter, Schema)
+    const clientcontext = createmessage(invocationid, jobid, StgSelectParameter, Schema)
+    // console.log("clientcontext\n")
+    // console.log(clientcontext)
     await commonshared.invokelambda (lmdclient, InvokeCommand, clientcontext, WorkerFunction)
 
     //TODO ADD TRY CATCH
@@ -524,10 +534,16 @@ async function lambdajob (ddclient, sequelize, Model, InvocationsModel, jobid, S
       var maxdelay=lambdacheckfrequency*2
       const datenow = Date.now()
       
-      console.log("invocationid: " + invocationid + ' lambdastate: '+ lambdastate.status + " last update: " + lambdastate.updateunixtime )
-      //console.log("Datenow: "+ datenow)
+      if (lambdastate !== null) {
+        console.log("invocationid: " + invocationid + ' lambdastate: '+ lambdastate.status + " last update: " + lambdastate.updateunixtime )
+
+      }
+      else{
+        console.log("problem starting worker lambdas please check cloudwatch /aws/lambda/Logverz-Worker logs.")
+       // return null
+      }
    
-      if ((lambdastate.status === 'COMPLETED')  || ((parseInt(lambdastate.updateunixtime) + maxdelay) < datenow)) {
+      if (lambdastate !== null && ((lambdastate.status === 'COMPLETED')  || ((parseInt(lambdastate.updateunixtime) + maxdelay) < datenow))) {
         console.log('Lambda of invocation id ' +invocationid + ' has finished.')
         return null
       }
@@ -541,7 +557,7 @@ async function lambdajob (ddclient, sequelize, Model, InvocationsModel, jobid, S
   }
 }
 
-function createmessage (invocationid, jobid, S3SelectParameter, Schema) {
+function createmessage (invocationid, jobid, StgSelectParameter, Schema) {
   // https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html#API_Invoke_RequestSyntax
   // max 3583 byte
   var DBTableName = TableParameters.split('<!!>').filter(s => s.includes('TableName'))[0].split('=')[1]
@@ -549,9 +565,12 @@ function createmessage (invocationid, jobid, S3SelectParameter, Schema) {
     var Schema = Schema.replace(/"/g, '\\"').replace(/(\r\n|\n|\r)/g, '')
   }
 
-  const partialmessage= `{"Schema":"","jobid":"${jobid}","QueryType":"${QueryType}","invocationid":"${invocationid}","QueueURL":"${QueueURL}","S3SelectQuery":"${S3SelectQuery}","DatabaseParameters":"${DatabaseParameters.replace(/"/g, '\\"')}","DBTableName":"${DBTableName}","S3SelectParameter":"${S3SelectParameter.replace(/"/g, '\\"')}"}`
+  const partialmessage= `{"Schema":"","jobid":"${jobid}","DataType":"${DataType}","invocationid":"${invocationid}","QueueURL":"${QueueURL}","QueryString":"${QueryString}","DatabaseParameters":"${DatabaseParameters.replace(/"/g, '\\"')}","DBTableName":"${DBTableName}","StgSelectParameter":"${StgSelectParameter.replace(/"\n/g, '"\\n').replace(/"/g, '\\"').replace(/\\\\"/g, '\\\\\\"')}","TransformConfig":${TransformConfig}}`
+  //notes : 
+  //.replace(/"""/g, '"\\\\""') is used in "QuoteCharacter":""" => \"QuoteCharacter\":\"\\\"\"
+  //.replace(/"\n/g, '"\\n') is used in  "RecordDelimiter":"\n" => \"RecordDelimiter\":\"\n\"
   
-  if (3582 - partialmessage.length <Schema.length){
+  if ((3582 - partialmessage.length ) < Schema.length){
     // if complete message size where to be larger than 3582 than we send empty schema.Each lambda will need to retrieve schema from parameter store.
     var Schema = ''
   }
@@ -559,12 +578,11 @@ function createmessage (invocationid, jobid, S3SelectParameter, Schema) {
   const invocationparameters =partialmessage.replace('"Schema":""',`"Schema":"${Schema}"`)
   // console.log(invocationparameters +"\n\n")
   const clientcontext = Buffer.from(invocationparameters).toString('base64')
-  //const invocationparameters = `{"Schema":"${Schema}","jobid":"${jobid}","QueryType":"${QueryType}","invocationid":"${invocationid}","QueueURL":"${QueueURL}","S3SelectQuery":"${S3SelectQuery}","DatabaseParameters":"${DatabaseParameters.replace(/"/g, '\\"')}","DBTableName":"${DBTableName}","S3SelectParameter":"${S3SelectParameter.replace(/"/g, '\\"')}"}`
 
   return clientcontext
 }
 
-async function SelectSQLTable (sequelize, Model, SelectedModel, QueryType, DBTableName, QueryTypes, QueryParameters) {
+async function SelectSQLTable (sequelize, Model, SelectedModel, DataType, DBTableName, QueryTypes, QueryParameters) {
   // TODO remove this function and use engineshared.selectsqltable.
   class Query extends Model {}
   Query.init(SelectedModel, { // SelectedModel
@@ -788,14 +806,14 @@ async function GetConfiguration (directory, value) {
   return data
 }
 
-function diskiocapacity(dbconfig, S3SelectQuery){
+function diskiocapacity(dbconfig, QueryString){
 
   //regular statement with limitted result set
   var queryweight =2.5
   //default db engine of logverz is postgres
   var dbenginecorrection=1
  // TODO add criteria for query complexity a query containing  1-2 'AND' or 'OR' conditions should be set queryweight =>6 if more than use the general query weight (2.5).  
-  if (S3SelectQuery.includes('WHERE') === false){
+  if (QueryString.includes('WHERE') === false){
     // data dump (insert all data no where statements) puts extra 400%-600% stress on the db server 
     queryweight =12
   }
@@ -846,14 +864,14 @@ function diskiocapacity(dbconfig, S3SelectQuery){
   return parallellambdacapacity
 }
 
-function setsqsmessagesize(defaultsqsmessagesize, sumfilenumber, sumfilesize, QueryType){
+function setsqsmessagesize(defaultsqsmessagesize, sumfilenumber, sumfilesize, DataType){
   
   //Lambdas may get terminated because of insufficent memory, with message:  Error: Runtime exited with error: signal: killedRuntime.ExitError
   // in order to limit that we reduce the number of files per message processed in one iteration of lambda workers. 
  let avgfilesize=Math.ceil(sumfilesize/sumfilenumber)
  let sqsmessagesize
 
-  if (QueryType === "CostDemoAWS"){
+  if (DataType === "CostDemoAWS"){
     //Schema is huge (processing on the DB side takes long ) so less file per message
     sqsmessagesize = Math.ceil(defaultsqsmessagesize * (20/avgfilesize))
   }

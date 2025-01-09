@@ -21,6 +21,9 @@ import { S3Client, ListBucketsCommand, GetBucketLocationCommand, ListObjectsV2Co
 import { AccountClient, GetContactInformationCommand } from '@aws-sdk/client-account'
 import { CognitoIdentityProviderClient, ListIdentityProvidersCommand } from '@aws-sdk/client-cognito-identity-provider'
 import { EC2Client, DescribeInstancesCommand } from '@aws-sdk/client-ec2'
+
+import { BlobServiceClient } from '@azure/storage-blob'
+
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
@@ -595,4 +598,24 @@ async function GetConfiguration (directory, value) {
     var data = (await import(moduleDataURL))
   }
   return data
+}
+
+async function ListBlobStorage(){
+  const account = "logleadstest1"
+  const sas = "/?sv=2022-11-02&ss=b&srt=sco&sp=rlitf&.....SECRET...."
+  const blobServiceClient = new BlobServiceClient(`https://${account}.blob.core.windows.net${sas}`)
+
+  const options = {
+    includeDeleted: false,
+    includeMetadata: true,
+    includeSystem: true,
+//    prefix: containerNamePrefix
+  }
+
+  let i = 1;
+  const containers = blobServiceClient.listContainers(options);
+  for await (const container of containers) {
+    console.log(`Container ${i++}: ${container.name}`);
+  }
+  
 }

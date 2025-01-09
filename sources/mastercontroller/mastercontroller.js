@@ -20,7 +20,6 @@ export const handler = async (event, context) => {
     var commonsharedpath = ('file:///' + path.join(__dirname, './shared/commonsharedv3.js').replace(/\\/g, '/'))
     var commonshared = await GetConfiguration(commonsharedpath, '*')
     var arnList = (context.invokedFunctionArn).split(':')
-    var region = arnList[3]
     var SQSMessageQueues = process.env.SQSMessageQueues
     var WorkerFunction = process.env.WorkerFunction
     console.log('REQUEST RECEIVED: ' + JSON.stringify(event))
@@ -30,7 +29,6 @@ export const handler = async (event, context) => {
     // Dev environment settings
     var directory = path.join(__dirname, '..', '..', 'settings', 'LogverzDevEnvironment', 'configs', 'mastercontroller', 'mydev.mjs')
     const mydev = await import('file:///' + directory.replace(/\\/g, '/'))
-    var region = mydev.region
     var commonshared = mydev.commonshared
     var SQSMessageQueues = mydev.SQSMessageQueues
     var WorkerFunction = mydev.WorkerFunction
@@ -303,8 +301,9 @@ async function getlastbuildID (cbclient, CBProjectName) {
 }
 
 async function startbuild (cbclient, selectedcontroller, onejob, ComputeEnvironment, messagequeueurl, WorkerFunction) {
-  var S3Properties = JSON.parse(onejob.S3Properties.stringValue)
+  var StgProperties = JSON.parse(onejob.StgProperties.stringValue)
   var ComputeEnvironment = JSON.parse(onejob.ComputeEnvironment.stringValue)
+  var Query = JSON.parse(onejob.Query.stringValue)
   var buildparams = {
     projectName: selectedcontroller,
     environmentVariablesOverride: [{
@@ -313,23 +312,23 @@ async function startbuild (cbclient, selectedcontroller, onejob, ComputeEnvironm
       type: 'PLAINTEXT'
     },
     {
-      name: 'S3SelectQuery',
-      value: onejob.QueryString.stringValue,
+      name: 'QueryString',
+      value: JSON.stringify(Query.QueryString).replaceAll('"',''),
       type: 'PLAINTEXT'
     },
     {
-      name: 'S3EnumerationDepth',
-      value: S3Properties.S3EnumerationDepth,
+      name: 'StgEnumerationDepth',
+      value: StgProperties.StgEnumerationDepth,
       type: 'PLAINTEXT'
     },
     {
-      name: 'S3Folders',
-      value: S3Properties.S3Folders,
+      name: 'StgFolders',
+      value: StgProperties.StgFolders,
       type: 'PLAINTEXT'
     },
     {
-      name: 'S3SelectParameter',
-      value: JSON.stringify(S3Properties.S3SelectParameter),
+      name: 'StgSelectParameter',
+      value: JSON.stringify(StgProperties.StgSelectParameter),
       type: 'PLAINTEXT'
     },
     {
@@ -358,13 +357,23 @@ async function startbuild (cbclient, selectedcontroller, onejob, ComputeEnvironm
       type: 'PLAINTEXT'
     },
     {
-      name: 'QueryType',
-      value: onejob.QueryType.stringValue,
+      name: 'DataType',
+      value: JSON.stringify(Query.DataType).replaceAll('"',''),
       type: 'PLAINTEXT'
     },
     {
       name: 'JobID',
-      value: onejob.JobID.stringValue,
+      value: JSON.stringify(Query.JobID).replaceAll('"',''),
+      type: 'PLAINTEXT'
+    },
+    {
+      name: 'Transforms',
+      value: onejob.Transforms.stringValue,
+      type: 'PLAINTEXT'
+    },
+    {
+      name: 'Indexes',
+      value: onejob.Indexes.stringValue,
       type: 'PLAINTEXT'
     }
     ]

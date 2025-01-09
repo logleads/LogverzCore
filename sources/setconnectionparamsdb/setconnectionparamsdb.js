@@ -394,7 +394,7 @@ async function createsystemtablepermission (docClient, PutCommand, type, DBName,
       Description: '',
       QueryString: '',
       JobID: '',
-      S3Folders: ''
+      StgFolders: ''
     },
     Active: true
   }

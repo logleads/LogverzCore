@@ -14,18 +14,24 @@
   "type": "module",
   "license": "LogLeads License 1.0",
   "dependencies": {
-    "@aws-sdk/client-dynamodb": "^3.632.0",
-    "@aws-sdk/client-s3": "^3.633.0",
-    "@aws-sdk/client-sqs": "^3.632.0",
-    "@aws-sdk/client-ssm": "^3.632.0",
-    "@smithy/node-http-handler": "^3.1.4",
+    "@aws-sdk/client-dynamodb": "^3.716.0",
+    "@aws-sdk/client-s3": "^3.716.0",
+    "@aws-sdk/client-sqs": "^3.716.0",
+    "@aws-sdk/client-ssm": "^3.716.0",
+    "@smithy/node-http-handler": "^3.3.2",
+    "@smithy/util-stream": "^3.3.2",
+    "data-forge": "^1.10.2",
     "lodash": "^4.17.21",
     "lokijs": "^1.5.12",
-    "mysql2": "^3.11.0",
-    "pg": "^8.12.0",
+    "mysql2": "^3.11.5",
+    "pako": "^2.1.0",
+    "papaparse": "^5.4.1",
+    "pg": "^8.13.1",
     "pg-hstore": "^2.3.4",
-    "sequelize": "^6.37.3",
+    "sequelize": "^6.37.5",
+    "sqlite3": "^5.1.7",
     "tasktimer": "^3.0.0",
-    "tedious": "^18.6.2"
+    "tedious": "^18.6.2",
+    "yauzl": "^3.2.0"
   }
 }
