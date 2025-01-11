@@ -756,10 +756,14 @@ const admincheck = async (_, docClient, QueryCommand, identities, requestorident
     userattributes = userattributes[0]
   }
 
-  if (userattributes.Policies.UserAttached.length !== 0) {
+  if ((userattributes.Policies.UserAttached !== undefined) && (userattributes.Policies.UserAttached.length !== 0)) {
     var adminuser = userattributes.Policies.UserAttached.map(p => JSON.parse(p).PolicyName === 'AdministratorAccess').includes(true)
   }
-  if (userattributes.Policies.GroupAttached.length !== 0) {
+  else if((userattributes.Policies.RoleAttached !== undefined) && (userattributes.Policies.RoleAttached.length !== 0)){
+    var adminuser = userattributes.Policies.RoleAttached.map(p => JSON.parse(p).PolicyName === 'AdministratorAccess').includes(true)
+  }
+
+  if ((userattributes.Policies.UserAttached !== undefined) && (userattributes.Policies.GroupAttached.length !== 0)) {
     var adminGmember = userattributes.Policies.GroupAttached.map(p => JSON.parse(p).PolicyName === 'AdministratorAccess').includes(true)
   }
 
@@ -881,9 +885,12 @@ const setIAMresource = (apicall, parameters, region, accountnumber) => {
   return resource
 }
 
-const createtoken =(jwt, domain, username, privateKey, passphrase, tokenconfig) =>{
+const createtoken =(jwt, domain, username, privateKey, passphrase, tokenconfig, idenditytype) =>{
   var token = jwt.sign({
-    user: (domain + ':' + username)
+    //user: (domain + ':' + username)
+    Name: username,
+    Type: idenditytype,
+    Domain: domain
   }, {
     key: privateKey,
     passphrase

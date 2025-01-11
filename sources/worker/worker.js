@@ -171,7 +171,7 @@ export const handler = async (event, context) => {
 
     QueryString= ExecutionHistory.split('\n').filter(s => s.includes('QueryString'))[0].split(':')[1].replace(';','')
     DBTableName= ExecutionHistory.split('\n').filter(s => s.includes('TableParameters'))[0].replace('TableParameters:','').split('<!!>').filter(f => f.includes('TableName'))[0].split('=')[1]
-    StgSelectParameter=JSON.parse(Schema).S3SelectParameters.IO
+    StgSelectParameter=JSON.parse(Schema).StgSelectParameters.IO
     TransformConfig = JSON.parse(Schema).TransformConfig
 
     let convertedschema=""

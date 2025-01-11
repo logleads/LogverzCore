@@ -231,8 +231,8 @@ async function AuthorizeRequest (tokenobject, authenticationshared, docClient, e
     const requestedfile = decodeURIComponent(event.path.split('/').slice(4).join().replace(/,/g, '/'))
     const requestbucket = ((event.path.split('/')[3]).toLowerCase()).replace(/^lb$/, LogicBucket)
 
-    const username = tokenobject.value.user.split(':')[1]
-    const usertype = 'User' + tokenobject.value.user.split(':')[0] 
+    const username = tokenobject.value.Name
+    const usertype = tokenobject.value.Type
     const data = await authenticationshared.getidentityattributes(docClient, QueryCommand, username, usertype)
     const statements = authenticationshared.getuserstatements(data.Items[0])
 

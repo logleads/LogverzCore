@@ -90,8 +90,8 @@ export const handler = async (event, context) => {
     var tokenobject = commonshared.ValidateToken(jwt, event.headers, cert)
     console.log(tokenobject)
     if (tokenobject.state === true) {
-      var username = tokenobject.value.user.split(':')[1]
-      var usertype = 'User' + tokenobject.value.user.split(':')[0]
+      var username = tokenobject.value.Name
+      var usertype = tokenobject.value.Type
       var userattributes = identity.chain().find({
         Type: usertype,
         Name: username

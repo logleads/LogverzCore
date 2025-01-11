@@ -36,6 +36,7 @@ var tokenconfig={
     algorithm: 'RS512',
     expiresIn: '8h'
 }
+var tokenidenditytype="UserAWS"
 
 if (db.collections.length === 0) {
   if (MaximumCacheTime === undefined) {
@@ -91,7 +92,7 @@ export const handler = async (event, context) => {
     params.AllowedOrigins = mydev.params.AllowedOrigins
   }
 
-  var maskedevent = maskloginsecrets(JSON.parse(JSON.stringify(event)))
+  const maskedevent = commonshared.masktoken(JSON.parse(JSON.stringify(event)))
   console.log('REQUEST RECEIVED: \n' + JSON.stringify(context) + '\n\n')
   console.log('THE EVENT: \n' + JSON.stringify(maskedevent) + '\n\n')
   // console.log("Scalefunction:\n" + params.ScaleFunction);
@@ -200,7 +201,7 @@ async function main (event, ssmclient, lmdclient, ddclient, docClient, commonsha
       var authorization = await ValidateUserAccess(commonshared, authenticationshared, docClient, requestoridentity, params)
       if (authorization === true) {
         // Authentication success, Authorizatin success, user exits in database
-        var token = authenticationshared.createtoken(jwt, domain, username, privateKey.Parameter.Value, passphrase.Parameter.Value, tokenconfig)
+        var token = authenticationshared.createtoken(jwt, domain, username, privateKey.Parameter.Value, passphrase.Parameter.Value, tokenconfig, tokenidenditytype)
         var message = cognitosuccess(token, params, username, result)
       }
       else {
@@ -327,7 +328,7 @@ async function GetUsersToken (FormData, params) {
     var result = tokens.data
   }
   catch (err) {
-    console.error('Error exchanging code to token\n' + 'Config:\n' + JSON.stringify(config) + '\n Please check that SSM /Logverz/Logic/CognitoSecret value matches Logverz-Logic user pool -> App Integration -> App clients and analytics -> appclient client name-> Show client secret toggle')
+    console.error('Error exchanging code to token\n' + 'Config:\n' + JSON.stringify(config) + '\n Please check that SSM /Logverz/Logic/CognitoSecret value matches Logverz-Logic user pool -> Applications -> App clients -> CognitoAppclient-XXX. If you have multiple app clients select the one where Client ID equals CognitoAppclient ID in CloudFormation Logverz-Logic Stack resources. Click Show client secret toggle, verify that the two value matches, if not update SSM parameter /Logverz/Logic/CognitoSecret to the same as Cognito app client, client secret.')
     result = null
   }
   return result
@@ -476,7 +477,7 @@ async function createIAMAuthresponse (commonshared, authenticationshared, ddclie
     if (authorization === true) {
       var loglevel = 'Info'
       var message = `{"user" : "${username}","status":"Authenticated"}`
-      var token = authenticationshared.createtoken(jwt, domain, username, privateKey, passphrase, tokenconfig)
+      var token = authenticationshared.createtoken(jwt, domain, username, privateKey, passphrase, tokenconfig, tokenidenditytype)
       params = {
         status: 200,
         data: message,
@@ -715,19 +716,6 @@ function base64decode (input) {
   var buff = Buffer.from(input, 'base64')
   var text = buff.toString('ascii')
   return text
-}
-
-function maskloginsecrets (mevent) {
-  if (mevent.queryStringParameters.password !== undefined) {
-    mevent.queryStringParameters.password = '****'
-    mevent.multiValueQueryStringParameters.password[0] = '****'
-  }
-  else if (mevent.queryStringParameters.secretkey !== undefined) {
-    mevent.queryStringParameters.secretkey = '****'
-    mevent.multiValueQueryStringParameters.secretkey[0] = '****'
-  }
-
-  return mevent
 }
 
 function determinestagename (apigwevent) {

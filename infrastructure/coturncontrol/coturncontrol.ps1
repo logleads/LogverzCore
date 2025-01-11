@@ -106,11 +106,14 @@ function Create-coturn-Config{
     $template=@"
 fingerprint
 user=$($turnusername+":"+$turnpassword)
-listening-port=$port
 lt-cred-mech
 realm=$hostname
 log-file=/var/log/turnserver.log
 simple-log
+# Enable verbose logging (comment 1 up and uncomment 1 down)
+# verbose
+listening-port=$port
+listening-ip=$privateip
 external-ip=$hostip/$privateip
 min-port=49152
 max-port=65535
@@ -303,8 +306,8 @@ else{
    $instanceType=$identity.instanceType;
    $region=$identity.region
    $coturnconfigdestination="/etc/turnserver.conf";
-   $publichostname=$(wget -q -O - http://169.254.169.254/latest/meta-data/public-hostname);
-   $publichostipv4=$(wget -q -O - http://169.254.169.254/latest/meta-data/public-ipv4);
+   $publichostname=Get-Content $($environmentpath + "environment/publichostname")
+   $publichostipv4=Get-Content $($environmentpath + "environment/publicipv4")
    $privateip=$identity.privateIp;
    $webrtcbucket=Get-Content -path "/home/ubuntu/environment/webrtcbucket";
    $CloudWatchAgentPath="/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json"
@@ -368,13 +371,8 @@ if (!( test-path -Path $firstrunpath)) {
 
     if ($env:Environment -ne "LocalDev"){
     
-      #download cloudwatch agent: kudos:https://www.petefreitag.com/item/868.cfm
-      invoke-expression "sudo su -c 'curl -o /root/amazon-cloudwatch-agent.deb https://s3.amazonaws.com/amazoncloudwatch-agent/debian/amd64/latest/amazon-cloudwatch-agent.deb'"
-    
-      #install cloudwatch agent
-      invoke-expression "sudo su -c 'dpkg -i -E /root/amazon-cloudwatch-agent.deb'"
       Create-CloudWatchAgent-Config -CloudWatchAgentPath $CloudWatchAgentPath
-
+      
       invoke-expression "sudo su -c 'systemctl enable amazon-cloudwatch-agent.service'"
       invoke-expression "sudo su -c 'systemctl start amazon-cloudwatch-agent'"
 

@@ -152,7 +152,7 @@
 			"Description":"The size of the webrtcproxy container.",
 			"Default": "micro",
 			"Type": "String",
-			"AllowedValues" : ["nano", "micro", "small", "medium", "large", "xlarge"]
+			"AllowedValues" : ["micro", "small", "medium", "large", "xlarge", "2xlarge"]
 		},
 		"WebRTCProxyASGConfig":{
 			"Description":"The minimum, desired and maximum number of instances",
@@ -173,9 +173,9 @@
 		},
 		"TurnSrvInstanceSize":{
 			"Description":"The size of the TurnServer.",
-			"Default": "nano",
+			"Default": "micro",
 			"Type": "String",
-			"AllowedValues" : ["nano", "micro", "small", "medium", "large"]
+			"AllowedValues" : ["micro", "small", "medium", "large", "xlarge", "2xlarge"]
 		},
 		"TurnServerAmiId": {
 			"Description": "The Turn Server AMI ID as pare: https://documentation.ubuntu.com/aws/en/latest/aws-how-to/instances/find-ubuntu-images",

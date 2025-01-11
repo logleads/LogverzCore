@@ -83,7 +83,9 @@ const p2pconnection = async (req, res) => {
     const channelvalue = await getchannelname(peer2)
 
     user.insert({
-      User: tokenobject.value.user,
+      User: (tokenobject.value.Name+"_"+getRandomInt(1000)), 
+      //added random identifier so if multiple users are using the same role like aws iam adminrole/bob or adminrole/alice,
+      //than each p2p session would be uniquiely identified adminrole_312 adminrole_978 respectively. No wires crossed. TODO need to validte this scenario.
       ChannelName: channelvalue.label,
       Initiated: Math.floor(Date.now() / 1000)
     })
@@ -536,6 +538,10 @@ function deepSearchByKey (object, originalKey, matches = []) {
   }
 
   return matches
+}
+
+function getRandomInt(max) {
+  return Math.floor(Math.random() * max);
 }
 
 export { p2pconnection }

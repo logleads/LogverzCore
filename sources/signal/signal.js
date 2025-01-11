@@ -235,8 +235,9 @@ async function connecttocontainer (AuthObject, endpoint, offer, WebRTCProxyKey) 
       // console.log(response)
     }
     catch (e) {
-      console.error(e)
-      await timeout(5000)
+      console.log('Error connecting to the webrtc container if the issue  persists kill the webrtc container instance. Further details:\n')
+      console.error(`Error: ${e.response.status} - ${e.response.statusText}`)
+      await timeout(1000)
     }
   }
 

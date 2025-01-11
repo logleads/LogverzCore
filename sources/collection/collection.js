@@ -225,6 +225,7 @@ export const handler = async (event, context) => {
     }
     
     identityresult =await commonshared.CFNExecutionIdentity(commonshared, ssmclient, GetParameterHistoryCommand, ddclient, PutItemCommand, ExecutionHistory, S3bucket, TableParameters)
+  //identityresult =await CFNExecutionIdentity(commonshared, ssmclient, GetParameterHistoryCommand, ddclient, PutItemCommand, ExecutionHistory, S3bucket, TableParameters)
   }
   else{
     //this is the statefunction execution,
@@ -284,6 +285,7 @@ export const handler = async (event, context) => {
   if (message === 'ok' || identityresult.Result === 'PASS') {
     //console.log('Debug: At S3 authorization check Start')
     const s3authorizationresult= await commonshared.JobExecutionAuthorization(_, authenticationshared, commonshared, docClient, QueryCommand, identity, identityresult, S3bucket) 
+    //const s3authorizationresult= await JobExecutionAuthorization(_, authenticationshared, commonshared, docClient, QueryCommand, identity, identityresult, S3bucket) 
     if (s3authorizationresult !== 'ok') {
       // identity not authorized, hence we update the message with the details, if authorized function returns okay
       message=s3authorizationresult.message
@@ -302,6 +304,7 @@ export const handler = async (event, context) => {
         Name: identityresult.username
       }
       var authorization = await authenticationshared.resourceaccessauthorization(_, docClient, QueryCommand, identity, queries, clientinputparams, requestoridentity, region)
+      //var authorization = await resourceaccessauthorization(_, docClient, QueryCommand, identity, queries, clientinputparams, requestoridentity, region)
 
       if (authorization.status !== 'Allow') {
         message = JSON.stringify(authorization)
@@ -465,7 +468,8 @@ async function GatherEnvCurrentState(commonshared, engineshared, authentications
   const dbparams =await engineshared.LookupDBParameters (DatabaseParameters, TableParameters, commonshared, ssmclient, ddclient, GetParameterCommand, PutItemCommand)
 
   //TODO change identity to Logverz:System
-  var token = authenticationshared.createtoken(jwt, 'AWS', identityresult.username, privateKey.Parameter.Value, passphrase.Parameter.Value, tokenconfig)
+  var token = authenticationshared.createtoken(jwt, 'AWS', identityresult.username, privateKey.Parameter.Value, passphrase.Parameter.Value, tokenconfig, identityresult.usertype)
+  //var token = createtoken(jwt, 'AWS', identityresult.username, privateKey.Parameter.Value, passphrase.Parameter.Value, tokenconfig, tokenidenditytype)
   const clientcontext = createmessage(dbparams, token)
   var dbstate= await commonshared.invokelambda (lmdclient, InvokeCommand, clientcontext, 'Logverz-Info')
   var dbstateobject = JSON.parse(JSON.parse(new TextDecoder().decode(dbstate.Payload)).body)

@@ -72,8 +72,8 @@ export const handler = async (event, context) => {
   var reply = {}
 
   if (tokenobject.state === true) {
-    var username = tokenobject.value.user.split(':')[1]
-    var usertype = 'User' + tokenobject.value.user.split(':')[0]
+    var username = tokenobject.value.Name
+    var usertype = tokenobject.value.Type
     var requestoridentity = {
       Type: usertype,
       Name: username

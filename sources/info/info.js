@@ -112,8 +112,8 @@ export const handler = async (event, context) => {
   var tokenobject = commonshared.ValidateToken(jwt, authparameters, cert)
   console.log(tokenobject)
   if (tokenobject.state === true) {
-    var username = tokenobject.value.user.split(':')[1]
-    var usertype = 'User' + tokenobject.value.user.split(':')[0]
+    var username = tokenobject.value.Name
+    var usertype = tokenobject.value.Type
     var userattributes = identity.chain().find({
       Type: usertype,
       Name: username
@@ -558,7 +558,7 @@ function RDSstatus (DBInstanceStatus) {
   var rdsstatus = null
 
   if (DBInstanceStatus === 'stopped') {
-    var rdsstatus = 'RDS server is starting, usually it takes about 3-4 minutes to become available.'
+    var rdsstatus = 'RDS server is stopped, when starting usually it takes about 3-5 minutes to become available.'
   }
   else if (DBInstanceStatus === 'rebooting') {
     var rdsstatus = 'Database is in "rebooting" state, it may take 6-8 minutes for it to become available'

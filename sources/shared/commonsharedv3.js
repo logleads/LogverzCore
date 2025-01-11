@@ -819,6 +819,17 @@ const masktoken = (maskedevent) => {
   if (maskedevent.clientContext!== undefined && maskedevent.clientContext.cookie !== undefined){
     maskedevent.clientContext.cookie = '****'
   }
+
+  if (maskedevent.queryStringParameters !== undefined && maskedevent.queryStringParameters !== null && maskedevent.queryStringParameters.password !== undefined) {
+    maskedevent.queryStringParameters.password = '****'
+    maskedevent.multiValueQueryStringParameters.password[0] = '****'
+  }
+  
+  if (maskedevent.queryStringParameters !== undefined && maskedevent.queryStringParameters !== null && maskedevent.queryStringParameters.secretkey !== undefined) {
+    maskedevent.queryStringParameters.secretkey = '****'
+    maskedevent.multiValueQueryStringParameters.secretkey[0] = '****'
+  }
+  
   return maskedevent
 }
 
@@ -990,17 +1001,24 @@ const CFNExecutionIdentity = async (commonshared, ssmclient, GetParameterHistory
       message: 'Something went wrong cloud not determine the user making the call. As no match was found in the Execution history.'
     }
   }
+  else if (match.LastModifiedUser.match(":assumed-role/") !== null){
+    var usertype = 'RoleAWS'
+    var username = match.LastModifiedUser.split('/')[1]
+    var result = {
+      Result: 'PASS',
+      username,
+      usertype
+    }
+  }
   else {
-    var lastmodifieduserarn = match.LastModifiedUser
 
-    if (lastmodifieduserarn.match(':root') !== null) {
+    if (match.LastModifiedUser.match(':root') !== null) {
       var username = 'root' // root ||admin
     }
     else {
-      var username = lastmodifieduserarn.split('/')[1]
+      var username = match.LastModifiedUser.split('/')[1]
     }
     var usertype = 'UserAWS'
-
     var result = {
       Result: 'PASS',
       username,
