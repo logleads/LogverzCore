@@ -233,14 +233,14 @@ export const handler = async (event, context) => {
     timer.start()
     
     
-    await loop(sqsclient, sequelize, event, context, TestingTimeout, engineshared, commonshared, ddclient, StgSelectParameter, DataType, QueueURL, QueryString, Model, SelectedModel, DBTableName, DBEngineType,DebugInsert,EngineBucket, region, FileName, executiontype, invocationid, transformconfigpath)
+    await loop(sqsclient, sequelize, event, context, TestingTimeout, engineshared, commonshared, ddclient, StgSelectParameter, DataType, QueueURL, QueryString, Model, SelectedModel, DBTableName, DBEngineType,DebugInsert,EngineBucket, region, FileName, executiontype, invocationid, TransformsModule, transformconfigpath)
 
     timer.stop()
   }
   else{
     //Continous collection
     const t1 = performance.now()
-    await Task(sqsclient, engineshared, commonshared, ddclient, StgSelectParameter, DataType, QueueURL, QueryString, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, event, DebugInsert, EngineBucket, region, FileName, executiontype, transformconfigpath)
+    await Task(sqsclient, engineshared, commonshared, ddclient, StgSelectParameter, DataType, QueueURL, QueryString, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, event, DebugInsert, EngineBucket, region, FileName, executiontype, TransformsModule, transformconfigpath)
     const t2 = performance.now()
     const processingtime = (t2 - t1)
     const ellipsedtime = (t2 - t0)
@@ -264,7 +264,10 @@ async function filterdata(filearray, QueryString, commonshared, sequelize, Model
       //let newfilefullname=FileName.replace("SelectedModel.mjs",'test.db')
       const sequelizelocal = new Sequelize({
         dialect: 'sqlite',
-        storage: ':memory:'
+        storage: ':memory:',
+        define: {
+          timestamps: false,
+        }
         //storage: fileURLToPath(newfilefullname)
       })
 
@@ -274,10 +277,13 @@ async function filterdata(filearray, QueryString, commonshared, sequelize, Model
       //inserting data to in memory sqlite database for local querying
       await InsertData(commonshared, sequelizelocal, Model, SelectedModel, DataType, DBTableName, filearray, DebugInsert, EngineBucket, region, FileName)
 
-      const matchingresult = await sequelizelocal.query(QueryString , {
+      let matchingresult = await sequelizelocal.query(QueryString , {
         type: QueryTypes.SELECT,
       })
-
+      //remove id will be a sequalise v7 feature till than need  to manually remove id. More info:
+      //https://github.com/sequelize/sequelize/issues/14385
+      matchingresult= matchingresult.map(r =>_.omit(r, 'id'))
+      // convert data from string to json
       convertdatatosqlschema(matchingresult, SelectedModel, 'sqlite')
       convertdatatosqlschema(matchingresult, SelectedModel, DBEngineType)
       
@@ -605,7 +611,7 @@ async function unzipToVariable(buffer) {
 }
 
 
-async function loop (sqsclient, sequelize, event, context, TestingTimeout, engineshared, commonshared, ddclient, StgSelectParameter, DataType, QueueURL, QueryString, Model, SelectedModel, DBTableName, DBEngineType, DebugInsert, EngineBucket, region, FileName, executiontype, invocationid, transformconfigpath) {
+async function loop (sqsclient, sequelize, event, context, TestingTimeout, engineshared, commonshared, ddclient, StgSelectParameter, DataType, QueueURL, QueryString, Model, SelectedModel, DBTableName, DBEngineType, DebugInsert, EngineBucket, region, FileName, executiontype, invocationid, TransformsModule, transformconfigpath) {
   
   var i = 0
 
@@ -650,7 +656,7 @@ async function loop (sqsclient, sequelize, event, context, TestingTimeout, engin
   console.log(`Reporting state of instance ${invocationid} at ${new Date().toLocaleString()} : COMPLETED`)
 }
 
-async function Task(sqsclient, engineshared, commonshared, ddclient, StgSelectParameter, DataType, QueueURL, QueryString, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, event, DebugInsert, EngineBucket, region, FileName, executiontype, transformconfigpath) {
+async function Task(sqsclient, engineshared, commonshared, ddclient, StgSelectParameter, DataType, QueueURL, QueryString, sequelize, Model, SelectedModel, DBTableName, DBEngineType, context, event, DebugInsert, EngineBucket, region, FileName, executiontype, TransformsModule, transformconfigpath) {
   
   let sqsmessages
   var dataexists =false

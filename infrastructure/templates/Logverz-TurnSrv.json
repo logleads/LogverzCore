@@ -502,7 +502,7 @@
 						"StackName" : {"Ref": "AWS::StackName"}
 					}
 				},
-				"Description": "Registers instance ip in DNS.",
+				"Description": "Registers instance ip in DNS for turnserver using CustomConfig ASG lifecyclehooks.",
 				"FunctionName": "Logverz-SetConnectionParamsDNS",
 				"Handler": "setconnectionparamsdns.handler",
 				"Role": {

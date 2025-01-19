@@ -201,7 +201,7 @@ async function main (event, ssmclient, lmdclient, ddclient, docClient, commonsha
       var authorization = await ValidateUserAccess(commonshared, authenticationshared, docClient, requestoridentity, params)
       if (authorization === true) {
         // Authentication success, Authorizatin success, user exits in database
-        var token = authenticationshared.createtoken(jwt, domain, username, privateKey.Parameter.Value, passphrase.Parameter.Value, tokenconfig, tokenidenditytype)
+        var token = authenticationshared.createtoken(jwt, domain, username, privateKey.Parameter.Value, passphrase.Parameter.Value, tokenconfig, 'User' + domain)
         var message = cognitosuccess(token, params, username, result)
       }
       else {

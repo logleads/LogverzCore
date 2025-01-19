@@ -9,6 +9,8 @@ import fs from 'fs'
 import _ from 'lodash'
 import jwt from 'jsonwebtoken'
 import axios from 'axios'
+import "@aws-sdk/crc64-nvme-crt"
+
 
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb'

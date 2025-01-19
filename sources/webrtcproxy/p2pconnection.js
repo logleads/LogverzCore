@@ -82,11 +82,12 @@ const p2pconnection = async (req, res) => {
     const tokenobject = commonshared.ValidateToken(jwt, req, cert)
     const channelvalue = await getchannelname(peer2)
 
+    // console.log("\n\n token:\n"+JSON.stringify(tokenobject))
+    // console.log("\n\n channelvalue:\n"+JSON.stringify(channelvalue))
+
     user.insert({
-      User: (tokenobject.value.Name+"_"+getRandomInt(1000)), 
-      //added random identifier so if multiple users are using the same role like aws iam adminrole/bob or adminrole/alice,
-      //than each p2p session would be uniquiely identified adminrole_312 adminrole_978 respectively. No wires crossed. TODO need to validte this scenario.
-      ChannelName: channelvalue.label,
+      User: (tokenobject.value.Name+":"+tokenobject.value.Type),
+      ChannelName: channelvalue.label+"_"+tokenobject.value.Name,
       Initiated: Math.floor(Date.now() / 1000)
     })
     const text = 'CONNECTED!!'
@@ -137,9 +138,10 @@ const p2pconnection = async (req, res) => {
       }).collection.data[0].User
 
       const requestoridentity = {
-        Name: requestor.split(':')[1],
-        Type: 'User' + requestor.split(':')[0]
+        Name: requestor.split(':')[0],
+        Type: requestor.split(':')[1] 
       }
+      //console.log(JSON.stringify(requestoridentity))
 
       var userattributes = identities.chain().find({
         Type: requestoridentity.Type,

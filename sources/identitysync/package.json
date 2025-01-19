@@ -1,7 +1,7 @@
 {
 	"name": "Logverz",
-	"description": "",
-	"version": "0.9.0",
+	"description": "To Syncronize users, groups, policies from IAM to DynamoDB.",
+	"version": "1.0.0",
 	"main": "identitysync.js",
 	"keywords": [],
 	"repository": {

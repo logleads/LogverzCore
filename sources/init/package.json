@@ -1,7 +1,7 @@
 {
   "name": "Logverz",
-  "version": "0.9.0",
-  "description": "Log Interpreter Serverless Application: init module",
+  "version": "1.0.0",
+  "description": "Responsible for the orchestration of the initial deployment and performing subsequent updates.",
   "main": "init.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"

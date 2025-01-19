@@ -1,7 +1,7 @@
 {
 	"name": "Logverz",
-	"version": "0.9.0",
-	"description": "Log Interpreter Serverless Application: producer module",
+	"version": "1.0.0",
+	"description": "To create datacollection jobs and place it in a queue to be allocated by the master controller.",
 	"main": "jobproducer.js",
 	"scripts": {
 		"test": "echo \"Error: no test specified\" && exit 1"

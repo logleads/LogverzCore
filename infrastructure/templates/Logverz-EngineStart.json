@@ -147,7 +147,7 @@
 					},
 					"S3Key": "bin/jobproducer.zip"
 				},
-				"Description": "To create Query job consumed by the Controllers",
+				"Description": "To create datacollection jobs and place it in a queue to be allocated by the master controller",
 				"Environment": {
 					"Variables": {
 						"PublicKey": {

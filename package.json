@@ -1,8 +1,8 @@
 {
   "name": "Logverz",
-  "description": "",
-  "version": "0.9.0",
-  "main": "bootstrap.js",
+  "description": "Main application bundle.",
+  "version": "1.0.0",
+  "main": "helper.mjs",
   "keywords": [],
   "author": "platformlead",
   "license": "LogLeads License 1.0",

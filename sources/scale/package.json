@@ -1,7 +1,7 @@
 {
 	"name": "Logverz",
-	"description": "",
-	"version": "0.9.0",
+	"description": "To modify infrastructure, Start-Stop DBs and WEBRTC infrastructure.",
+	"version": "1.0.0",
 	"main": "scale.js",
 	"keywords": [],
 	"repository": {

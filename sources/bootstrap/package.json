@@ -1,7 +1,7 @@
 {
   "name": "Logverz",
-  "description": "",
-  "version": "0.9.0",
+  "description": "Initiates the deployment or update of the application from Serverless Application Repository.",
+  "version": "1.0.0",
   "main": "bootstrap.js",
   "keywords": [],
   "type": "module",

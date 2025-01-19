@@ -2085,7 +2085,7 @@
 						"MaximumCacheTime": {"Ref": "MaximumCacheTime"}
 					}
 				},
-				"Description": "To retrive small files from Logverz S3 buckets",
+				"Description": "To retrive small files (mostly Logverz UI components) from S3 buckets.",
 				"FunctionName": "Logverz-HTTPRelay",
 				"Handler": "httprelay.handler",
 				"Role": {

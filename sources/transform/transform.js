@@ -8,6 +8,9 @@ import path from 'path'
 import fs from 'fs'
 import _ from 'lodash'
 import jp from 'jsonpath'
+
+import "@aws-sdk/crc64-nvme-crt"
+
 import { RDSClient, DescribeDBEngineVersionsCommand, DescribeOrderableDBInstanceOptionsCommand } from '@aws-sdk/client-rds'
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3'
 import { KMSClient, paginateListAliases } from '@aws-sdk/client-kms'

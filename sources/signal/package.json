@@ -1,7 +1,7 @@
 {
 	"name": "Logverz",
-	"version": "0.9.0",
-	"description": "Log Interpreter Serverless Application: Signal module",
+	"version": "1.0.0",
+	"description": "Routes client requests to WebRTCProxy instance/container.",
 	"main": "signal.js",
 	"scripts": {
 		"test": "echo \"Error: no test specified\" && exit 1"

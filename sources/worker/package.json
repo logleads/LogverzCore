@@ -1,7 +1,7 @@
 {
   "name": "Logverz",
-  "version": "0.9.0",
-  "description": "Log Interpreter Serverless Application: retrieves data from s3 filters it as specified, than save it for further analysis",
+  "version": "1.0.0",
+  "description": "Retrieves data from s3 filters it according to the user requirements, than save it to central DB for further analysis.",
   "main": "worker.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"

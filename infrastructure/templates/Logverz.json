@@ -742,7 +742,7 @@
 						}
 					}
 				},
-				"Description": "The lambdafunction puts dependencies as sources.zip to s3 and builds it with Codebuild. ",
+				"Description": "Responsible for the orchestration of the initial deployment and performing subsequent updates.",
 				"FunctionName": "Logverz-Initiate",
 				"Handler": "initiate.handler",
 				"Role": {

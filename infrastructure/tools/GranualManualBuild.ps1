@@ -109,12 +109,12 @@ $buildrelativepath="sources/init"
 $buildfullpath="$projectpath/$buildrelativepath/build"
 $repobaseurl="https://logleads@dev.azure.com/logleads/LogverzPortal/_git/"
 
-build-webapp-source -builddirectory $buildfullpath -repo $($repobaseurl+"Portal") -appname "Portal" -branchname "latest" -OSType $OSType
+build-webapp-source -builddirectory $buildfullpath -repo $($repobaseurl+"Portal") -appname "Portal" -branchname "main" -OSType $OSType
 build-webapp-source -builddirectory $buildfullpath -repo $($repobaseurl+"PortalAccess") -appname "PortalAccess" -branchname "main" -OSType $OSType
 
 
 $extrafiles= get-extrafiles -filepath $($projectpath+"/infrastructure/tools/buildextrafiles.csv")
-set-init-sources -projectpath $projectpath -extrafiles $extrafiles -builddirectory $buildrelativepath -OSType $OSType -branchname "sqliteselect2"
+set-init-sources -projectpath $projectpath -extrafiles $extrafiles -builddirectory $buildrelativepath -OSType $OSType -branchname "main"
 
 
 update-lambda -lambdafunctionname "Logverz-Initiate"`

@@ -303,6 +303,7 @@
 			"Type" : "AWS::AutoScaling::AutoScalingGroup",
 			"Properties" : {
 				"Cooldown" : "180",
+				"DefaultInstanceWarmup": "180",
 				"HealthCheckType" : "EC2",
 				"HealthCheckGracePeriod":"120",
 				"MaxSize" : { "Fn::Select" : [ "2", { "Fn::Split" : [ ",", {"Ref":"WebRTCProxyASGConfig"} ] } ] },
@@ -376,6 +377,7 @@
 			"Type" : "AWS::AutoScaling::AutoScalingGroup",
 			"Properties" : {
 				"Cooldown" : "180",
+				"DefaultInstanceWarmup": "180",
 				"HealthCheckType" : "EC2",
 				"HealthCheckGracePeriod":"120",
 				"MaxSize" : { "Fn::Select" : [ "2", { "Fn::Split" : [ ",", {"Ref":"WebRTCProxyASGConfig"} ] } ] },
